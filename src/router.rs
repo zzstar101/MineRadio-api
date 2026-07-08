@@ -5,13 +5,26 @@ use axum::{
     response::Response,
     routing::get,
 };
+use serde::Serialize;
 use tower_http::trace::TraceLayer;
 
 use crate::{
     http::response::{cors_preflight, fail, json, ok},
+    providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     server::AppState,
     services,
 };
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HealthResponse {
+    ok: bool,
+    app_version: String,
+    api_version: String,
+    schema_version: String,
+    providers: Vec<&'static str>,
+    provider_status: CapabilityMatrix,
+}
 
 pub fn build(state: AppState) -> Router {
     Router::new()
@@ -27,7 +40,17 @@ pub fn build(state: AppState) -> Router {
 }
 
 async fn health(State(state): State<AppState>) -> impl axum::response::IntoResponse {
-    json(services::health::snapshot(&state.config), StatusCode::OK)
+    json(
+        HealthResponse {
+            ok: true,
+            app_version: state.config.app_version,
+            api_version: state.config.api_version,
+            schema_version: state.config.schema_version,
+            providers: PROVIDER_IDS.to_vec(),
+            provider_status: build_capability_matrix(),
+        },
+        StatusCode::OK,
+    )
 }
 
 async fn provider_capabilities(State(state): State<AppState>) -> impl axum::response::IntoResponse {

@@ -4,7 +4,6 @@ pub mod cross_source_resolver;
 pub mod diagnostics;
 pub mod discover_home;
 pub mod fallback;
-pub mod health;
 pub mod image_proxy;
 pub mod netease_qr_login;
 pub mod podcast;
