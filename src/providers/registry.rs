@@ -6,19 +6,61 @@ use crate::types::ProviderId;
 
 use super::ProviderAdapter;
 
+pub const PROVIDER_IDS: [&str; 3] = ["netease", "qq", "soda"];
+
+const NETEASE_CAPABILITIES: [&str; 9] = [
+    "search",
+    "songUrl",
+    "lyric",
+    "playlistList",
+    "playlistDetail",
+    "loginStatus",
+    "logout",
+    "like",
+    "quality",
+];
+
+const QQ_CAPABILITIES: [&str; 8] = [
+    "search",
+    "songUrl",
+    "lyric",
+    "playlistList",
+    "playlistDetail",
+    "loginStatus",
+    "logout",
+    "quality",
+];
+
+const SODA_CAPABILITIES: [&str; 9] = [
+    "search",
+    "songUrl",
+    "lyric",
+    "playlistList",
+    "playlistDetail",
+    "loginStatus",
+    "logout",
+    "like",
+    "quality",
+];
+
 #[derive(Default)]
 pub struct ProviderRegistry {
     providers: HashMap<ProviderId, Arc<dyn ProviderAdapter>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct ProviderCapability {
-    pub id: ProviderId,
-    pub search: bool,
-    pub song_url: bool,
-    pub lyric: bool,
-    pub playlists: bool,
-    pub login: bool,
+pub struct CapabilityMatrix {
+    pub version: &'static str,
+    pub providers: Vec<ProviderStatusEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatusEntry {
+    pub provider_id: &'static str,
+    pub available: bool,
+    pub capabilities: Vec<&'static str>,
+    pub message: &'static str,
 }
 
 impl ProviderRegistry {
@@ -30,17 +72,33 @@ impl ProviderRegistry {
         self.providers.get(id).cloned()
     }
 
-    pub fn build_capability_matrix(&self) -> Vec<ProviderCapability> {
-        self.providers
-            .keys()
-            .map(|id| ProviderCapability {
-                id: id.clone(),
-                search: true,
-                song_url: true,
-                lyric: true,
-                playlists: true,
-                login: true,
-            })
-            .collect()
+    pub fn build_capability_matrix(&self) -> CapabilityMatrix {
+        build_capability_matrix()
+    }
+}
+
+pub fn build_capability_matrix() -> CapabilityMatrix {
+    CapabilityMatrix {
+        version: "0.1.0",
+        providers: vec![
+            ProviderStatusEntry {
+                provider_id: "netease",
+                available: true,
+                capabilities: NETEASE_CAPABILITIES.to_vec(),
+                message: "online",
+            },
+            ProviderStatusEntry {
+                provider_id: "qq",
+                available: true,
+                capabilities: QQ_CAPABILITIES.to_vec(),
+                message: "online",
+            },
+            ProviderStatusEntry {
+                provider_id: "soda",
+                available: true,
+                capabilities: SODA_CAPABILITIES.to_vec(),
+                message: "online",
+            },
+        ],
     }
 }

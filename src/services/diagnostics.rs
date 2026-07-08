@@ -14,7 +14,7 @@ pub fn snapshot(state: &AppState) -> DiagnosticsSnapshot {
     DiagnosticsSnapshot {
         app_version: state.config.app_version.clone(),
         api_version: state.config.api_version.clone(),
-        provider_count: state.providers.build_capability_matrix().len(),
+        provider_count: state.providers.build_capability_matrix().providers.len(),
         uptime_ms: state
             .started_at
             .elapsed()

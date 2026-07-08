@@ -3,14 +3,6 @@ use serde::{Deserialize, Serialize};
 
 pub type ProviderId = String;
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
-pub struct HealthPayload {
-    pub status: String,
-    pub app_version: String,
-    pub api_version: String,
-    pub schema_version: String,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub struct Track {
     pub id: String,
