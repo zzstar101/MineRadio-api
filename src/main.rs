@@ -5,6 +5,7 @@ mod router;
 mod server;
 mod services;
 mod types;
+mod utils;
 
 use crate::config::Config;
 
