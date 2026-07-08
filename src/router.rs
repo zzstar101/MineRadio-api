@@ -50,6 +50,10 @@ pub fn build(state: AppState) -> Router {
         .route("/search", get(search).options(preflight))
         .route("/song-url", post(song_url).options(preflight))
         .route(
+            "/shared-playlist/import",
+            post(shared_playlist_import).options(preflight),
+        )
+        .route(
             "/providers/:pid/login-qr-key",
             get(provider_login_qr_key).options(preflight),
         )
@@ -283,6 +287,33 @@ async fn song_url(
     {
         Ok(result) => ok(result),
         Err(err) => anyhow_error_response(err),
+    }
+}
+
+async fn shared_playlist_import(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    match services::shared_playlist_import::import_shared_playlist(
+        body,
+        services::shared_playlist_import::SharedPlaylistImporterDeps {
+            provider_adapters: state.providers.all(),
+        },
+    )
+    .await
+    {
+        Ok(result) => ok(result),
+        Err(err) => match err.downcast::<services::shared_playlist_import::SharedPlaylistImportError>() {
+            Ok(err) => {
+                let status = match err.code.as_str() {
+                    "UNSUPPORTED_LINK" => StatusCode::BAD_REQUEST,
+                    "UNSUPPORTED_PROVIDER" | "NOT_IMPLEMENTED" => StatusCode::NOT_IMPLEMENTED,
+                    _ => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                fail(status, err.code, err.message)
+            }
+            Err(err) => anyhow_error_response(err),
+        },
     }
 }
 

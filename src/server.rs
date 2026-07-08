@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::{
     config::Config,
-    providers::registry::ProviderRegistry,
+    providers::{netease::adapter::NeteaseAdapter, registry::ProviderRegistry},
     router,
     services::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
@@ -38,9 +38,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
+        let mut providers = ProviderRegistry::default();
+        providers.register(NeteaseAdapter::shared());
+
         Self {
             config,
-            providers: Arc::new(ProviderRegistry::default()),
+            providers: Arc::new(providers),
             started_at: SystemTime::now(),
             services: AppServices {
                 audio_proxy: create_audio_proxy(AudioProxyDeps::default()),

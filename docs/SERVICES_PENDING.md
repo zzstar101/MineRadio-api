@@ -52,15 +52,16 @@ Also depends on local analyzer capability currently loaded by TS from:
 
 ### `shared-playlist-import.ts` -> `src/services/shared_playlist_import.rs`
 
-Status: placeholder.
+Status: partially migrated.
 
-Rust file exists, but `import_shared_playlist` and `detect_shared_playlist` are not implemented.
-
-No external npm module was found, but the TS implementation is large and should be migrated as a
-dedicated chunk. It includes:
+Rust now supports:
 
 - shared link detection for QQ, Netease, Apple Music, Qishui, and Kugou
-- adapter-backed playlist import for QQ/Netease/Soda
+- adapter-backed playlist import for QQ / Netease / Soda
+- `/shared-playlist/import` route wiring
+
+Still missing:
+
 - Apple Music HTML/JSON-LD parsing and iTunes lookup enrichment
 - Qishui rendered/JSON track parsing
 - Kugou share/API parsing, signing, and normalization
@@ -68,7 +69,7 @@ dedicated chunk. It includes:
 
 Suggested migration split:
 
-- First: `detect_shared_playlist` and adapter-backed QQ/Netease/Soda import.
+- First: `detect_shared_playlist` and adapter-backed QQ/Netease/Soda import. Done.
 - Second: Apple Music import.
 - Third: Qishui and Kugou import helpers.
 
