@@ -64,8 +64,18 @@ pub fn decrypt_aes(
     }
 }
 
+// This is a protocol-compatibility helper for NetEase-style raw RSA blocks,
+// not a general-purpose RSA encryption primitive.
 pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> Result<String, String> {
     let public_key = parse_rsa_public_key(public_key).map_err(|err| err.to_string())?;
+    let key_size = public_key.size();
+    if key_size != RSA_BLOCK_SIZE {
+        return Err(format!(
+            "raw rsa compatibility mode requires a 1024-bit public key, got {} bytes",
+            key_size
+        ));
+    }
+
     let mut padded = [0u8; RSA_BLOCK_SIZE];
     let bytes = plaintext.as_bytes();
     if bytes.len() > RSA_BLOCK_SIZE {
@@ -74,9 +84,12 @@ pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> Result<String, String> 
 
     padded[RSA_BLOCK_SIZE - bytes.len()..].copy_from_slice(bytes);
     let message = BigUint::from_bytes_be(&padded);
+    if message >= *public_key.n() {
+        return Err("rsa plaintext block must be smaller than modulus".to_owned());
+    }
+
     let encrypted = message.modpow(public_key.e(), public_key.n());
     let mut encrypted_bytes = encrypted.to_bytes_be();
-    let key_size = public_key.size();
     if encrypted_bytes.len() > key_size {
         return Err("rsa encrypted block is longer than key size".to_owned());
     }

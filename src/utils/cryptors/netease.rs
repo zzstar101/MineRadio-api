@@ -163,6 +163,7 @@ pub fn decrypt_eapi(cipher: &str) -> Result<String, String> {
 fn gunzip_to_string(bytes: &[u8]) -> anyhow::Result<String> {
     let mut decoder = GzDecoder::new(bytes);
     let mut output = String::new();
+    // TODO: Add a decompressed-size limit here after we confirm the real EAPI payload size range.
     decoder
         .read_to_string(&mut output)
         .context("gunzip eapi response")?;

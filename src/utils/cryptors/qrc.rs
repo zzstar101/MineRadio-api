@@ -21,6 +21,7 @@ const QMC1_KEY: [u8; 128] = [
     0xc3, 0x00, 0x09, 0x5b, 0x9f, 0x62, 0x66, 0xa1, 0xd8, 0x52, 0xf7, 0x67, 0x90, 0xca, 0xd6, 0x4a,
 ];
 const QQ_KEY: [u8; 24] = *b"!@#)(*$%123ZXC!@!@#)(NHL";
+const MAX_DECRYPTED_QRC_BYTES: usize = 1024 * 1024;
 
 const SBOX1: [u8; 64] = [
     14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7, 0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11,
@@ -452,17 +453,39 @@ fn triple_des_crypt(input: &[u8; 8], output: &mut [u8; 8], key: &[[[u8; 6]; 16];
 
 fn inflate_bytes(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut zlib_output = Vec::new();
-    match ZlibDecoder::new(data).read_to_end(&mut zlib_output) {
-        Ok(_) => Ok(zlib_output),
+    match ZlibDecoder::new(data)
+        .take((MAX_DECRYPTED_QRC_BYTES + 1) as u64)
+        .read_to_end(&mut zlib_output)
+    {
+        Ok(_) => {
+            ensure_decompressed_limit("qrc", &zlib_output, MAX_DECRYPTED_QRC_BYTES)?;
+            Ok(zlib_output)
+        }
         Err(zlib_err) => {
             let mut deflate_output = Vec::new();
-            match DeflateDecoder::new(data).read_to_end(&mut deflate_output) {
-                Ok(_) => Ok(deflate_output),
+            match DeflateDecoder::new(data)
+                .take((MAX_DECRYPTED_QRC_BYTES + 1) as u64)
+                .read_to_end(&mut deflate_output)
+            {
+                Ok(_) => {
+                    ensure_decompressed_limit("qrc", &deflate_output, MAX_DECRYPTED_QRC_BYTES)?;
+                    Ok(deflate_output)
+                }
                 Err(deflate_err) => Err(anyhow!(
                     "zlib decode failed ({zlib_err}); raw deflate decode failed ({deflate_err})"
                 )),
             }
         }
+    }
+}
+
+fn ensure_decompressed_limit(kind: &str, data: &[u8], max_bytes: usize) -> anyhow::Result<()> {
+    if data.len() > max_bytes {
+        Err(anyhow!(
+            "{kind} payload exceeds max decompressed size of {max_bytes} bytes"
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -524,5 +547,28 @@ mod tests {
     #[test]
     fn qrc_decrypt_rejects_odd_hex() {
         assert!(decrypt_qrc("ABC").is_err());
+    }
+
+    #[test]
+    fn qrc_decrypt_rejects_payloads_larger_than_one_megabyte() {
+        let expected = "a".repeat(MAX_DECRYPTED_QRC_BYTES + 1);
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(expected.as_bytes()).unwrap();
+        let mut compressed = encoder.finish().unwrap();
+        compressed.resize(compressed.len().next_multiple_of(8), 0);
+
+        let mut encrypted = vec![0u8; compressed.len()];
+        let mut schedule = [[[0u8; 6]; 16]; 3];
+        triple_des_key_setup(&QQ_KEY, &mut schedule, ENCRYPT);
+        for (block_idx, chunk) in compressed.chunks_exact(8).enumerate() {
+            let mut input = [0u8; 8];
+            input.copy_from_slice(chunk);
+
+            let mut output = [0u8; 8];
+            triple_des_crypt(&input, &mut output, &schedule);
+            encrypted[block_idx * 8..block_idx * 8 + 8].copy_from_slice(&output);
+        }
+
+        assert!(decrypt_qrc(&to_hex_upper(&encrypted)).is_err());
     }
 }

@@ -7,6 +7,7 @@ use flate2::read::{DeflateDecoder, ZlibDecoder};
 const KRC_KEY: &[u8] = &[
     0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69,
 ];
+const MAX_DECRYPTED_KRC_BYTES: usize = 1024 * 1024;
 
 pub fn decrypt_krc(encoded: &str) -> Result<String, String> {
     let clean: String = encoded
@@ -49,12 +50,19 @@ fn xor_krc_key(data: &mut [u8]) {
 
 fn inflate_krc_payload(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut zlib_output = Vec::new();
-    if ZlibDecoder::new(data).read_to_end(&mut zlib_output).is_ok() && !zlib_output.is_empty() {
+    if ZlibDecoder::new(data)
+        .take((MAX_DECRYPTED_KRC_BYTES + 1) as u64)
+        .read_to_end(&mut zlib_output)
+        .is_ok()
+        && !zlib_output.is_empty()
+    {
+        ensure_decompressed_limit("krc", &zlib_output, MAX_DECRYPTED_KRC_BYTES)?;
         return Ok(zlib_output);
     }
 
     let mut deflate_output = Vec::new();
     DeflateDecoder::new(data)
+        .take((MAX_DECRYPTED_KRC_BYTES + 1) as u64)
         .read_to_end(&mut deflate_output)
         .with_context(|| {
             format!(
@@ -68,7 +76,18 @@ fn inflate_krc_payload(data: &[u8]) -> anyhow::Result<Vec<u8>> {
             hex_head(data)
         ));
     }
+    ensure_decompressed_limit("krc", &deflate_output, MAX_DECRYPTED_KRC_BYTES)?;
     Ok(deflate_output)
+}
+
+fn ensure_decompressed_limit(kind: &str, data: &[u8], max_bytes: usize) -> anyhow::Result<()> {
+    if data.len() > max_bytes {
+        Err(anyhow!(
+            "{kind} payload exceeds max decompressed size of {max_bytes} bytes"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn hex_head(data: &[u8]) -> String {
@@ -99,5 +118,21 @@ mod tests {
         let encoded = BASE64.encode(payload);
 
         assert_eq!(decrypt_krc(&encoded).unwrap(), "[00:00.00]hello");
+    }
+
+    #[test]
+    fn krc_decrypt_rejects_payloads_larger_than_one_megabyte() {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        let oversized = vec![b'a'; MAX_DECRYPTED_KRC_BYTES + 1];
+        encoder.write_all(&[0]).unwrap();
+        encoder.write_all(&oversized).unwrap();
+        let mut compressed = encoder.finish().unwrap();
+        xor_krc_key(&mut compressed);
+
+        let mut payload = b"krc1".to_vec();
+        payload.extend_from_slice(&compressed);
+        let encoded = BASE64.encode(payload);
+
+        assert!(decrypt_krc(&encoded).is_err());
     }
 }
