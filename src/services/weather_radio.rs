@@ -50,7 +50,7 @@ impl Default for WeatherRadioDeps {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WeatherRadioService {
     deps: WeatherRadioDeps,
 }

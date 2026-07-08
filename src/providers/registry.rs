@@ -72,6 +72,10 @@ impl ProviderRegistry {
         self.providers.get(id).cloned()
     }
 
+    pub fn all(&self) -> HashMap<ProviderId, Arc<dyn ProviderAdapter>> {
+        self.providers.clone()
+    }
+
     pub fn build_capability_matrix(&self) -> CapabilityMatrix {
         build_capability_matrix()
     }
