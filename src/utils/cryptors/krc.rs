@@ -8,37 +8,37 @@ const KRC_KEY: &[u8] = &[
     0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69,
 ];
 
-pub fn decrypt_krc(encoded: &str) -> anyhow::Result<String> {
+pub fn decrypt_krc(encoded: &str) -> Result<String, String> {
     let clean: String = encoded
         .chars()
         .filter(|char| !char.is_whitespace())
         .collect();
     let decoded = BASE64
         .decode(&clean)
-        .with_context(|| format!("failed to base64 decode krc payload, len={}", clean.len()))?;
+        .with_context(|| format!("failed to base64 decode krc payload, len={}", clean.len()))
+        .map_err(|err| err.to_string())?;
     if decoded.len() <= 4 {
-        return Err(anyhow!(
-            "decoded krc data too short: {} bytes",
-            decoded.len()
-        ));
+        return Err(format!("decoded krc data too short: {} bytes", decoded.len()));
     }
 
     let mut data = decoded[4..].to_vec();
     xor_krc_key(&mut data);
-    let inflated = inflate_krc_payload(&data)?;
+    let inflated = inflate_krc_payload(&data).map_err(|err| err.to_string())?;
     let skip = if inflated.starts_with(&[0xEF, 0xBB, 0xBF]) {
         3
     } else {
         1
     };
     if inflated.len() <= skip {
-        return Err(anyhow!(
+        return Err(format!(
             "inflated krc data too short after header skip({skip}): {} bytes",
             inflated.len()
         ));
     }
 
-    String::from_utf8(inflated[skip..].to_vec()).context("krc payload is not utf-8")
+    String::from_utf8(inflated[skip..].to_vec())
+        .context("krc payload is not utf-8")
+        .map_err(|err| err.to_string())
 }
 
 fn xor_krc_key(data: &mut [u8]) {

@@ -29,11 +29,12 @@ pub fn encrypt_aes(
     key: &str,
     iv: &str,
     format: CipherOutputFormat,
-) -> anyhow::Result<String> {
+) -> Result<String, String> {
     let encrypted = match mode {
-        AesMode::Cbc => encrypt_cbc(text.as_bytes(), key.as_bytes(), iv.as_bytes())?,
-        AesMode::Ecb => encrypt_ecb(text.as_bytes(), key.as_bytes())?,
-    };
+        AesMode::Cbc => encrypt_cbc(text.as_bytes(), key.as_bytes(), iv.as_bytes()),
+        AesMode::Ecb => encrypt_ecb(text.as_bytes(), key.as_bytes()),
+    }
+    .map_err(|err| err.to_string())?;
 
     Ok(match format {
         CipherOutputFormat::Hex => to_hex_upper(&encrypted),
@@ -47,26 +48,28 @@ pub fn decrypt_aes(
     key: &str,
     iv: &str,
     format: CipherOutputFormat,
-) -> anyhow::Result<Vec<u8>> {
+) -> Result<Vec<u8>, String> {
     let encrypted = match format {
         CipherOutputFormat::Hex => from_hex(ciphertext)?,
         CipherOutputFormat::Base64 => general_purpose::STANDARD
             .decode(ciphertext)
-            .context("invalid base64 ciphertext")?,
+            .context("invalid base64 ciphertext")
+            .map_err(|err| err.to_string())?,
     };
 
     match mode {
-        AesMode::Cbc => decrypt_cbc(&encrypted, key.as_bytes(), iv.as_bytes()),
-        AesMode::Ecb => decrypt_ecb(&encrypted, key.as_bytes()),
+        AesMode::Cbc => decrypt_cbc(&encrypted, key.as_bytes(), iv.as_bytes())
+            .map_err(|err| err.to_string()),
+        AesMode::Ecb => decrypt_ecb(&encrypted, key.as_bytes()).map_err(|err| err.to_string()),
     }
 }
 
-pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> anyhow::Result<String> {
-    let public_key = parse_rsa_public_key(public_key)?;
+pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> Result<String, String> {
+    let public_key = parse_rsa_public_key(public_key).map_err(|err| err.to_string())?;
     let mut padded = [0u8; RSA_BLOCK_SIZE];
     let bytes = plaintext.as_bytes();
     if bytes.len() > RSA_BLOCK_SIZE {
-        return Err(anyhow!("rsa plaintext is longer than block size"));
+        return Err("rsa plaintext is longer than block size".to_owned());
     }
 
     padded[RSA_BLOCK_SIZE - bytes.len()..].copy_from_slice(bytes);
@@ -75,7 +78,7 @@ pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> anyhow::Result<String> 
     let mut encrypted_bytes = encrypted.to_bytes_be();
     let key_size = public_key.size();
     if encrypted_bytes.len() > key_size {
-        return Err(anyhow!("rsa encrypted block is longer than key size"));
+        return Err("rsa encrypted block is longer than key size".to_owned());
     }
 
     let mut output = vec![0u8; key_size];
@@ -92,15 +95,15 @@ pub fn to_hex_lower(bytes: &[u8]) -> String {
     encode_hex(bytes, b"0123456789abcdef")
 }
 
-pub fn from_hex(text: &str) -> anyhow::Result<Vec<u8>> {
+pub fn from_hex(text: &str) -> Result<Vec<u8>, String> {
     if !text.len().is_multiple_of(2) {
-        return Err(anyhow!("hex ciphertext length must be even"));
+        return Err("hex ciphertext length must be even".to_owned());
     }
 
     let mut output = Vec::with_capacity(text.len() / 2);
     for chunk in text.as_bytes().chunks_exact(2) {
-        let high = hex_value(chunk[0])?;
-        let low = hex_value(chunk[1])?;
+        let high = hex_value(chunk[0]).map_err(|err| err.to_string())?;
+        let low = hex_value(chunk[1]).map_err(|err| err.to_string())?;
         output.push((high << 4) | low);
     }
     Ok(output)

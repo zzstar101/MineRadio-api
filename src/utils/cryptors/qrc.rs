@@ -84,12 +84,14 @@ fn qmc_decode_in_place(data: &mut [u8]) {
     }
 }
 
-pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> anyhow::Result<String> {
+pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> Result<String, String> {
     let path = path.as_ref();
     let mut data =
-        fs::read(path).with_context(|| format!("failed to read qrc file {}", path.display()))?;
+        fs::read(path)
+            .with_context(|| format!("failed to read qrc file {}", path.display()))
+            .map_err(|err| err.to_string())?;
     if data.is_empty() {
-        return Err(anyhow!("qrc file is empty: {}", path.display()));
+        return Err(format!("qrc file is empty: {}", path.display()));
     }
 
     if data.len() >= QMC_MAGIC.len() && data.starts_with(&QMC_MAGIC) {
@@ -100,10 +102,10 @@ pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(to_hex_upper(&data))
 }
 
-pub fn decrypt_qrc(encrypted_lyrics: &str) -> anyhow::Result<String> {
-    let encrypted_text_byte = hex_string_to_byte_array(encrypted_lyrics)?;
+pub fn decrypt_qrc(encrypted_lyrics: &str) -> Result<String, String> {
+    let encrypted_text_byte = hex_string_to_byte_array(encrypted_lyrics).map_err(|err| err.to_string())?;
     if encrypted_text_byte.len() % 8 != 0 {
-        return Err(anyhow!(
+        return Err(format!(
             "qrc ciphertext length not aligned to 8-byte blocks: {}",
             encrypted_text_byte.len()
         ));
@@ -122,8 +124,10 @@ pub fn decrypt_qrc(encrypted_lyrics: &str) -> anyhow::Result<String> {
         data[block_idx * 8..block_idx * 8 + 8].copy_from_slice(&output);
     }
 
-    let unzip = inflate_bytes(&data)?;
-    Ok(String::from_utf8_lossy(&unzip).into_owned())
+    let unzip = inflate_bytes(&data).map_err(|err| err.to_string())?;
+    String::from_utf8(unzip)
+        .context("qrc payload is not utf-8")
+        .map_err(|err| err.to_string())
 }
 
 fn bitnum(a: &[u8], b: usize, c: u32) -> u32 {

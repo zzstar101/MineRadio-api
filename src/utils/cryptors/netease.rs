@@ -48,7 +48,7 @@ pub enum EapiBody<'a> {
     Text(&'a str),
 }
 
-pub fn encrypt_weapi_rsa(plaintext: &str, public_key: Option<&str>) -> anyhow::Result<String> {
+pub fn encrypt_weapi_rsa(plaintext: &str, public_key: Option<&str>) -> Result<String, String> {
     encrypt_rsa(plaintext, public_key.unwrap_or(WEAPI_PUBLIC_KEY))
 }
 
@@ -59,11 +59,13 @@ pub fn generate_weapi_secret_key() -> String {
         .collect()
 }
 
-pub fn encrypt_weapi(object: &Value, secret_key: Option<&str>) -> anyhow::Result<WeapiParams> {
+pub fn encrypt_weapi(object: &Value, secret_key: Option<&str>) -> Result<WeapiParams, String> {
     let secret_key = secret_key
         .map(str::to_owned)
         .unwrap_or_else(generate_weapi_secret_key);
-    let text = serde_json::to_string(object).context("serialize weapi payload")?;
+    let text = serde_json::to_string(object)
+        .context("serialize weapi payload")
+        .map_err(|err| err.to_string())?;
     let reversed_secret_key: String = secret_key.chars().rev().collect();
 
     Ok(WeapiParams {
@@ -84,8 +86,10 @@ pub fn encrypt_weapi(object: &Value, secret_key: Option<&str>) -> anyhow::Result
     })
 }
 
-pub fn encrypt_linuxapi(object: &Value) -> anyhow::Result<LinuxapiParams> {
-    let text = serde_json::to_string(object).context("serialize linuxapi payload")?;
+pub fn encrypt_linuxapi(object: &Value) -> Result<LinuxapiParams, String> {
+    let text = serde_json::to_string(object)
+        .context("serialize linuxapi payload")
+        .map_err(|err| err.to_string())?;
     Ok(LinuxapiParams {
         eparams: encrypt_aes(
             &text,
@@ -97,9 +101,11 @@ pub fn encrypt_linuxapi(object: &Value) -> anyhow::Result<LinuxapiParams> {
     })
 }
 
-pub fn encrypt_eapi(url: &str, object: EapiBody<'_>) -> anyhow::Result<EapiParams> {
+pub fn encrypt_eapi(url: &str, object: EapiBody<'_>) -> Result<EapiParams, String> {
     let text = match object {
-        EapiBody::Json(value) => serde_json::to_string(value).context("serialize eapi payload")?,
+        EapiBody::Json(value) => serde_json::to_string(value)
+            .context("serialize eapi payload")
+            .map_err(|err| err.to_string())?,
         EapiBody::Text(text) => text.to_owned(),
     };
     let message = format!("nobody{url}use{text}md5forencrypt");
@@ -111,26 +117,28 @@ pub fn encrypt_eapi(url: &str, object: EapiBody<'_>) -> anyhow::Result<EapiParam
     })
 }
 
-pub fn decrypt_eapi_response(encrypted_params: &str, aeapi: bool) -> Option<Map<String, Value>> {
+pub fn decrypt_eapi_response(
+    encrypted_params: &str,
+    aeapi: bool,
+) -> Result<Map<String, Value>, String> {
     let decrypted = decrypt_aes(
         encrypted_params,
         AesMode::Ecb,
         EAPI_KEY,
         "",
         CipherOutputFormat::Hex,
-    )
-    .ok()?;
+    )?;
 
     let text = if aeapi {
-        gunzip_to_string(&decrypted).ok()?
+        gunzip_to_string(&decrypted).map_err(|err| err.to_string())?
     } else {
-        String::from_utf8(decrypted).ok()?
+        String::from_utf8(decrypted).map_err(|err| err.to_string())?
     };
 
-    parse_json_record(&text).ok()
+    parse_json_record(&text).map_err(|err| err.to_string())
 }
 
-pub fn decrypt_eapi_request(encrypted_params: &str) -> anyhow::Result<Option<EapiReqDecrypted>> {
+pub fn decrypt_eapi_request(encrypted_params: &str) -> Result<Option<EapiReqDecrypted>, String> {
     let decrypted = decrypt_eapi(encrypted_params)?;
     let Some((url, rest)) = decrypted.split_once(EAPI_DELIMITER) else {
         return Ok(None);
@@ -140,14 +148,16 @@ pub fn decrypt_eapi_request(encrypted_params: &str) -> anyhow::Result<Option<Eap
     };
 
     Ok(Some(EapiReqDecrypted {
-        data: parse_json_record(data)?,
+        data: parse_json_record(data).map_err(|err| err.to_string())?,
         url: url.to_owned(),
     }))
 }
 
-pub fn decrypt_eapi(cipher: &str) -> anyhow::Result<String> {
+pub fn decrypt_eapi(cipher: &str) -> Result<String, String> {
     let decrypted = decrypt_aes(cipher, AesMode::Ecb, EAPI_KEY, "", CipherOutputFormat::Hex)?;
-    String::from_utf8(decrypted).context("eapi decrypted payload is not utf-8")
+    String::from_utf8(decrypted)
+        .context("eapi decrypted payload is not utf-8")
+        .map_err(|err| err.to_string())
 }
 
 fn gunzip_to_string(bytes: &[u8]) -> anyhow::Result<String> {
