@@ -6,6 +6,11 @@ use crate::types::ProviderId;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProviderErrorCode {
+    NoResult,
+    NoUrl,
+    NoLyric,
+    NoPlaylists,
+    NoPlaylist,
     LoginRequired,
     Unavailable,
     CopyrightUnavailable,

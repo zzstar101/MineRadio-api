@@ -4,14 +4,31 @@ use serde::{Deserialize, Serialize};
 pub type ProviderId = String;
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Track {
     pub id: String,
     pub provider: ProviderId,
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_mid: Option<String>,
     pub title: String,
     pub artists: Vec<String>,
-    pub album: Option<String>,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub cover_url: String,
+    #[serde(default)]
+    pub quality_hints: Vec<String>,
+    #[serde(default = "default_playable_state")]
+    pub playable_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub artwork_url: Option<String>,
+}
+
+fn default_playable_state() -> String {
+    "unknown".to_owned()
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
