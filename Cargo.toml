@@ -4,3 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes = "0.8"
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+cbc = "0.1"
+ctr = "0.9"
+dotenvy = "0.15"
+futures = "0.3"
+md-5 = "0.10"
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", features = ["json", "cookies", "stream", "rustls-tls"], default-features = false }
+rsa = "0.9"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+url = "2"
+validator = { version = "0.18", features = ["derive"] }
