@@ -63,6 +63,38 @@ pub struct ProviderLoginStatus {
     pub nickname: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct ProviderLoginQrKey {
+    pub provider: ProviderId,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct ProviderLoginQrImage {
+    pub provider: ProviderId,
+    pub key: String,
+    pub img: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoginQrCheck {
+    pub provider: ProviderId,
+    pub key: String,
+    pub code: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub logged_in: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanned: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expired: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored: Option<bool>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub struct SongLikeAck {
     pub id: String,
