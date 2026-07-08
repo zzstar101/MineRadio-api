@@ -3,7 +3,8 @@ pub mod cryptors;
 #[allow(unused_imports)]
 pub use cryptors::{
     AesMode, CipherOutputFormat, EapiBody, EapiParams, EapiReqDecrypted, LinuxapiParams,
-    WeapiParams, aes_decrypt, aes_encrypt, create_weapi_secret_key, decrypt, eapi,
-    eapi_req_decrypt, eapi_res_decrypt, from_hex, krc_decrypt, linuxapi, qrc_decrypt,
-    qrc_decrypt_file, raw_rsa_encrypt, rsa_encrypt, to_hex_lower, to_hex_upper, weapi,
+    WeapiParams, decrypt_aes, decrypt_eapi, decrypt_eapi_request, decrypt_eapi_response,
+    decrypt_krc, decrypt_qrc, decrypt_qrc_file, encrypt_aes, encrypt_eapi, encrypt_linuxapi,
+    encrypt_rsa, encrypt_weapi, encrypt_weapi_rsa, from_hex, generate_weapi_secret_key,
+    to_hex_lower, to_hex_upper,
 };

@@ -84,7 +84,7 @@ fn qmc_decode_in_place(data: &mut [u8]) {
     }
 }
 
-pub fn qrc_decrypt_file(path: impl AsRef<Path>) -> anyhow::Result<String> {
+pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> anyhow::Result<String> {
     let path = path.as_ref();
     let mut data =
         fs::read(path).with_context(|| format!("failed to read qrc file {}", path.display()))?;
@@ -100,7 +100,7 @@ pub fn qrc_decrypt_file(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(to_hex_upper(&data))
 }
 
-pub fn qrc_decrypt(encrypted_lyrics: &str) -> anyhow::Result<String> {
+pub fn decrypt_qrc(encrypted_lyrics: &str) -> anyhow::Result<String> {
     let encrypted_text_byte = hex_string_to_byte_array(encrypted_lyrics)?;
     if encrypted_text_byte.len() % 8 != 0 {
         return Err(anyhow!(
@@ -514,11 +514,11 @@ mod tests {
             encrypted[block_idx * 8..block_idx * 8 + 8].copy_from_slice(&output);
         }
 
-        assert_eq!(qrc_decrypt(&to_hex_upper(&encrypted)).unwrap(), expected);
+        assert_eq!(decrypt_qrc(&to_hex_upper(&encrypted)).unwrap(), expected);
     }
 
     #[test]
     fn qrc_decrypt_rejects_odd_hex() {
-        assert!(qrc_decrypt("ABC").is_err());
+        assert!(decrypt_qrc("ABC").is_err());
     }
 }

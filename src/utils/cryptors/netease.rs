@@ -7,7 +7,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::crypto::{AesMode, CipherOutputFormat, aes_decrypt, aes_encrypt};
+use super::crypto::{AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa};
 
 const IV: &str = "0102030405060708";
 const PRESET_KEY: &str = "0CoJUm6Qyw8W8jud";
@@ -48,28 +48,28 @@ pub enum EapiBody<'a> {
     Text(&'a str),
 }
 
-pub fn rsa_encrypt(plaintext: &str, public_key: Option<&str>) -> anyhow::Result<String> {
-    super::crypto::rsa_encrypt(plaintext, public_key.unwrap_or(WEAPI_PUBLIC_KEY))
+pub fn encrypt_weapi_rsa(plaintext: &str, public_key: Option<&str>) -> anyhow::Result<String> {
+    encrypt_rsa(plaintext, public_key.unwrap_or(WEAPI_PUBLIC_KEY))
 }
 
-pub fn create_weapi_secret_key() -> String {
+pub fn generate_weapi_secret_key() -> String {
     let mut rng = rand::thread_rng();
     (0..16)
         .map(|_| BASE62[rng.gen_range(0..=61)] as char)
         .collect()
 }
 
-pub fn weapi(object: &Value, secret_key: Option<&str>) -> anyhow::Result<WeapiParams> {
+pub fn encrypt_weapi(object: &Value, secret_key: Option<&str>) -> anyhow::Result<WeapiParams> {
     let secret_key = secret_key
         .map(str::to_owned)
-        .unwrap_or_else(create_weapi_secret_key);
+        .unwrap_or_else(generate_weapi_secret_key);
     let text = serde_json::to_string(object).context("serialize weapi payload")?;
     let reversed_secret_key: String = secret_key.chars().rev().collect();
 
     Ok(WeapiParams {
-        enc_sec_key: rsa_encrypt(&reversed_secret_key, None)?,
-        params: aes_encrypt(
-            &aes_encrypt(
+        enc_sec_key: encrypt_weapi_rsa(&reversed_secret_key, None)?,
+        params: encrypt_aes(
+            &encrypt_aes(
                 &text,
                 AesMode::Cbc,
                 PRESET_KEY,
@@ -84,10 +84,10 @@ pub fn weapi(object: &Value, secret_key: Option<&str>) -> anyhow::Result<WeapiPa
     })
 }
 
-pub fn linuxapi(object: &Value) -> anyhow::Result<LinuxapiParams> {
+pub fn encrypt_linuxapi(object: &Value) -> anyhow::Result<LinuxapiParams> {
     let text = serde_json::to_string(object).context("serialize linuxapi payload")?;
     Ok(LinuxapiParams {
-        eparams: aes_encrypt(
+        eparams: encrypt_aes(
             &text,
             AesMode::Ecb,
             LINUXAPI_KEY,
@@ -97,7 +97,7 @@ pub fn linuxapi(object: &Value) -> anyhow::Result<LinuxapiParams> {
     })
 }
 
-pub fn eapi(url: &str, object: EapiBody<'_>) -> anyhow::Result<EapiParams> {
+pub fn encrypt_eapi(url: &str, object: EapiBody<'_>) -> anyhow::Result<EapiParams> {
     let text = match object {
         EapiBody::Json(value) => serde_json::to_string(value).context("serialize eapi payload")?,
         EapiBody::Text(text) => text.to_owned(),
@@ -107,12 +107,12 @@ pub fn eapi(url: &str, object: EapiBody<'_>) -> anyhow::Result<EapiParams> {
     let data = format!("{url}{EAPI_DELIMITER}{text}{EAPI_DELIMITER}{digest}");
 
     Ok(EapiParams {
-        params: aes_encrypt(&data, AesMode::Ecb, EAPI_KEY, "", CipherOutputFormat::Hex)?,
+        params: encrypt_aes(&data, AesMode::Ecb, EAPI_KEY, "", CipherOutputFormat::Hex)?,
     })
 }
 
-pub fn eapi_res_decrypt(encrypted_params: &str, aeapi: bool) -> Option<Map<String, Value>> {
-    let decrypted = aes_decrypt(
+pub fn decrypt_eapi_response(encrypted_params: &str, aeapi: bool) -> Option<Map<String, Value>> {
+    let decrypted = decrypt_aes(
         encrypted_params,
         AesMode::Ecb,
         EAPI_KEY,
@@ -130,8 +130,8 @@ pub fn eapi_res_decrypt(encrypted_params: &str, aeapi: bool) -> Option<Map<Strin
     parse_json_record(&text).ok()
 }
 
-pub fn eapi_req_decrypt(encrypted_params: &str) -> anyhow::Result<Option<EapiReqDecrypted>> {
-    let decrypted = decrypt(encrypted_params)?;
+pub fn decrypt_eapi_request(encrypted_params: &str) -> anyhow::Result<Option<EapiReqDecrypted>> {
+    let decrypted = decrypt_eapi(encrypted_params)?;
     let Some((url, rest)) = decrypted.split_once(EAPI_DELIMITER) else {
         return Ok(None);
     };
@@ -145,8 +145,8 @@ pub fn eapi_req_decrypt(encrypted_params: &str) -> anyhow::Result<Option<EapiReq
     }))
 }
 
-pub fn decrypt(cipher: &str) -> anyhow::Result<String> {
-    let decrypted = aes_decrypt(cipher, AesMode::Ecb, EAPI_KEY, "", CipherOutputFormat::Hex)?;
+pub fn decrypt_eapi(cipher: &str) -> anyhow::Result<String> {
+    let decrypted = decrypt_aes(cipher, AesMode::Ecb, EAPI_KEY, "", CipherOutputFormat::Hex)?;
     String::from_utf8(decrypted).context("eapi decrypted payload is not utf-8")
 }
 
@@ -175,12 +175,12 @@ mod tests {
     #[test]
     fn eapi_request_decrypts_generated_params() {
         let body = json!({ "id": 123, "csrf_token": "" });
-        let encrypted = eapi("/api/song/detail", EapiBody::Json(&body)).unwrap();
+        let encrypted = encrypt_eapi("/api/song/detail", EapiBody::Json(&body)).unwrap();
         assert_eq!(
             encrypted.params,
             "7D398AA5036D61F11B22021C618C242421D51F26B6A0246E121BFC7B69A3481F1B9A150C4A39113850F18DC62989A66D644F8B358D237F37959FBD383C9E0FF246B0E364C81E80A53B281B1A8E79FF4D4BD4FDFDDD0FAB97B9BA28E33602FCD4CFBFCE1DC1C4F4737873E98E44F5D059"
         );
-        let decrypted = eapi_req_decrypt(&encrypted.params).unwrap().unwrap();
+        let decrypted = decrypt_eapi_request(&encrypted.params).unwrap().unwrap();
 
         assert_eq!(decrypted.url, "/api/song/detail");
         assert_eq!(decrypted.data.get("id"), Some(&json!(123)));
@@ -190,8 +190,8 @@ mod tests {
     #[test]
     fn linuxapi_encrypts_as_hex_and_decrypts_as_json() {
         let body = json!({ "method": "POST", "url": "/api/test" });
-        let encrypted = linuxapi(&body).unwrap();
-        let decrypted = aes_decrypt(
+        let encrypted = encrypt_linuxapi(&body).unwrap();
+        let decrypted = decrypt_aes(
             &encrypted.eparams,
             AesMode::Ecb,
             LINUXAPI_KEY,
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn weapi_uses_fixed_secret_key_deterministically() {
         let body = json!({ "s": "name", "type": 1 });
-        let encrypted = weapi(&body, Some("abcdefghijklmnop")).unwrap();
+        let encrypted = encrypt_weapi(&body, Some("abcdefghijklmnop")).unwrap();
 
         assert_eq!(encrypted.enc_sec_key.len(), 256);
         assert_eq!(
@@ -230,6 +230,9 @@ mod tests {
             encrypted.params,
             "gHkCij6ElKidi+zv9289kG2vFoO4JAR+6FJdSQK16AmoQDz/ZbaRxBk5QyRuBYZr"
         );
-        assert_eq!(encrypted, weapi(&body, Some("abcdefghijklmnop")).unwrap());
+        assert_eq!(
+            encrypted,
+            encrypt_weapi(&body, Some("abcdefghijklmnop")).unwrap()
+        );
     }
 }

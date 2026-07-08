@@ -5,15 +5,16 @@ pub mod qrc;
 
 #[allow(unused_imports)]
 pub use crypto::{
-    AesMode, CipherOutputFormat, aes_decrypt, aes_encrypt, from_hex,
-    rsa_encrypt as raw_rsa_encrypt, to_hex_lower, to_hex_upper,
+    AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa, from_hex, to_hex_lower,
+    to_hex_upper,
 };
 #[allow(unused_imports)]
-pub use krc::krc_decrypt;
+pub use krc::decrypt_krc;
 #[allow(unused_imports)]
 pub use netease::{
-    EapiBody, EapiParams, EapiReqDecrypted, LinuxapiParams, WeapiParams, create_weapi_secret_key,
-    decrypt, eapi, eapi_req_decrypt, eapi_res_decrypt, linuxapi, rsa_encrypt, weapi,
+    EapiBody, EapiParams, EapiReqDecrypted, LinuxapiParams, WeapiParams, decrypt_eapi,
+    decrypt_eapi_request, decrypt_eapi_response, encrypt_eapi, encrypt_linuxapi, encrypt_weapi,
+    encrypt_weapi_rsa, generate_weapi_secret_key,
 };
 #[allow(unused_imports)]
-pub use qrc::{qrc_decrypt, qrc_decrypt_file};
+pub use qrc::{decrypt_qrc, decrypt_qrc_file};

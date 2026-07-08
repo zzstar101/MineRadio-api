@@ -8,7 +8,7 @@ const KRC_KEY: &[u8] = &[
     0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69,
 ];
 
-pub fn krc_decrypt(encoded: &str) -> anyhow::Result<String> {
+pub fn decrypt_krc(encoded: &str) -> anyhow::Result<String> {
     let clean: String = encoded
         .chars()
         .filter(|char| !char.is_whitespace())
@@ -98,6 +98,6 @@ mod tests {
         payload.extend_from_slice(&compressed);
         let encoded = BASE64.encode(payload);
 
-        assert_eq!(krc_decrypt(&encoded).unwrap(), "[00:00.00]hello");
+        assert_eq!(decrypt_krc(&encoded).unwrap(), "[00:00.00]hello");
     }
 }

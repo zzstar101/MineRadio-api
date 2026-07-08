@@ -23,7 +23,7 @@ pub enum CipherOutputFormat {
     Hex,
 }
 
-pub fn aes_encrypt(
+pub fn encrypt_aes(
     text: &str,
     mode: AesMode,
     key: &str,
@@ -41,7 +41,7 @@ pub fn aes_encrypt(
     })
 }
 
-pub fn aes_decrypt(
+pub fn decrypt_aes(
     ciphertext: &str,
     mode: AesMode,
     key: &str,
@@ -61,7 +61,7 @@ pub fn aes_decrypt(
     }
 }
 
-pub fn rsa_encrypt(plaintext: &str, public_key: &str) -> anyhow::Result<String> {
+pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> anyhow::Result<String> {
     let public_key = parse_rsa_public_key(public_key)?;
     let mut padded = [0u8; RSA_BLOCK_SIZE];
     let bytes = plaintext.as_bytes();
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn aes_cbc_round_trips_base64() {
-        let encrypted = aes_encrypt(
+        let encrypted = encrypt_aes(
             r#"{"hello":"world"}"#,
             AesMode::Cbc,
             "0CoJUm6Qyw8W8jud",
@@ -208,7 +208,7 @@ mod tests {
             CipherOutputFormat::Base64,
         )
         .unwrap();
-        let decrypted = aes_decrypt(
+        let decrypted = decrypt_aes(
             &encrypted,
             AesMode::Cbc,
             "0CoJUm6Qyw8W8jud",
