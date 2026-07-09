@@ -51,6 +51,32 @@ impl QqClient {
         .await
     }
 
+    pub async fn smartbox_search(&self, keyword: &str, limit: u32) -> Result<Vec<Value>> {
+        let body = self
+            .get_json(
+                "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg",
+                &[
+                    ("key", keyword.to_owned()),
+                    ("format", "json".to_owned()),
+                    ("g_tk", "5381".to_owned()),
+                ],
+                Some("https://y.qq.com/"),
+                self.current_cookie().await.as_deref(),
+            )
+            .await?;
+        let list = body
+            .get("data")
+            .and_then(|value| value.get("song"))
+            .and_then(|value| value.get("itemlist"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .take(limit as usize)
+            .collect();
+        Ok(list)
+    }
+
     pub async fn song_detail(&self, song_mid: &str) -> Result<Value> {
         self.post_json(
             "http://u.y.qq.com/cgi-bin/musicu.fcg",
@@ -221,6 +247,49 @@ impl QqClient {
             ],
             Some("https://y.qq.com/n/yqq/playlist"),
             self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn official_playlist_detail(&self, playlist_id: &str, limit: u32) -> Result<Value> {
+        let disstid = playlist_id.trim().parse::<u64>().map_err(internal)?;
+        let song_num = limit.clamp(1, 500);
+        self.get_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &[(
+                "format",
+                "json".to_owned(),
+            ), (
+                "data",
+                serde_json::to_string(&json!({
+                    "comm": { "ct": 24, "cv": 0 },
+                    "req_0": {
+                        "module": "music.srfDissInfo.aiDissInfo",
+                        "method": "uniform_get_Dissinfo",
+                        "param": {
+                            "disstid": disstid,
+                            "userinfo": 1,
+                            "tag": 1,
+                            "orderlist": 1,
+                            "song_begin": 0,
+                            "song_num": song_num,
+                            "onlysonglist": 0,
+                            "enc_host_uin": ""
+                        }
+                    },
+                    "req_1": {
+                        "module": "music.srfDissInfo.PlExtServer",
+                        "method": "getPlExtInfo",
+                        "param": {
+                            "tid": disstid,
+                            "need": [6]
+                        }
+                    }
+                }))
+                .unwrap_or_default(),
+            )],
+            Some("https://y.qq.com/"),
+            None,
         )
         .await
     }

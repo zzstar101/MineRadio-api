@@ -24,6 +24,7 @@ use super::{
 };
 
 const QQ_QUALITIES: [&str; 5] = ["flac", "ape", "320", "128", "m4a"];
+const QQ_PUBLIC_PLAYLIST_TRACK_LIMIT: u32 = 500;
 
 #[derive(Clone, Default)]
 pub struct QqAdapter {
@@ -47,16 +48,17 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> Result<Vec<Track>> {
-        let body = self.client.search(keyword, limit).await?;
-        let list = body
-            .get("data")
-            .and_then(|value| value.get("song"))
-            .and_then(|value| value.get("list"))
-            .or_else(|| body.get("song").and_then(|value| value.get("list")))
-            .or_else(|| body.get("list"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let list = match self.client.search(keyword, limit).await {
+            Ok(body) => {
+                let list = read_search_list(&body);
+                if list.is_empty() {
+                    self.client.smartbox_search(keyword, limit).await?
+                } else {
+                    list
+                }
+            }
+            Err(_) => self.client.smartbox_search(keyword, limit).await?,
+        };
         Ok(list.iter().map(map_qq_song_to_track).collect())
     }
 
@@ -159,35 +161,30 @@ impl ProviderAdapter for QqAdapter {
         let mut out = Vec::new();
 
         if let Some(created) = created {
-            if let Some(items) = created
-                .get("data")
-                .and_then(|value| value.get("disslist"))
-                .and_then(Value::as_array)
-            {
-                for item in items {
+            for item in read_playlist_list(&created) {
                     let summary = map_qq_playlist_to_summary(item, None);
-                    if !summary.id.is_empty() && seen.insert(summary.id.clone()) {
+                    if !summary.id.is_empty()
+                        && !is_qzone_background_playlist(&summary, item)
+                        && seen.insert(summary.id.clone())
+                    {
                         out.push(summary);
                     }
-                }
             }
         }
 
         if let Some(collected) = collected {
-            if let Some(items) = collected
-                .get("data")
-                .and_then(|value| value.get("cdlist"))
-                .and_then(Value::as_array)
-            {
-                for item in items {
+            for item in read_playlist_list(&collected) {
                     let summary = map_qq_playlist_to_summary(item, None);
-                    if !summary.id.is_empty() && seen.insert(summary.id.clone()) {
+                    if !summary.id.is_empty()
+                        && !is_qzone_background_playlist(&summary, item)
+                        && seen.insert(summary.id.clone())
+                    {
                         out.push(summary);
                     }
-                }
             }
         }
 
+        out.sort_by_key(|summary| !is_favorite_playlist(summary));
         Ok(out)
     }
 
@@ -198,6 +195,22 @@ impl ProviderAdapter for QqAdapter {
             .and_then(Value::as_array)
             .and_then(|items| items.first());
         if first.is_none() {
+            let official = self
+                .client
+                .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
+                .await?;
+            let fallback = official
+                .get("req_0")
+                .and_then(|value| value.get("data"))
+                .filter(|value| {
+                    value.get("songlist")
+                        .and_then(Value::as_array)
+                        .map(|items| !items.is_empty())
+                        .unwrap_or(false)
+                });
+            if fallback.is_some() {
+                return Ok(map_qq_playlist_to_detail(fallback, Some(id)));
+            }
             return Err(ProviderError {
                 code: ProviderErrorCode::NoPlaylist,
                 provider: "qq".to_owned(),
@@ -227,6 +240,7 @@ impl ProviderAdapter for QqAdapter {
         };
 
         let body = self.client.login_status(&user_id).await?;
+        let vip_info = self.client.vip_info(&user_id).await.ok();
         let nickname = body
             .get("data")
             .and_then(|value| value.get("creator"))
@@ -236,6 +250,16 @@ impl ProviderAdapter for QqAdapter {
                 body.get("data")
                     .and_then(|value| value.get("creator"))
                     .and_then(|value| value.get("hostname"))
+                    .and_then(Value::as_str)
+            })
+            .or_else(|| {
+                vip_info
+                    .as_ref()
+                    .and_then(|value| value.get("getNickHead"))
+                    .and_then(|value| value.get("data"))
+                    .and_then(|value| value.get("map_userinfo"))
+                    .and_then(|value| value.get(&user_id))
+                    .and_then(|value| value.get("nick"))
                     .and_then(Value::as_str)
             })
             .map(str::to_owned);
@@ -317,6 +341,46 @@ fn normalize_request_quality(requested: &str) -> String {
         "aac" => "m4a".to_owned(),
         other => other.to_owned(),
     }
+}
+
+fn read_search_list(body: &Value) -> Vec<Value> {
+    body.get("data")
+        .and_then(|value| value.get("song"))
+        .and_then(|value| value.get("list"))
+        .or_else(|| body.get("data").and_then(|value| value.get("list")))
+        .or_else(|| body.get("song").and_then(|value| value.get("list")))
+        .or_else(|| body.get("list"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn read_playlist_list(body: &Value) -> Vec<&Value> {
+    body.get("list")
+        .and_then(Value::as_array)
+        .or_else(|| body.get("data").and_then(|value| value.get("list")).and_then(Value::as_array))
+        .or_else(|| body.get("data").and_then(|value| value.get("disslist")).and_then(Value::as_array))
+        .or_else(|| body.get("data").and_then(|value| value.get("cdlist")).and_then(Value::as_array))
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
+}
+
+fn is_favorite_playlist(summary: &PlaylistSummary) -> bool {
+    let name = summary.name.trim();
+    name.contains("我喜欢")
+        || name.contains("我的喜欢")
+        || name.eq_ignore_ascii_case("liked songs")
+}
+
+fn is_qzone_background_playlist(summary: &PlaylistSummary, raw: &Value) -> bool {
+    let creator = raw
+        .get("hostname")
+        .or_else(|| raw.get("nick"))
+        .or_else(|| raw.get("creator"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let text = format!("{} {}", summary.name, creator).to_lowercase();
+    text.contains("qzone") || text.contains("空间") || text.contains("背景音乐")
 }
 
 fn candidate_qualities(requested: &str) -> Vec<&'static str> {
@@ -421,4 +485,59 @@ fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
     }?;
     let digits = raw.chars().filter(|ch| ch.is_ascii_digit()).collect::<String>();
     (!digits.is_empty()).then_some(digits)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{is_favorite_playlist, is_qzone_background_playlist, read_playlist_list, read_search_list};
+    use crate::types::PlaylistSummary;
+
+    #[test]
+    fn read_search_list_prefers_nested_song_list() {
+        let body = json!({
+            "data": {
+                "song": {
+                    "list": [{ "mid": "abc" }]
+                }
+            }
+        });
+        let list = read_search_list(&body);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["mid"], "abc");
+    }
+
+    #[test]
+    fn read_playlist_list_supports_multiple_shapes() {
+        let created = json!({
+            "data": {
+                "disslist": [{ "disstid": "1" }]
+            }
+        });
+        let collected = json!({
+            "list": [{ "disstid": "2" }]
+        });
+        assert_eq!(read_playlist_list(&created).len(), 1);
+        assert_eq!(read_playlist_list(&collected).len(), 1);
+    }
+
+    #[test]
+    fn playlist_flags_detect_favorites_and_qzone_background() {
+        let favorite = PlaylistSummary {
+            id: "1".to_owned(),
+            name: "我喜欢".to_owned(),
+            track_count: None,
+        };
+        let ordinary = PlaylistSummary {
+            id: "2".to_owned(),
+            name: "收藏歌单".to_owned(),
+            track_count: None,
+        };
+        let qzone_raw = json!({ "hostname": "Qzone" });
+
+        assert!(is_favorite_playlist(&favorite));
+        assert!(!is_favorite_playlist(&ordinary));
+        assert!(is_qzone_background_playlist(&ordinary, &qzone_raw));
+    }
 }
