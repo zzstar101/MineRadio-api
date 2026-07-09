@@ -7,8 +7,8 @@ use tracing::info;
 use crate::{
     config::Config,
     providers::{
-        netease::adapter::NeteaseAdapter, registry::ProviderRegistry,
-        soda::adapter::SodaAdapter,
+        netease::adapter::NeteaseAdapter, qq::adapter::QqAdapter,
+        registry::ProviderRegistry, soda::adapter::SodaAdapter,
     },
     router,
     services::{
@@ -43,6 +43,7 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let mut providers = ProviderRegistry::default();
         providers.register(NeteaseAdapter::shared());
+        providers.register(QqAdapter::shared());
         providers.register(SodaAdapter::shared());
 
         Self {

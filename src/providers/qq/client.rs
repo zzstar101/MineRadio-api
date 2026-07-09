@@ -1,1 +1,496 @@
-// HTTP client for QQ Music API endpoints.
+use anyhow::Context;
+use base64::Engine;
+use reqwest::{
+    Client,
+    header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
+};
+use serde_json::{Value, json};
+
+use crate::{
+    providers::{
+        Result,
+        error::{ProviderError, ProviderErrorCode},
+    },
+    services::auth_session,
+};
+
+const UA: &str = "Mozilla/5.0";
+
+#[derive(Clone, Default)]
+pub struct QqClient {
+    http: Client,
+}
+
+impl QqClient {
+    pub fn new() -> Self {
+        Self {
+            http: Client::new(),
+        }
+    }
+
+    pub async fn current_cookie(&self) -> Option<String> {
+        auth_session::get_provider_cookie("qq").await
+    }
+
+    pub async fn search(&self, keyword: &str, limit: u32) -> Result<Value> {
+        let url = "http://c.y.qq.com/soso/fcgi-bin/client_search_cp";
+        self.get_json(
+            url,
+            &[
+                ("format", "json".to_owned()),
+                ("n", limit.to_string()),
+                ("p", "1".to_owned()),
+                ("w", keyword.to_owned()),
+                ("cr", "1".to_owned()),
+                ("g_tk", "5381".to_owned()),
+                ("t", "0".to_owned()),
+            ],
+            Some("https://y.qq.com"),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn song_detail(&self, song_mid: &str) -> Result<Value> {
+        self.post_json(
+            "http://u.y.qq.com/cgi-bin/musicu.fcg",
+            &json!({
+                "data": serde_json::to_string(&json!({
+                    "songinfo": {
+                        "method": "get_song_detail_yqq",
+                        "module": "music.pf_song_detail_svr",
+                        "param": { "song_mid": song_mid }
+                    }
+                })).unwrap_or_default()
+            }),
+            None,
+            self.current_cookie().await.as_deref(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn song_url(&self, song_mid: &str, media_mid: &str, quality: &str) -> Result<Value> {
+        let cookie = self.current_cookie().await;
+        let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
+        let uin = qq_user_id_from_cookie_map(&cookie_map).unwrap_or_else(|| "0".to_owned());
+        let auth = qq_playback_key_from_cookie_map(&cookie_map);
+        let (prefix, ext) = qq_quality_file(quality);
+        let filename = format!("{prefix}{song_mid}{media_mid}{ext}");
+        self.post_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &json!({
+                "-": "getplaysongvkey",
+                "g_tk": "5381",
+                "loginUin": uin,
+                "hostUin": 0,
+                "format": "json",
+                "inCharset": "utf8",
+                "outCharset": "utf-8",
+                "notice": 0,
+                "platform": "yqq.json",
+                "needNewCode": 0,
+                "data": serde_json::to_string(&json!({
+                    "req_0": {
+                        "module": "vkey.GetVkeyServer",
+                        "method": "CgiGetVkey",
+                        "param": {
+                            "filename": [filename],
+                            "guid": "2796982635",
+                            "songmid": [song_mid],
+                            "songtype": [0],
+                            "uin": uin,
+                            "loginflag": 1,
+                            "platform": "20"
+                        }
+                    },
+                    "comm": {
+                        "uin": uin,
+                        "format": "json",
+                        "ct": 19,
+                        "cv": 0,
+                        "authst": auth
+                    }
+                })).unwrap_or_default()
+            }),
+            None,
+            cookie.as_deref(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn lyric(&self, song_mid: &str) -> Result<Value> {
+        let cookie = self.current_cookie().await;
+        let login_uin = cookie
+            .as_deref()
+            .map(|cookie| parse_cookie(cookie))
+            .and_then(|cookie| qq_user_id_from_cookie_map(&cookie))
+            .unwrap_or_else(|| "0".to_owned());
+        let url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
+        let mut body = self
+            .get_json(
+                url,
+                &[
+                    ("songmid", song_mid.to_owned()),
+                    ("songtype", "0".to_owned()),
+                    ("format", "json".to_owned()),
+                    ("nobase64", "1".to_owned()),
+                    ("g_tk", "5381".to_owned()),
+                    ("loginUin", login_uin),
+                    ("hostUin", "0".to_owned()),
+                    ("inCharset", "utf8".to_owned()),
+                    ("outCharset", "utf-8".to_owned()),
+                    ("notice", "0".to_owned()),
+                    ("platform", "yqq.json".to_owned()),
+                    ("needNewCode", "0".to_owned()),
+                ],
+                Some("https://y.qq.com/portal/player.html"),
+                cookie.as_deref(),
+            )
+            .await?;
+        if let Some(root) = body.as_object_mut() {
+            if let Some(lyric) = root.get("lyric").and_then(Value::as_str) {
+                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(lyric) {
+                    root.insert(
+                        "lyric".to_owned(),
+                        Value::String(String::from_utf8_lossy(&decoded).to_string()),
+                    );
+                }
+            }
+            if let Some(trans) = root.get("trans").and_then(Value::as_str) {
+                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trans) {
+                    root.insert(
+                        "trans".to_owned(),
+                        Value::String(String::from_utf8_lossy(&decoded).to_string()),
+                    );
+                }
+            }
+        }
+        Ok(body)
+    }
+
+    pub async fn user_songlists(&self, user_id: &str) -> Result<Value> {
+        self.get_json(
+            "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss",
+            &[
+                ("hostUin", "0".to_owned()),
+                ("hostuin", user_id.to_owned()),
+                ("sin", "0".to_owned()),
+                ("size", "200".to_owned()),
+                ("g_tk", "5381".to_owned()),
+                ("loginUin", "0".to_owned()),
+                ("format", "json".to_owned()),
+                ("inCharset", "utf8".to_owned()),
+                ("outCharset", "utf-8".to_owned()),
+                ("notice", "0".to_owned()),
+                ("platform", "yqq.json".to_owned()),
+                ("needNewCode", "0".to_owned()),
+            ],
+            Some("https://y.qq.com/portal/profile.html"),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn user_collect_songlists(&self, user_id: &str) -> Result<Value> {
+        self.get_json(
+            "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg",
+            &[
+                ("ct", "20".to_owned()),
+                ("cid", "205360956".to_owned()),
+                ("userid", user_id.to_owned()),
+                ("reqtype", "3".to_owned()),
+                ("sin", "0".to_owned()),
+                ("ein", "79".to_owned()),
+            ],
+            None,
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn playlist_detail(&self, playlist_id: &str) -> Result<Value> {
+        self.get_json(
+            "http://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
+            &[
+                ("type", "1".to_owned()),
+                ("utf8", "1".to_owned()),
+                ("disstid", playlist_id.to_owned()),
+                ("loginUin", "0".to_owned()),
+            ],
+            Some("https://y.qq.com/n/yqq/playlist"),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn add_song_to_playlist(&self, playlist_id: &str, track_mid: &str) -> Result<Value> {
+        self.get_raw_json(
+            "https://c.y.qq.com/splcloud/fcgi-bin/fcg_music_add2songdir.fcg",
+            &[
+                ("g_tk", "5381".to_owned()),
+                ("midlist", track_mid.to_owned()),
+                ("typelist", "13".to_owned()),
+                ("dirid", playlist_id.to_owned()),
+                ("addtype", "".to_owned()),
+                ("formsender", "4".to_owned()),
+                ("r2", "0".to_owned()),
+                ("r3", "1".to_owned()),
+                ("utf8", "1".to_owned()),
+            ],
+            None,
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn login_status(&self, user_id: &str) -> Result<Value> {
+        self.get_json(
+            "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
+            &[
+                ("cid", "205360838".to_owned()),
+                ("userid", user_id.to_owned()),
+                ("reqfrom", "1".to_owned()),
+            ],
+            None,
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn vip_info(&self, user_id: &str) -> Result<Value> {
+        self.get_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &[(
+                "format",
+                "json".to_owned(),
+            ), (
+                "data",
+                serde_json::to_string(&json!({
+                    "getVipInfo": {
+                        "module": "userInfo.VipQueryServer",
+                        "method": "SRFVipQuery_V2",
+                        "param": { "uin_list": [user_id] }
+                    },
+                    "getNickHead": {
+                        "module": "userInfo.BaseUserInfoServer",
+                        "method": "get_user_baseinfo_v2",
+                        "param": { "vec_uin": [user_id] }
+                    },
+                    "getVipIcon": {
+                        "module": "music.lvz.VipIconUiShowSvr",
+                        "method": "GetVipIconUiV2",
+                        "param": { "MusicID": user_id, "PID": 8 }
+                    }
+                }))
+                .unwrap_or_default(),
+            )],
+            Some("https://y.qq.com/m/myservice/index.html"),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn logout(&self) -> Result<Value> {
+        Ok(json!({ "ok": true }))
+    }
+
+    async fn get_json(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+        referer: Option<&str>,
+        cookie: Option<&str>,
+    ) -> Result<Value> {
+        let mut request = self.http.get(url).query(query);
+        request = request.headers(build_headers(referer, cookie, false)?);
+        let response = request
+            .send()
+            .await
+            .context("send qq upstream request")
+            .map_err(unavailable)?;
+        let text = response
+            .text()
+            .await
+            .context("read qq upstream response")
+            .map_err(unavailable)?;
+        parse_json_like(&text)
+    }
+
+    async fn get_raw_json(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+        referer: Option<&str>,
+        cookie: Option<&str>,
+    ) -> Result<Value> {
+        self.get_json(url, query, referer, cookie).await
+    }
+
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &Value,
+        referer: Option<&str>,
+        cookie: Option<&str>,
+        content_type: Option<&str>,
+    ) -> Result<Value> {
+        let headers = build_headers(referer, cookie, true)?;
+        let mut request = self.http.post(url).headers(headers);
+        if let Some(content_type) = content_type {
+            request = request.header(CONTENT_TYPE, content_type);
+        }
+        let response = request
+            .form(
+                &body
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(key, value)| (key, value_to_form(value)))
+                    .collect::<Vec<_>>()
+            )
+            .send()
+            .await
+            .context("send qq upstream post request")
+            .map_err(unavailable)?;
+        let text = response
+            .text()
+            .await
+            .context("read qq upstream post response")
+            .map_err(unavailable)?;
+        parse_json_like(&text)
+    }
+}
+
+fn build_headers(referer: Option<&str>, cookie: Option<&str>, with_origin: bool) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+    if let Some(referer) = referer {
+        headers.insert(REFERER, header_value(referer)?);
+        if with_origin {
+            let origin = reqwest::Url::parse(referer)
+                .ok()
+                .and_then(|url| {
+                    Some(format!(
+                        "{}://{}",
+                        url.scheme(),
+                        url.host_str().unwrap_or_default()
+                    ))
+                })
+                .unwrap_or_else(|| "https://y.qq.com".to_owned());
+            headers.insert(ORIGIN, header_value(&origin)?);
+        }
+    }
+    if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
+        headers.insert(COOKIE, header_value(cookie)?);
+    }
+    Ok(headers)
+}
+
+fn parse_json_like(text: &str) -> Result<Value> {
+    let trimmed = text.trim();
+    let cleaned = trimmed
+        .trim_start_matches("callback(")
+        .trim_start_matches("MusicJsonCallback(")
+        .trim_start_matches("jsonCallback(")
+        .trim_end_matches(')');
+    serde_json::from_str(cleaned).map_err(internal)
+}
+
+fn value_to_form(value: Value) -> String {
+    match value {
+        Value::String(value) => value,
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null => String::new(),
+        other => serde_json::to_string(&other).unwrap_or_default(),
+    }
+}
+
+fn parse_cookie(cookie: &str) -> std::collections::HashMap<String, String> {
+    cookie
+        .split(';')
+        .filter_map(|segment| {
+            let (name, value) = segment.trim().split_once('=')?;
+            Some((name.trim().to_owned(), value.trim().to_owned()))
+        })
+        .collect()
+}
+
+fn qq_user_id_from_cookie_map(
+    cookie: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let login_type = cookie
+        .get("login_type")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let raw = if login_type == 2 {
+        cookie
+            .get("wxuin")
+            .or_else(|| cookie.get("uin"))
+            .or_else(|| cookie.get("p_uin"))
+    } else {
+        cookie
+            .get("uin")
+            .or_else(|| cookie.get("qqmusic_uin"))
+            .or_else(|| cookie.get("wxuin"))
+            .or_else(|| cookie.get("p_uin"))
+    }?;
+    let digits = raw.chars().filter(|ch| ch.is_ascii_digit()).collect::<String>();
+    (!digits.is_empty()).then_some(digits)
+}
+
+fn qq_playback_key_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> String {
+    [
+        "qm_keyst",
+        "qqmusic_key",
+        "music_key",
+        "p_skey",
+        "skey",
+        "psrf_qqaccess_token",
+        "psrf_qqrefresh_token",
+        "wxrefresh_token",
+        "wxskey",
+    ]
+    .into_iter()
+    .find_map(|key| cookie.get(key).cloned())
+    .unwrap_or_default()
+}
+
+fn qq_quality_file(quality: &str) -> (&'static str, &'static str) {
+    match quality.trim().to_lowercase().as_str() {
+        "flac" | "lossless" | "hires" | "sq" | "jymaster" => ("F000", ".flac"),
+        "ape" => ("A000", ".ape"),
+        "320" | "exhigh" | "high" | "hq" => ("M800", ".mp3"),
+        "m4a" | "aac" => ("C400", ".m4a"),
+        _ => ("M500", ".mp3"),
+    }
+}
+
+fn header_value(value: &str) -> Result<HeaderValue> {
+    HeaderValue::from_str(value).map_err(internal)
+}
+
+fn internal(err: impl std::fmt::Display) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::Internal,
+        provider: "qq".to_owned(),
+        message: err.to_string(),
+        retryable: false,
+        action: None,
+        raw_message: None,
+    }
+}
+
+fn unavailable(err: impl std::fmt::Display) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::Unavailable,
+        provider: "qq".to_owned(),
+        message: err.to_string(),
+        retryable: true,
+        action: None,
+        raw_message: None,
+    }
+}
