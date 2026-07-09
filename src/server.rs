@@ -6,7 +6,10 @@ use tracing::info;
 
 use crate::{
     config::Config,
-    providers::{netease::adapter::NeteaseAdapter, registry::ProviderRegistry},
+    providers::{
+        netease::adapter::NeteaseAdapter, registry::ProviderRegistry,
+        soda::adapter::SodaAdapter,
+    },
     router,
     services::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
@@ -40,6 +43,7 @@ impl AppState {
     pub fn new(config: Config) -> Self {
         let mut providers = ProviderRegistry::default();
         providers.register(NeteaseAdapter::shared());
+        providers.register(SodaAdapter::shared());
 
         Self {
             config,
