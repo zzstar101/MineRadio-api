@@ -96,13 +96,11 @@ impl QqClient {
         .await
     }
 
-    pub async fn song_url(&self, song_mid: &str, media_mid: &str, quality: &str) -> Result<Value> {
+    pub async fn song_url(&self, song_mid: &str, _quality: &str, filename: &str) -> Result<Value> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
         let uin = qq_user_id_from_cookie_map(&cookie_map).unwrap_or_else(|| "0".to_owned());
         let auth = qq_playback_key_from_cookie_map(&cookie_map);
-        let (prefix, ext) = qq_quality_file(quality);
-        let filename = format!("{prefix}{song_mid}{media_mid}{ext}");
         self.post_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
@@ -147,6 +145,16 @@ impl QqClient {
     }
 
     pub async fn lyric(&self, song_mid: &str) -> Result<Value> {
+        self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
+            .await
+    }
+
+    pub async fn legacy_lyric(&self, song_mid: &str) -> Result<Value> {
+        self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
+            .await
+    }
+
+    async fn lyric_internal(&self, song_mid: &str, referer: Option<&str>) -> Result<Value> {
         let cookie = self.current_cookie().await;
         let login_uin = cookie
             .as_deref()
@@ -171,30 +179,71 @@ impl QqClient {
                     ("platform", "yqq.json".to_owned()),
                     ("needNewCode", "0".to_owned()),
                 ],
-                Some("https://y.qq.com/portal/player.html"),
+                referer,
                 cookie.as_deref(),
             )
             .await?;
-        if let Some(root) = body.as_object_mut() {
-            if let Some(lyric) = root.get("lyric").and_then(Value::as_str) {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(lyric) {
-                    root.insert(
-                        "lyric".to_owned(),
-                        Value::String(String::from_utf8_lossy(&decoded).to_string()),
-                    );
-                }
-            }
-            if let Some(trans) = root.get("trans").and_then(Value::as_str) {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trans) {
-                    root.insert(
-                        "trans".to_owned(),
-                        Value::String(String::from_utf8_lossy(&decoded).to_string()),
-                    );
-                }
-            }
-        }
+        decode_qq_lyric_payload(&mut body);
         Ok(body)
     }
+
+    pub async fn login_status_with_cookie(&self, user_id: &str, cookie: &str) -> Result<Value> {
+        self.get_json(
+            "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
+            &[
+                ("cid", "205360838".to_owned()),
+                ("userid", user_id.to_owned()),
+                ("reqfrom", "1".to_owned()),
+            ],
+            None,
+            Some(cookie),
+        )
+        .await
+    }
+
+    pub async fn vip_info_with_cookie(&self, user_id: &str, cookie: &str) -> Result<Value> {
+        self.get_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &[(
+                "format",
+                "json".to_owned(),
+            ), (
+                "data",
+                serde_json::to_string(&json!({
+                    "getVipInfo": {
+                        "module": "userInfo.VipQueryServer",
+                        "method": "SRFVipQuery_V2",
+                        "param": { "uin_list": [user_id] }
+                    },
+                    "getNickHead": {
+                        "module": "userInfo.BaseUserInfoServer",
+                        "method": "get_user_baseinfo_v2",
+                        "param": { "vec_uin": [user_id] }
+                    },
+                    "getVipIcon": {
+                        "module": "music.lvz.VipIconUiShowSvr",
+                        "method": "GetVipIconUiV2",
+                        "param": { "MusicID": user_id, "PID": 8 }
+                    }
+                }))
+                .unwrap_or_default(),
+            )],
+            Some("https://y.qq.com/m/myservice/index.html"),
+            Some(cookie),
+        )
+        .await
+    }
+
+    pub fn filename_for_quality(media_mid: &str, quality: &str) -> String {
+        let (prefix, ext) = qq_quality_file(quality);
+        format!("{prefix}{media_mid}{ext}")
+    }
+
+    pub fn has_playback_key(cookie: &str) -> bool {
+        let cookie_map = parse_cookie(cookie);
+        !qq_playback_key_from_cookie_map(&cookie_map).trim().is_empty()
+    }
+    
 
     pub async fn user_songlists(&self, user_id: &str) -> Result<Value> {
         self.get_json(
@@ -309,53 +358,6 @@ impl QqClient {
                 ("utf8", "1".to_owned()),
             ],
             None,
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
-    pub async fn login_status(&self, user_id: &str) -> Result<Value> {
-        self.get_json(
-            "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
-            &[
-                ("cid", "205360838".to_owned()),
-                ("userid", user_id.to_owned()),
-                ("reqfrom", "1".to_owned()),
-            ],
-            None,
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
-    pub async fn vip_info(&self, user_id: &str) -> Result<Value> {
-        self.get_json(
-            "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            &[(
-                "format",
-                "json".to_owned(),
-            ), (
-                "data",
-                serde_json::to_string(&json!({
-                    "getVipInfo": {
-                        "module": "userInfo.VipQueryServer",
-                        "method": "SRFVipQuery_V2",
-                        "param": { "uin_list": [user_id] }
-                    },
-                    "getNickHead": {
-                        "module": "userInfo.BaseUserInfoServer",
-                        "method": "get_user_baseinfo_v2",
-                        "param": { "vec_uin": [user_id] }
-                    },
-                    "getVipIcon": {
-                        "module": "music.lvz.VipIconUiShowSvr",
-                        "method": "GetVipIconUiV2",
-                        "param": { "MusicID": user_id, "PID": 8 }
-                    }
-                }))
-                .unwrap_or_default(),
-            )],
-            Some("https://y.qq.com/m/myservice/index.html"),
             self.current_cookie().await.as_deref(),
         )
         .await
@@ -535,6 +537,27 @@ fn qq_quality_file(quality: &str) -> (&'static str, &'static str) {
         "320" | "exhigh" | "high" | "hq" => ("M800", ".mp3"),
         "m4a" | "aac" => ("C400", ".m4a"),
         _ => ("M500", ".mp3"),
+    }
+}
+
+fn decode_qq_lyric_payload(body: &mut Value) {
+    if let Some(root) = body.as_object_mut() {
+        if let Some(lyric) = root.get("lyric").and_then(Value::as_str) {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(lyric) {
+                root.insert(
+                    "lyric".to_owned(),
+                    Value::String(String::from_utf8_lossy(&decoded).to_string()),
+                );
+            }
+        }
+        if let Some(trans) = root.get("trans").and_then(Value::as_str) {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trans) {
+                root.insert(
+                    "trans".to_owned(),
+                    Value::String(String::from_utf8_lossy(&decoded).to_string()),
+                );
+            }
+        }
     }
 }
 

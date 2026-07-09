@@ -5,8 +5,8 @@ use serde_json::Value;
 
 use crate::{
     providers::{
-        ProviderAdapter, Result,
         error::{ProviderError, ProviderErrorCode},
+        ProviderAdapter, Result,
     },
     services::auth_session,
     types::{
@@ -73,28 +73,29 @@ impl ProviderAdapter for QqAdapter {
             .clone()
             .unwrap_or_else(|| track.source_id.clone());
         let qualities = candidate_qualities(&requested);
-        let has_cookie = self
-            .client
-            .current_cookie()
-            .await
-            .map(|cookie| !cookie.trim().is_empty())
-            .unwrap_or(false);
+        let cookie = self.client.current_cookie().await.unwrap_or_default();
+        let has_cookie = !cookie.trim().is_empty();
+        let has_playback_key = QqClient::has_playback_key(&cookie);
         let mut last_error = None;
 
         for quality in qualities {
-            match self
-                .client
-                .song_url(&track.source_id, &media_mid, quality)
-                .await
-            {
+            let filename = QqClient::filename_for_quality(&media_mid, quality);
+            match self.client.song_url(&track.source_id, quality, &filename).await {
                 Ok(body) => {
-                    let url = qq_song_url_info(&body);
-                    if let Some(url) = url {
+                    if let Some(url) = qq_song_url_info(&body) {
                         return Ok(SongUrlResult {
                             url: Some(url),
                             quality: Some(qq_quality_label(quality).to_owned()),
                             expires_at: None,
                         });
+                    }
+                    if let Some(error) = qq_song_url_restriction(
+                        &body,
+                        &track.source_id,
+                        has_cookie,
+                        has_playback_key,
+                    ) {
+                        return Err(error);
                     }
                     last_error = Some(format!("no url for quality {quality}"));
                 }
@@ -116,9 +117,8 @@ impl ProviderAdapter for QqAdapter {
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
             provider: "qq".to_owned(),
-            message: last_error.unwrap_or_else(|| {
-                format!("qq song-url {} returned no url", track.source_id)
-            }),
+            message: last_error
+                .unwrap_or_else(|| format!("qq song-url {} returned no url", track.source_id)),
             retryable: false,
             action: None,
             raw_message: None,
@@ -137,7 +137,25 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn lyric(&self, track: &Track) -> Result<LyricPayload> {
-        let body = self.client.lyric(&track.source_id).await?;
+        let mut body = self.client.lyric(&track.source_id).await?;
+        if body
+            .get("lyric")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().is_empty())
+            .unwrap_or(true)
+        {
+            if let Ok(legacy) = self.client.legacy_lyric(&track.source_id).await {
+                if legacy
+                    .get("lyric")
+                    .and_then(Value::as_str)
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    body = legacy;
+                }
+            }
+        }
+
         Ok(map_qq_lyric_to_payload(
             &track.source_id,
             body.get("lyric").and_then(Value::as_str).unwrap_or_default(),
@@ -162,25 +180,25 @@ impl ProviderAdapter for QqAdapter {
 
         if let Some(created) = created {
             for item in read_playlist_list(&created) {
-                    let summary = map_qq_playlist_to_summary(item, None);
-                    if !summary.id.is_empty()
-                        && !is_qzone_background_playlist(&summary, item)
-                        && seen.insert(summary.id.clone())
-                    {
-                        out.push(summary);
-                    }
+                let summary = map_qq_playlist_to_summary(item, None);
+                if !summary.id.is_empty()
+                    && !is_qzone_background_playlist(&summary, item)
+                    && seen.insert(summary.id.clone())
+                {
+                    out.push(summary);
+                }
             }
         }
 
         if let Some(collected) = collected {
             for item in read_playlist_list(&collected) {
-                    let summary = map_qq_playlist_to_summary(item, None);
-                    if !summary.id.is_empty()
-                        && !is_qzone_background_playlist(&summary, item)
-                        && seen.insert(summary.id.clone())
-                    {
-                        out.push(summary);
-                    }
+                let summary = map_qq_playlist_to_summary(item, None);
+                if !summary.id.is_empty()
+                    && !is_qzone_background_playlist(&summary, item)
+                    && seen.insert(summary.id.clone())
+                {
+                    out.push(summary);
+                }
             }
         }
 
@@ -194,7 +212,13 @@ impl ProviderAdapter for QqAdapter {
             .get("cdlist")
             .and_then(Value::as_array)
             .and_then(|items| items.first());
-        if first.is_none() {
+        let needs_fallback = first
+            .and_then(|value| value.get("songlist"))
+            .and_then(Value::as_array)
+            .map(|items| items.is_empty())
+            .unwrap_or(true);
+
+        if needs_fallback {
             let official = self
                 .client
                 .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
@@ -208,9 +232,12 @@ impl ProviderAdapter for QqAdapter {
                         .map(|items| !items.is_empty())
                         .unwrap_or(false)
                 });
-            if fallback.is_some() {
-                return Ok(map_qq_playlist_to_detail(fallback, Some(id)));
+            if let Some(fallback) = fallback {
+                return Ok(map_qq_playlist_to_detail(Some(fallback), Some(id)));
             }
+        }
+
+        let Some(first) = first else {
             return Err(ProviderError {
                 code: ProviderErrorCode::NoPlaylist,
                 provider: "qq".to_owned(),
@@ -219,8 +246,9 @@ impl ProviderAdapter for QqAdapter {
                 action: None,
                 raw_message: Some(body.to_string()),
             });
-        }
-        Ok(map_qq_playlist_to_detail(first, Some(id)))
+        };
+
+        Ok(map_qq_playlist_to_detail(Some(first), Some(id)))
     }
 
     async fn login_status(&self) -> Result<ProviderLoginStatus> {
@@ -239,34 +267,17 @@ impl ProviderAdapter for QqAdapter {
             });
         };
 
-        let body = self.client.login_status(&user_id).await?;
-        let vip_info = self.client.vip_info(&user_id).await.ok();
-        let nickname = body
-            .get("data")
-            .and_then(|value| value.get("creator"))
-            .and_then(|value| value.get("nick"))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                body.get("data")
-                    .and_then(|value| value.get("creator"))
-                    .and_then(|value| value.get("hostname"))
-                    .and_then(Value::as_str)
-            })
-            .or_else(|| {
-                vip_info
-                    .as_ref()
-                    .and_then(|value| value.get("getNickHead"))
-                    .and_then(|value| value.get("data"))
-                    .and_then(|value| value.get("map_userinfo"))
-                    .and_then(|value| value.get(&user_id))
-                    .and_then(|value| value.get("nick"))
-                    .and_then(Value::as_str)
-            })
-            .map(str::to_owned);
-        Ok(ProviderLoginStatus {
-            logged_in: body.get("code").and_then(Value::as_i64) != Some(1000),
-            nickname,
-        })
+        let vip_info = self.client.vip_info_with_cookie(&user_id, &cookie).await.ok();
+        match self.client.login_status_with_cookie(&user_id, &cookie).await {
+            Ok(body) => Ok(ProviderLoginStatus {
+                logged_in: body.get("code").and_then(Value::as_i64) != Some(1000),
+                nickname: qq_login_nickname(Some(&body), vip_info.as_ref(), &user_id),
+            }),
+            Err(_) => Ok(ProviderLoginStatus {
+                logged_in: true,
+                nickname: qq_login_nickname(None, vip_info.as_ref(), &user_id),
+            }),
+        }
     }
 
     async fn logout(&self) -> Result<()> {
@@ -358,18 +369,28 @@ fn read_search_list(body: &Value) -> Vec<Value> {
 fn read_playlist_list(body: &Value) -> Vec<&Value> {
     body.get("list")
         .and_then(Value::as_array)
-        .or_else(|| body.get("data").and_then(|value| value.get("list")).and_then(Value::as_array))
-        .or_else(|| body.get("data").and_then(|value| value.get("disslist")).and_then(Value::as_array))
-        .or_else(|| body.get("data").and_then(|value| value.get("cdlist")).and_then(Value::as_array))
+        .or_else(|| {
+            body.get("data")
+                .and_then(|value| value.get("list"))
+                .and_then(Value::as_array)
+        })
+        .or_else(|| {
+            body.get("data")
+                .and_then(|value| value.get("disslist"))
+                .and_then(Value::as_array)
+        })
+        .or_else(|| {
+            body.get("data")
+                .and_then(|value| value.get("cdlist"))
+                .and_then(Value::as_array)
+        })
         .map(|items| items.iter().collect())
         .unwrap_or_default()
 }
 
 fn is_favorite_playlist(summary: &PlaylistSummary) -> bool {
     let name = summary.name.trim();
-    name.contains("我喜欢")
-        || name.contains("我的喜欢")
-        || name.eq_ignore_ascii_case("liked songs")
+    name.contains("我喜欢") || name.contains("我的喜欢") || name.eq_ignore_ascii_case("liked songs")
 }
 
 fn is_qzone_background_playlist(summary: &PlaylistSummary, raw: &Value) -> bool {
@@ -433,8 +454,97 @@ fn qq_song_url_info(body: &Value) -> Option<String> {
     Some(format!("{sip}{purl}"))
 }
 
+fn qq_song_url_restriction(
+    body: &Value,
+    track_id: &str,
+    has_cookie: bool,
+    has_playback_key: bool,
+) -> Option<ProviderError> {
+    let info = body
+        .get("req_0")
+        .and_then(|value| value.get("data"))
+        .and_then(|value| value.get("midurlinfo"))
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .or_else(|| body.as_object().map(|_| body))?;
+    let code = info
+        .get("result")
+        .or_else(|| info.get("code"))
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let raw_message = info
+        .get("msg")
+        .or_else(|| info.get("tips"))
+        .or_else(|| info.get("errmsg"))
+        .or_else(|| info.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    if !has_cookie {
+        return Some(ProviderError {
+            code: ProviderErrorCode::LoginRequired,
+            provider: "qq".to_owned(),
+            message: format!("qq song-url {track_id} requires cookie"),
+            retryable: true,
+            action: Some("login".to_owned()),
+            raw_message,
+        });
+    }
+
+    if code == 104003 && !has_playback_key {
+        return Some(ProviderError {
+            code: ProviderErrorCode::LoginRequired,
+            provider: "qq".to_owned(),
+            message: "qq playback authorization required".to_owned(),
+            retryable: true,
+            action: Some("login".to_owned()),
+            raw_message,
+        });
+    }
+
+    let lower = raw_message.as_deref().unwrap_or_default().to_lowercase();
+    if lower.contains("vip")
+        || lower.contains("pay")
+        || lower.contains("付费")
+        || lower.contains("会员")
+    {
+        return Some(ProviderError {
+            code: ProviderErrorCode::PaidRequired,
+            provider: "qq".to_owned(),
+            message: raw_message
+                .clone()
+                .unwrap_or_else(|| "qq paid playback required".to_owned()),
+            retryable: false,
+            action: Some("upgrade".to_owned()),
+            raw_message,
+        });
+    }
+
+    if code == 104003 {
+        return Some(ProviderError {
+            code: ProviderErrorCode::CopyrightUnavailable,
+            provider: "qq".to_owned(),
+            message: raw_message
+                .clone()
+                .unwrap_or_else(|| format!("qq song-url {track_id} unavailable")),
+            retryable: false,
+            action: Some("switch_source".to_owned()),
+            raw_message,
+        });
+    }
+
+    None
+}
+
 fn find_file_object(body: &Value) -> Option<&Value> {
-    if let Some(file) = body.get("songinfo").and_then(|value| value.get("data")).and_then(|value| value.get("track_info")).and_then(|value| value.get("file")) {
+    if let Some(file) = body
+        .get("songinfo")
+        .and_then(|value| value.get("data"))
+        .and_then(|value| value.get("track_info"))
+        .and_then(|value| value.get("file"))
+    {
         return Some(file);
     }
     body.get("songinfo")
@@ -463,6 +573,31 @@ fn file_supports_quality(file: Option<&Value>, quality: &str) -> bool {
     })
 }
 
+fn qq_login_nickname(body: Option<&Value>, vip_info: Option<&Value>, user_id: &str) -> Option<String> {
+    body.and_then(|value| {
+        value.get("data")
+            .and_then(|value| value.get("creator"))
+            .and_then(|value| value.get("nick"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                value.get("data")
+                    .and_then(|value| value.get("creator"))
+                    .and_then(|value| value.get("hostname"))
+                    .and_then(Value::as_str)
+            })
+    })
+    .or_else(|| {
+        vip_info
+            .and_then(|value| value.get("getNickHead"))
+            .and_then(|value| value.get("data"))
+            .and_then(|value| value.get("map_userinfo"))
+            .and_then(|value| value.get(user_id))
+            .and_then(|value| value.get("nick"))
+            .and_then(Value::as_str)
+    })
+    .map(str::to_owned)
+}
+
 fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
     let map = cookie
         .split(';')
@@ -476,7 +611,9 @@ fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or_default();
     let raw = if login_type == 2 {
-        map.get("wxuin").or_else(|| map.get("uin")).or_else(|| map.get("p_uin"))
+        map.get("wxuin")
+            .or_else(|| map.get("uin"))
+            .or_else(|| map.get("p_uin"))
     } else {
         map.get("uin")
             .or_else(|| map.get("qqmusic_uin"))
@@ -491,8 +628,14 @@ fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
 mod tests {
     use serde_json::json;
 
-    use super::{is_favorite_playlist, is_qzone_background_playlist, read_playlist_list, read_search_list};
-    use crate::types::PlaylistSummary;
+    use super::{
+        is_favorite_playlist, is_qzone_background_playlist, qq_login_nickname,
+        qq_song_url_restriction, read_playlist_list, read_search_list,
+    };
+    use crate::{
+        providers::error::ProviderErrorCode,
+        types::PlaylistSummary,
+    };
 
     #[test]
     fn read_search_list_prefers_nested_song_list() {
@@ -539,5 +682,40 @@ mod tests {
         assert!(is_favorite_playlist(&favorite));
         assert!(!is_favorite_playlist(&ordinary));
         assert!(is_qzone_background_playlist(&ordinary, &qzone_raw));
+    }
+
+    #[test]
+    fn qq_song_url_restriction_maps_missing_playback_key() {
+        let body = json!({
+            "req_0": {
+                "data": {
+                    "midurlinfo": [{
+                        "result": 104003,
+                        "msg": "no vkey"
+                    }]
+                }
+            }
+        });
+        let err = qq_song_url_restriction(&body, "track-1", true, false).unwrap();
+        assert!(matches!(err.code, ProviderErrorCode::LoginRequired));
+        assert_eq!(err.action.as_deref(), Some("login"));
+        assert_eq!(err.raw_message.as_deref(), Some("no vkey"));
+    }
+
+    #[test]
+    fn qq_login_nickname_reads_vip_fallback() {
+        let vip = json!({
+            "getNickHead": {
+                "data": {
+                    "map_userinfo": {
+                        "123": { "nick": "QQ昵称" }
+                    }
+                }
+            }
+        });
+        assert_eq!(
+            qq_login_nickname(None, Some(&vip), "123").as_deref(),
+            Some("QQ昵称")
+        );
     }
 }
