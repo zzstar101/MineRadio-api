@@ -1,6 +1,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use serde_json::{Map, Value};
@@ -34,6 +35,7 @@ const SENSITIVE_VALUE_PATTERNS: [&str; 10] = [
     "access_token",
     "__csrf",
 ];
+static SIDECAR_LOGGER: OnceLock<SidecarLogger> = OnceLock::new();
 
 pub fn init(config: &Config) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -43,13 +45,10 @@ pub fn init(config: &Config) {
         .with(filter)
         .with(fmt_layer)
         .init();
-
-    if let Some(path) = &config.log_file {
-        tracing::warn!(
-            log_file = %path.display(),
-            "file logging is configured but not implemented yet"
-        );
-    }
+    let _ = SIDECAR_LOGGER.set(create_sidecar_logger(SidecarLoggerOptions {
+        file_path: config.log_file.clone(),
+        max_bytes: None,
+    }));
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +93,22 @@ pub fn create_sidecar_logger(opts: SidecarLoggerOptions) -> SidecarLogger {
         file_path,
         max_bytes: opts.max_bytes.unwrap_or(DEFAULT_MAX_BYTES).max(1),
     }
+}
+
+pub fn global_logger() -> Option<&'static SidecarLogger> {
+    SIDECAR_LOGGER.get()
+}
+
+pub async fn log_runtime(entry: Value) {
+    if let Some(logger) = global_logger() {
+        logger.log(entry).await;
+    }
+}
+
+pub fn spawn_runtime_log(entry: Value) {
+    tokio::spawn(async move {
+        log_runtime(entry).await;
+    });
 }
 
 pub async fn append_sidecar_log(
@@ -212,4 +227,54 @@ fn chrono_like_now() -> String {
 #[allow(dead_code)]
 fn _file_size(path: &Path) -> Option<u64> {
     fs::metadata(path).ok().map(|metadata| metadata.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_log_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("mineradio-{name}-{nanos}.jsonl"))
+    }
+
+    #[test]
+    fn redact_log_value_hides_sensitive_keys_and_values() {
+        let redacted = redact_log_value(&json!({
+            "cookie": "keep-out",
+            "nested": {
+                "authorizationHeader": "Bearer secret-token",
+                "safe": "visible"
+            }
+        }));
+
+        assert_eq!(redacted["redacted"], REDACTED);
+        assert_eq!(redacted["nested"]["redacted"], REDACTED);
+        assert_eq!(redacted["nested"]["safe"], "visible");
+    }
+
+    #[tokio::test]
+    async fn append_sidecar_log_writes_file_and_trims_old_lines() {
+        let path = unique_test_log_path("sidecar-log");
+        append_sidecar_log(&path, json!({ "event": "first" }), Some(512))
+            .await
+            .expect("first log write should succeed");
+        append_sidecar_log(&path, json!({ "event": "second" }), Some(80))
+            .await
+            .expect("second log write should succeed");
+
+        let contents = tokio::fs::read_to_string(&path)
+            .await
+            .expect("log file should exist");
+
+        assert!(contents.contains("\"event\":\"second\""));
+        assert!(!contents.contains("\"event\":\"first\""));
+
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }

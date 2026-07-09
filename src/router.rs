@@ -3,11 +3,13 @@ use axum::{
     Router,
     extract::{Path, Query, Request, State},
     http::{Method, StatusCode},
+    middleware::{self, Next},
     response::Response,
     routing::{get, post},
 };
+use serde_json::json;
 use serde::{Deserialize, Serialize};
-use tower_http::trace::TraceLayer;
+use std::time::Instant;
 
 use crate::{
     http::response::{cors_preflight, fail, json, ok},
@@ -17,7 +19,7 @@ use crate::{
     },
     providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     server::AppState,
-    services::{self, cross_source_resolver, weather_radio::WeatherRadioParams},
+    services::{self, cross_source_resolver, sidecar_log, weather_radio::WeatherRadioParams},
     types::{SongUrlOptions, Track},
 };
 
@@ -110,8 +112,23 @@ pub fn build(state: AppState) -> Router {
             post(provider_playlist_add_song).options(preflight),
         )
         .fallback(fallback)
-        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(request_logging_middleware))
         .with_state(state)
+}
+
+async fn request_logging_middleware(request: Request, next: Next) -> Response {
+    let started_at = Instant::now();
+    let method = request.method().to_string();
+    let path = request.uri().path().to_owned();
+    let response = next.run(request).await;
+    sidecar_log::spawn_runtime_log(json!({
+        "event": "request",
+        "method": method,
+        "path": path,
+        "status": response.status().as_u16(),
+        "durationMs": started_at.elapsed().as_secs_f64() * 1000.0
+    }));
+    response
 }
 
 async fn health(State(state): State<AppState>) -> impl axum::response::IntoResponse {
@@ -639,6 +656,17 @@ fn internal_error(message: impl Into<String>) -> Response {
 }
 
 fn provider_error_response(err: ProviderError) -> Response {
+    let error_entry = json!({
+        "event": "provider-error",
+        "provider": err.provider,
+        "code": format!("{:?}", err.code).to_uppercase(),
+        "message": err.message,
+        "retryable": err.retryable,
+        "action": err.action,
+        "rawMessage": err.raw_message,
+    });
+    services::diagnostics::push_recent_error(error_entry.clone());
+    sidecar_log::spawn_runtime_log(error_entry);
     let status = match err.code {
         ProviderErrorCode::LoginRequired => StatusCode::UNAUTHORIZED,
         ProviderErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
@@ -660,6 +688,14 @@ fn provider_error_response(err: ProviderError) -> Response {
 fn anyhow_error_response(err: anyhow::Error) -> Response {
     match err.downcast::<ProviderError>() {
         Ok(provider_err) => provider_error_response(provider_err),
-        Err(err) => internal_error(err.to_string()),
+        Err(err) => {
+            let entry = json!({
+                "event": "internal-error",
+                "message": err.to_string()
+            });
+            services::diagnostics::push_recent_error(entry.clone());
+            sidecar_log::spawn_runtime_log(entry);
+            internal_error(err.to_string())
+        }
     }
 }
