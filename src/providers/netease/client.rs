@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use reqwest::{
-    Client,
+    Client, Response,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
 };
 use serde_json::{Value, json};
@@ -32,6 +32,12 @@ const DEFAULT_OSVER: &str = "16.2";
 #[derive(Clone)]
 pub struct NeteaseClient {
     http: Client,
+}
+
+#[derive(Clone, Debug)]
+pub struct NeteaseClientResponse {
+    pub body: Value,
+    pub cookie: Option<String>,
 }
 
 impl NeteaseClient {
@@ -158,6 +164,91 @@ impl NeteaseClient {
         .await
     }
 
+    pub async fn dj_hot(&self, limit: u32, offset: u32) -> Result<Value> {
+        self.request_weapi(
+            "/api/djradio/hot/v1",
+            json!({
+                "limit": limit,
+                "offset": offset
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn dj_detail(&self, rid: &str) -> Result<Value> {
+        self.request_weapi(
+            "/api/djradio/v2/get",
+            json!({
+                "id": rid
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn dj_program(&self, rid: &str, limit: u32, offset: u32, asc: bool) -> Result<Value> {
+        self.request_weapi(
+            "/api/dj/program/byradio",
+            json!({
+                "radioId": rid,
+                "limit": limit,
+                "offset": offset,
+                "asc": asc
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn dj_sublist(&self, limit: u32, offset: u32) -> Result<Value> {
+        self.request_weapi(
+            "/api/djradio/get/subed",
+            json!({
+                "limit": limit,
+                "offset": offset,
+                "total": true
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn user_audio(&self, uid: &str) -> Result<Value> {
+        self.request_weapi(
+            "/api/djradio/get/byuser",
+            json!({
+                "userId": uid
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn dj_paygift(&self, limit: u32, offset: u32) -> Result<Value> {
+        self.request_weapi(
+            "/api/djradio/home/paygift/list",
+            json!({
+                "limit": limit,
+                "offset": offset,
+                "_nmclfl": 1
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn record_recent_voice(&self, limit: u32) -> Result<Value> {
+        self.request_weapi(
+            "/api/play-record/voice/list",
+            json!({
+                "limit": limit
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
     pub async fn login_status(&self) -> Result<Value> {
         self.request_weapi(
             "/api/w/nuser/account/get",
@@ -184,6 +275,27 @@ impl NeteaseClient {
             "/api/logout",
             json!({ "e_r": false }),
             self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn login_qr_key(&self, cookie: Option<&str>) -> Result<NeteaseClientResponse> {
+        self.request_weapi_response("/api/login/qrcode/unikey", json!({ "type": 3 }), cookie)
+            .await
+    }
+
+    pub async fn login_qr_check(
+        &self,
+        key: &str,
+        cookie: Option<&str>,
+    ) -> Result<NeteaseClientResponse> {
+        self.request_weapi_response(
+            "/api/login/qrcode/client/login",
+            json!({
+                "key": key,
+                "type": 3
+            }),
+            cookie,
         )
         .await
     }
@@ -256,6 +368,15 @@ impl NeteaseClient {
     }
 
     async fn request_weapi(&self, uri: &str, payload: Value, cookie: Option<&str>) -> Result<Value> {
+        Ok(self.request_weapi_response(uri, payload, cookie).await?.body)
+    }
+
+    async fn request_weapi_response(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+    ) -> Result<NeteaseClientResponse> {
         let cookie_map = process_cookie_map(parse_cookie_header(cookie.unwrap_or_default()));
         let csrf = cookie_map.get("__csrf").cloned().unwrap_or_default();
         let mut body = payload.as_object().cloned().unwrap_or_default();
@@ -274,7 +395,7 @@ impl NeteaseClient {
             );
         }
 
-        self.post_form(
+        self.post_form_response(
             format!("{DOMAIN}/weapi/{}", uri.trim_start_matches("/api/")),
             headers,
             HashMap::from([
@@ -306,20 +427,22 @@ impl NeteaseClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-www-form-urlencoded"));
         headers.insert(COOKIE, header_value(&header_cookie_string(&header))?);
 
-        self.post_form(
+        Ok(self
+            .post_form_response(
             format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
             headers,
             HashMap::from([("params".to_owned(), encrypted.params)]),
         )
-        .await
+        .await?
+        .body)
     }
 
-    async fn post_form(
+    async fn post_form_response(
         &self,
         url: String,
         headers: HeaderMap,
         form: HashMap<String, String>,
-    ) -> Result<Value> {
+    ) -> Result<NeteaseClientResponse> {
         let response = self
             .http
             .post(url)
@@ -329,6 +452,7 @@ impl NeteaseClient {
             .await
             .context("send netease upstream request")
             .map_err(|err| unavailable_error(err.to_string()))?;
+        let cookie = cookie_from_response(&response);
 
         let status = response.status();
         let text = response
@@ -349,7 +473,7 @@ impl NeteaseClient {
             .unwrap_or(i64::from(status.as_u16()));
         if (200..300).contains(&status.as_u16()) && matches!(code, 200 | 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
         {
-            return Ok(body);
+            return Ok(NeteaseClientResponse { body, cookie });
         }
 
         Err(ProviderError {
@@ -535,5 +659,39 @@ fn unavailable_error(message: String) -> ProviderError {
         retryable: true,
         action: None,
         raw_message: Some(message),
+    }
+}
+
+fn cookie_from_response(response: &Response) -> Option<String> {
+    let values = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(split_combined_set_cookie_header)
+        .filter_map(cookie_kv_from_set_cookie)
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(";"))
+    }
+}
+
+fn split_combined_set_cookie_header(header: &str) -> Vec<String> {
+    header
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn cookie_kv_from_set_cookie(header: String) -> Option<String> {
+    let pair = header.split(';').next()?.trim();
+    if pair.is_empty() || !pair.contains('=') {
+        None
+    } else {
+        Some(pair.to_owned())
     }
 }

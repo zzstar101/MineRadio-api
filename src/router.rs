@@ -19,7 +19,9 @@ use crate::{
     },
     providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     server::AppState,
-    services::{self, cross_source_resolver, sidecar_log, weather_radio::WeatherRadioParams},
+    services::{
+        self, cross_source_resolver, podcast, sidecar_log, weather_radio::WeatherRadioParams,
+    },
     types::{SongUrlOptions, Track},
 };
 
@@ -49,6 +51,13 @@ pub fn build(state: AppState) -> Router {
             get(soda_audio_proxy).options(preflight),
         )
         .route("/weather/radio", get(weather_radio).options(preflight))
+        .route("/podcast/search", get(podcast_search).options(preflight))
+        .route("/podcast/hot", get(podcast_hot).options(preflight))
+        .route("/podcast/detail", get(podcast_detail).options(preflight))
+        .route("/podcast/programs", get(podcast_programs).options(preflight))
+        .route("/podcast/my", get(podcast_my).options(preflight))
+        .route("/podcast/my/items", get(podcast_my_items).options(preflight))
+        .route("/podcast/dj-beatmap", get(podcast_dj_beatmap).options(preflight))
         .route("/search", get(search).options(preflight))
         .route("/song-url", post(song_url).options(preflight))
         .route(
@@ -193,6 +202,47 @@ struct SessionCookieRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct PodcastSearchQuery {
+    keywords: Option<String>,
+    keyword: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodcastPageQuery {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodcastDetailQuery {
+    id: Option<String>,
+    rid: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodcastMyItemsQuery {
+    key: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodcastProgramsQuery {
+    id: Option<String>,
+    rid: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodcastBeatmapQuery {
+    url: Option<String>,
+    duration: Option<u32>,
+    intro: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LikeBody {
     id: String,
     liked: bool,
@@ -269,6 +319,137 @@ async fn weather_radio(
 ) -> Response {
     match state.services.weather_radio.build(params).await {
         Ok(value) => ok(value),
+        Err(err) => internal_error(err.to_string()),
+    }
+}
+
+async fn podcast_search(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastSearchQuery>,
+) -> Response {
+    let keywords = query
+        .keywords
+        .or(query.keyword)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    match state
+        .services
+        .podcast
+        .search(podcast::PodcastSearchParams {
+            keywords,
+            limit: query.limit.unwrap_or(18),
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn podcast_hot(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastPageQuery>,
+) -> Response {
+    match state
+        .services
+        .podcast
+        .hot(podcast::PodcastPageParams {
+            limit: query.limit.unwrap_or(18),
+            offset: query.offset.unwrap_or(0),
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) => internal_error(err.to_string()),
+    }
+}
+
+async fn podcast_detail(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastDetailQuery>,
+) -> Response {
+    match state
+        .services
+        .podcast
+        .detail(podcast::PodcastDetailParams {
+            rid: query.id.or(query.rid).unwrap_or_default(),
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn podcast_programs(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastProgramsQuery>,
+) -> Response {
+    match state
+        .services
+        .podcast
+        .programs(podcast::PodcastProgramsParams {
+            rid: query.id.or(query.rid).unwrap_or_default(),
+            limit: query.limit.unwrap_or(30),
+            offset: query.offset.unwrap_or(0),
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+async fn podcast_my(State(state): State<AppState>) -> Response {
+    match state.services.podcast.my().await {
+        Ok(value) => ok(value),
+        Err(err) => internal_error(err.to_string()),
+    }
+}
+
+async fn podcast_my_items(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastMyItemsQuery>,
+) -> Response {
+    match state
+        .services
+        .podcast
+        .my_items(podcast::PodcastMyItemsParams {
+            key: query.key.unwrap_or_else(|| "collect".to_owned()),
+            limit: query.limit.unwrap_or(36),
+            offset: query.offset.unwrap_or(0),
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) => internal_error(err.to_string()),
+    }
+}
+
+async fn podcast_dj_beatmap(
+    State(state): State<AppState>,
+    Query(query): Query<PodcastBeatmapQuery>,
+) -> Response {
+    match state
+        .services
+        .podcast
+        .dj_beatmap(podcast::PodcastBeatmapParams {
+            url: query.url.unwrap_or_default(),
+            duration_sec: query.duration.unwrap_or(0),
+            intro_sec: query.intro,
+        })
+        .await
+    {
+        Ok(value) => ok(value),
+        Err(err) if err.to_string() == "Invalid audio url" => bad_request(err.to_string()),
+        Err(err) if err.to_string() == "podcast analyzer unavailable" => {
+            fail(
+                StatusCode::NOT_IMPLEMENTED,
+                "NOT_IMPLEMENTED",
+                err.to_string(),
+            )
+        }
         Err(err) => internal_error(err.to_string()),
     }
 }
@@ -350,7 +531,10 @@ async fn provider_login_qr_key(
             }),
             Err(err) => internal_error(err.to_string()),
         },
-        "netease" => not_implemented("netease QR login still needs a wired API client"),
+        "netease" => match state.services.netease_qr_login.create_key().await {
+            Ok(data) => ok(data),
+            Err(err) => internal_error(err.to_string()),
+        },
         _ => unknown_provider(&pid),
     }
 }
@@ -370,7 +554,10 @@ async fn provider_login_qr_create(
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
         },
-        "netease" => not_implemented("netease QR login still needs a wired API client"),
+        "netease" => match state.services.netease_qr_login.create_image(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
         _ => unknown_provider(&pid),
     }
 }
@@ -390,7 +577,10 @@ async fn provider_login_qr_check(
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
         },
-        "netease" => not_implemented("netease QR login still needs a wired API client"),
+        "netease" => match state.services.netease_qr_login.check(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
         _ => unknown_provider(&pid),
     }
 }
