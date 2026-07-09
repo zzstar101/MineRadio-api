@@ -51,6 +51,7 @@ pub fn build(state: AppState) -> Router {
             get(soda_audio_proxy).options(preflight),
         )
         .route("/weather/radio", get(weather_radio).options(preflight))
+        .route("/discover/home", get(discover_home).options(preflight))
         .route("/podcast/search", get(podcast_search).options(preflight))
         .route("/podcast/hot", get(podcast_hot).options(preflight))
         .route("/podcast/detail", get(podcast_detail).options(preflight))
@@ -318,6 +319,19 @@ async fn weather_radio(
     Query(params): Query<WeatherRadioParams>,
 ) -> Response {
     match state.services.weather_radio.build(params).await {
+        Ok(value) => ok(value),
+        Err(err) => internal_error(err.to_string()),
+    }
+}
+
+async fn discover_home(State(state): State<AppState>) -> Response {
+    match services::discover_home::build_discover_home(services::discover_home::DiscoverHomeServiceOptions {
+        provider_adapters: state.providers.all(),
+        podcast: state.services.podcast.clone(),
+        discover_requester: Some(state.services.discover_requester.clone()),
+    })
+    .await
+    {
         Ok(value) => ok(value),
         Err(err) => internal_error(err.to_string()),
     }

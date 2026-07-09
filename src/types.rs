@@ -75,9 +75,14 @@ pub struct PlaylistDetail {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderLoginStatus {
     pub logged_in: bool,
     pub nickname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

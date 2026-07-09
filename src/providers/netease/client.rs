@@ -249,6 +249,37 @@ impl NeteaseClient {
         .await
     }
 
+    pub async fn personalized(&self, limit: u32) -> Result<Value> {
+        self.request_weapi(
+            "/api/personalized/playlist",
+            json!({
+                "limit": limit,
+                "total": true,
+                "n": 1000
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn recommend_resource(&self) -> Result<Value> {
+        self.request_weapi(
+            "/api/v1/discovery/recommend/resource",
+            json!({}),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn recommend_songs(&self) -> Result<Value> {
+        self.request_weapi(
+            "/api/v3/discovery/recommend/songs",
+            json!({}),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
     pub async fn login_status(&self) -> Result<Value> {
         self.request_weapi(
             "/api/w/nuser/account/get",

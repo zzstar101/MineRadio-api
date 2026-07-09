@@ -204,18 +204,22 @@ impl ProviderAdapter for SodaAdapter {
             return Ok(ProviderLoginStatus {
                 logged_in: false,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         };
         if cookie.trim().is_empty() {
             return Ok(ProviderLoginStatus {
                 logged_in: false,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         }
         let body = self.client.login_status().await?;
+        let my_info = body.get("my_info");
         let logged_in = body.get("status_code").and_then(Value::as_i64) == Some(0)
-            && body
-                .get("my_info")
+            && my_info
                 .and_then(|info| info.get("id"))
                 .map(value_to_string)
                 .filter(|value| !value.is_empty())
@@ -223,11 +227,23 @@ impl ProviderAdapter for SodaAdapter {
 
         Ok(ProviderLoginStatus {
             logged_in,
-            nickname: body
-                .get("my_info")
+            nickname: my_info
                 .and_then(|info| info.get("nickname"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            user_id: my_info
+                .and_then(|info| info.get("id"))
+                .map(value_to_string)
+                .filter(|value| !value.is_empty()),
+            avatar_url: my_info
+                .and_then(|info| {
+                    info.get("avatar_url")
+                        .or_else(|| info.get("avatarUrl"))
+                        .or_else(|| info.get("avatar"))
+                    })
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .filter(|value| !value.is_empty()),
         })
     }
 

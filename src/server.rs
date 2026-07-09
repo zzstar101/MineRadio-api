@@ -19,6 +19,7 @@ use crate::{
         netease_qr_login::{
             NeteaseQrLoginService, create_netease_qr_login_service_with_client,
         },
+        discover_home::DiscoverRequester,
         podcast::{PodcastService, create_podcast_service_with_client},
         qq_qr_login::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         sidecar_log,
@@ -31,6 +32,7 @@ use crate::{
 #[derive(Clone)]
 pub struct AppServices {
     pub audio_proxy: AudioProxy,
+    pub discover_requester: Arc<dyn DiscoverRequester>,
     pub image_proxy: ImageProxy,
     pub netease_qr_login: Arc<NeteaseQrLoginService>,
     pub podcast: PodcastService,
@@ -50,8 +52,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
+        let netease_client = Arc::new(NeteaseClient::new());
         let mut providers = ProviderRegistry::default();
-        providers.register(NeteaseAdapter::shared());
+        providers.register(Arc::new(NeteaseAdapter::new(netease_client.clone())));
         providers.register(QqAdapter::shared());
         providers.register(SodaAdapter::shared());
 
@@ -60,10 +63,11 @@ impl AppState {
             providers: Arc::new(providers),
             started_at: SystemTime::now(),
             services: AppServices {
-                netease_qr_login: Arc::new(create_netease_qr_login_service_with_client(Arc::new(
-                    NeteaseClient::new(),
-                ))),
-                podcast: create_podcast_service_with_client(Arc::new(NeteaseClient::new())),
+                discover_requester: netease_client.clone(),
+                netease_qr_login: Arc::new(create_netease_qr_login_service_with_client(
+                    netease_client.clone(),
+                )),
+                podcast: create_podcast_service_with_client(netease_client),
                 audio_proxy: create_audio_proxy(AudioProxyDeps::default()),
                 image_proxy: create_image_proxy(ImageProxyDeps::default()),
                 qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps::default())),

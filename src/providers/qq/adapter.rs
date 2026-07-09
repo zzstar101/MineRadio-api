@@ -257,6 +257,8 @@ impl ProviderAdapter for QqAdapter {
             return Ok(ProviderLoginStatus {
                 logged_in: false,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         };
         let user_id = qq_user_id_from_cookie(&cookie);
@@ -264,6 +266,8 @@ impl ProviderAdapter for QqAdapter {
             return Ok(ProviderLoginStatus {
                 logged_in: true,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         };
 
@@ -272,10 +276,14 @@ impl ProviderAdapter for QqAdapter {
             Ok(body) => Ok(ProviderLoginStatus {
                 logged_in: body.get("code").and_then(Value::as_i64) != Some(1000),
                 nickname: qq_login_nickname(Some(&body), vip_info.as_ref(), &user_id),
+                user_id: Some(user_id.clone()),
+                avatar_url: qq_login_avatar_url(Some(&body), vip_info.as_ref(), &user_id),
             }),
             Err(_) => Ok(ProviderLoginStatus {
                 logged_in: true,
                 nickname: qq_login_nickname(None, vip_info.as_ref(), &user_id),
+                user_id: Some(user_id.clone()),
+                avatar_url: qq_login_avatar_url(None, vip_info.as_ref(), &user_id),
             }),
         }
     }
@@ -596,6 +604,38 @@ fn qq_login_nickname(body: Option<&Value>, vip_info: Option<&Value>, user_id: &s
             .and_then(Value::as_str)
     })
     .map(str::to_owned)
+}
+
+fn qq_login_avatar_url(
+    body: Option<&Value>,
+    vip_info: Option<&Value>,
+    user_id: &str,
+) -> Option<String> {
+    body.and_then(|value| {
+        value.get("data")
+            .and_then(|value| value.get("creator"))
+            .and_then(|value| {
+                value.get("headpic")
+                    .or_else(|| value.get("pic"))
+                    .or_else(|| value.get("avatarUrl"))
+            })
+            .and_then(Value::as_str)
+    })
+    .or_else(|| {
+        vip_info
+            .and_then(|value| value.get("getNickHead"))
+            .and_then(|value| value.get("data"))
+            .and_then(|value| value.get("map_userinfo"))
+            .and_then(|value| value.get(user_id))
+            .and_then(|value| {
+                value.get("headurl")
+                    .or_else(|| value.get("picurl"))
+                    .or_else(|| value.get("avatarUrl"))
+            })
+            .and_then(Value::as_str)
+    })
+    .map(str::to_owned)
+    .filter(|value| !value.is_empty())
 }
 
 fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {

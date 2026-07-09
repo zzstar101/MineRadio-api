@@ -55,12 +55,16 @@ impl NeteaseAdapter {
             return Ok(ProviderLoginStatus {
                 logged_in: false,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         };
         if cookie.trim().is_empty() {
             return Ok(ProviderLoginStatus {
                 logged_in: false,
                 nickname: None,
+                user_id: None,
+                avatar_url: None,
             });
         }
 
@@ -75,6 +79,15 @@ impl NeteaseAdapter {
                 .and_then(|value| value.get("nickname"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            user_id: profile
+                .and_then(|value| value.get("userId"))
+                .map(read_id_like)
+                .filter(|value| !value.is_empty()),
+            avatar_url: profile
+                .and_then(|value| value.get("avatarUrl"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .filter(|value| !value.is_empty()),
         })
     }
 }
