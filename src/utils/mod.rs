@@ -1,4 +1,5 @@
 pub mod cryptors;
+pub mod podcast_analyzer;
 
 #[allow(unused_imports)]
 pub use cryptors::{
@@ -8,3 +9,5 @@ pub use cryptors::{
     encrypt_rsa, encrypt_weapi, encrypt_weapi_rsa, from_hex, generate_weapi_secret_key,
     to_hex_lower, to_hex_upper,
 };
+#[allow(unused_imports)]
+pub use podcast_analyzer::{PodcastDjAnalyzerParams, analyze_podcast_dj_beatmap};

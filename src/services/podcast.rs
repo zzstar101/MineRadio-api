@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{providers::netease::client::NeteaseClient, services::auth_session};
+use crate::{providers::netease::client::NeteaseClient, services::auth_session, utils};
 
 pub type NeteaseResponse = Value;
 
@@ -36,11 +36,17 @@ pub struct PodcastLoginInfo {
 #[derive(Clone, Default)]
 pub struct PodcastServiceDeps {
     pub requester: Option<Arc<dyn PodcastRequester>>,
+    pub beatmap_analyzer: Option<Arc<dyn PodcastBeatmapAnalyzer>>,
 }
 
 #[derive(Clone, Default)]
 pub struct PodcastService {
     deps: PodcastServiceDeps,
+}
+
+#[async_trait]
+pub trait PodcastBeatmapAnalyzer: Send + Sync {
+    async fn analyze(&self, url: &str, params: &PodcastBeatmapParams) -> anyhow::Result<Value>;
 }
 
 impl PodcastService {
@@ -58,7 +64,10 @@ impl PodcastService {
                 ("limit", Value::from(clamp_u32(params.limit, 6, 30, 18))),
             ]))
             .await?;
-        let result = body_of(&response).get("result").cloned().unwrap_or(Value::Null);
+        let result = body_of(&response)
+            .get("result")
+            .cloned()
+            .unwrap_or(Value::Null);
         let raw = first_array_from(&result, &["djRadios", "djradios", "radios"]);
 
         let result_record = record(&result);
@@ -82,7 +91,10 @@ impl PodcastService {
             .requester()?
             .dj_hot(with_auth_params(hashmap([
                 ("limit", Value::from(clamp_u32(params.limit, 6, 30, 18))),
-                ("offset", Value::from(clamp_u32(params.offset, 0, u32::MAX, 0))),
+                (
+                    "offset",
+                    Value::from(clamp_u32(params.offset, 0, u32::MAX, 0)),
+                ),
             ])))
             .await?;
         let body = body_of(&response);
@@ -135,7 +147,10 @@ impl PodcastService {
             .dj_program(with_auth_params(hashmap([
                 ("rid", Value::String(rid.clone())),
                 ("limit", Value::from(clamp_u32(params.limit, 10, 60, 30))),
-                ("offset", Value::from(clamp_u32(params.offset, 0, u32::MAX, 0))),
+                (
+                    "offset",
+                    Value::from(clamp_u32(params.offset, 0, u32::MAX, 0)),
+                ),
                 ("asc", Value::Bool(false)),
             ])))
             .await?;
@@ -148,17 +163,17 @@ impl PodcastService {
             raw
         };
 
-        let radio = data_raw.first().map(record).and_then(|item| item.get("radio").cloned());
-        let radio = radio
-            .as_ref()
-            .map(map_podcast_radio)
-            .unwrap_or_else(|| {
-                json!({
-                    "id": rid,
-                    "rid": rid,
-                    "name": ""
-                })
-            });
+        let radio = data_raw
+            .first()
+            .map(record)
+            .and_then(|item| item.get("radio").cloned());
+        let radio = radio.as_ref().map(map_podcast_radio).unwrap_or_else(|| {
+            json!({
+                "id": rid,
+                "rid": rid,
+                "name": ""
+            })
+        });
 
         Ok(json!({
             "radio": radio.clone(),
@@ -228,7 +243,10 @@ impl PodcastService {
         let mut out = podcast_collection_meta(&key, &data.items);
         if let Value::Object(ref mut map) = out {
             map.insert("loggedIn".to_owned(), Value::Bool(true));
-            map.insert("itemType".to_owned(), Value::String(data.item_type.to_owned()));
+            map.insert(
+                "itemType".to_owned(),
+                Value::String(data.item_type.to_owned()),
+            );
             map.insert("items".to_owned(), Value::Array(data.items));
         }
         Ok(out)
@@ -238,8 +256,23 @@ impl PodcastService {
         if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
             anyhow::bail!("Invalid audio url");
         }
-        // TODO: wire Rust-side podcast analyzer after the external analyzer contract is finalized.
-        anyhow::bail!("podcast analyzer unavailable")
+        let map = if let Some(analyzer) = self.deps.beatmap_analyzer.as_ref() {
+            analyzer.analyze(&params.url, &params).await?
+        } else {
+            utils::analyze_podcast_dj_beatmap(
+                &params.url,
+                &utils::PodcastDjAnalyzerParams {
+                    duration_sec: params.duration_sec,
+                    intro_sec: params.intro_sec,
+                    user_agent: None,
+                },
+            )
+            .await?
+        };
+        Ok(json!({
+            "ok": true,
+            "map": map
+        }))
     }
 
     pub fn deps(&self) -> &PodcastServiceDeps {
@@ -298,8 +331,10 @@ impl PodcastService {
                     info.user_id.clone().unwrap_or(Value::Null),
                 )])))
                 .await?;
-            let raw =
-                first_array_from(&Value::Object(body_of(&response)), &["data", "djRadios", "djradios", "radios"]);
+            let raw = first_array_from(
+                &Value::Object(body_of(&response)),
+                &["data", "djRadios", "djradios", "radios"],
+            );
             return Ok(MyPodcastItems {
                 item_type: "radio",
                 items: raw
@@ -316,8 +351,10 @@ impl PodcastService {
                     ("offset", Value::from(offset)),
                 ])))
                 .await?;
-            let raw =
-                first_array_from(&Value::Object(body_of(&response)), &["data", "djRadios", "djradios", "radios"]);
+            let raw = first_array_from(
+                &Value::Object(body_of(&response)),
+                &["data", "djRadios", "djradios", "radios"],
+            );
             return Ok(MyPodcastItems {
                 item_type: "radio",
                 items: raw
@@ -331,13 +368,18 @@ impl PodcastService {
             let response = requester
                 .record_recent_voice(with_auth_params(hashmap([("limit", Value::from(limit))])))
                 .await?;
-            let raw = first_array_from(&Value::Object(body_of(&response)), &["data", "list", "resources"]);
+            let raw = first_array_from(
+                &Value::Object(body_of(&response)),
+                &["data", "list", "resources"],
+            );
             return Ok(MyPodcastItems {
                 item_type: "voice",
                 items: raw
                     .iter()
                     .map(map_podcast_voice)
-                    .filter(|item| has_non_empty_key(item, "id") && has_non_empty_key(item, "title"))
+                    .filter(|item| {
+                        has_non_empty_key(item, "id") && has_non_empty_key(item, "title")
+                    })
                     .collect(),
             });
         }
@@ -356,6 +398,7 @@ pub fn create_podcast_service(deps: PodcastServiceDeps) -> PodcastService {
 pub fn create_podcast_service_with_client(client: Arc<NeteaseClient>) -> PodcastService {
     create_podcast_service(PodcastServiceDeps {
         requester: Some(Arc::new(NeteasePodcastRequester { client })),
+        ..Default::default()
     })
 }
 
@@ -465,10 +508,7 @@ impl PodcastRequester for NeteasePodcastRequester {
             .await?)
     }
 
-    async fn dj_paygift(
-        &self,
-        params: HashMap<String, Value>,
-    ) -> anyhow::Result<NeteaseResponse> {
+    async fn dj_paygift(&self, params: HashMap<String, Value>) -> anyhow::Result<NeteaseResponse> {
         Ok(self
             .client
             .dj_paygift(
@@ -806,7 +846,8 @@ fn raw_artists(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(|item| value_string(record(item).get("name")))
                 .collect()
         })
@@ -852,9 +893,11 @@ fn number_u32(value: Option<&Value>) -> Option<u32> {
 }
 
 fn number_u64(value: Option<&Value>) -> Option<u64> {
-    value
-        .and_then(Value::as_u64)
-        .or_else(|| value.and_then(Value::as_i64).and_then(|number| u64::try_from(number).ok()))
+    value.and_then(Value::as_u64).or_else(|| {
+        value
+            .and_then(Value::as_i64)
+            .and_then(|number| u64::try_from(number).ok())
+    })
 }
 
 fn clamp_u32(value: u32, min: u32, max: u32, fallback: u32) -> u32 {
@@ -865,7 +908,12 @@ fn clamp_u32(value: u32, min: u32, max: u32, fallback: u32) -> u32 {
 }
 
 fn first_non_empty(values: &[Option<String>]) -> String {
-    values.iter().flatten().find(|value| !value.is_empty()).cloned().unwrap_or_default()
+    values
+        .iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn has_non_empty_key(value: &Value, key: &str) -> bool {
@@ -875,12 +923,30 @@ fn has_non_empty_key(value: &Value, key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[derive(Clone, Default)]
     struct MockRequester {
         cloudsearch: Option<Value>,
         dj_program: Option<Value>,
         login_status: Option<PodcastLoginInfo>,
+    }
+
+    #[derive(Default)]
+    struct MockBeatmapAnalyzer {
+        response: Value,
+        calls: Mutex<Vec<(String, PodcastBeatmapParams)>>,
+    }
+
+    #[async_trait]
+    impl PodcastBeatmapAnalyzer for MockBeatmapAnalyzer {
+        async fn analyze(&self, url: &str, params: &PodcastBeatmapParams) -> anyhow::Result<Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((url.to_owned(), params.clone()));
+            Ok(self.response.clone())
+        }
     }
 
     #[async_trait]
@@ -938,18 +1004,21 @@ mod tests {
 
     #[test]
     fn map_podcast_program_maps_main_song_to_playable_track() {
-        let program = map_podcast_program(&json!({
-            "id": "p1",
-            "name": "第 1 期",
-            "radio": { "id": "r1", "name": "电台", "picUrl": "r-cover" },
-            "mainSong": {
-                "id": 100,
-                "name": "音频",
-                "ar": [{ "name": "主播" }],
-                "al": { "name": "专辑", "picUrl": "song-cover" },
-                "dt": 120000
-            }
-        }), None);
+        let program = map_podcast_program(
+            &json!({
+                "id": "p1",
+                "name": "第 1 期",
+                "radio": { "id": "r1", "name": "电台", "picUrl": "r-cover" },
+                "mainSong": {
+                    "id": 100,
+                    "name": "音频",
+                    "ar": [{ "name": "主播" }],
+                    "al": { "name": "专辑", "picUrl": "song-cover" },
+                    "dt": 120000
+                }
+            }),
+            None,
+        );
 
         assert_eq!(program["type"], "podcast");
         assert_eq!(program["id"], "100");
@@ -972,6 +1041,7 @@ mod tests {
                 })),
                 ..Default::default()
             })),
+            ..Default::default()
         });
 
         let result = service
@@ -1004,6 +1074,7 @@ mod tests {
                 })),
                 ..Default::default()
             })),
+            ..Default::default()
         });
 
         let result = service
@@ -1030,6 +1101,7 @@ mod tests {
                 }),
                 ..Default::default()
             })),
+            ..Default::default()
         });
 
         let result = service.my().await.unwrap();
@@ -1038,5 +1110,54 @@ mod tests {
         assert_eq!(result["collections"][0]["key"], "collect");
         assert_eq!(result["collections"][1]["key"], "created");
         assert_eq!(result["collections"][2]["key"], "liked");
+    }
+
+    #[tokio::test]
+    async fn podcast_service_dj_beatmap_validates_url() {
+        let service = create_podcast_service(PodcastServiceDeps::default());
+
+        let err = service
+            .dj_beatmap(PodcastBeatmapParams {
+                url: "file:///bad".to_owned(),
+                duration_sec: 30,
+                intro_sec: Some(5),
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "Invalid audio url");
+    }
+
+    #[tokio::test]
+    async fn podcast_service_dj_beatmap_delegates_to_analyzer() {
+        let analyzer = Arc::new(MockBeatmapAnalyzer {
+            response: json!({
+                "visualBeatCount": 3,
+                "beats": [1, 2, 3]
+            }),
+            ..Default::default()
+        });
+        let service = create_podcast_service(PodcastServiceDeps {
+            requester: None,
+            beatmap_analyzer: Some(analyzer.clone()),
+        });
+
+        let result = service
+            .dj_beatmap(PodcastBeatmapParams {
+                url: "https://example.com/a.mp3".to_owned(),
+                duration_sec: 30,
+                intro_sec: Some(5),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["map"]["visualBeatCount"], 3);
+
+        let calls = analyzer.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://example.com/a.mp3");
+        assert_eq!(calls[0].1.duration_sec, 30);
+        assert_eq!(calls[0].1.intro_sec, Some(5));
     }
 }
