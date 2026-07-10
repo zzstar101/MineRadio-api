@@ -1,4 +1,8 @@
-use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode}, response::Response};
+use axum::{
+    body::Body,
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+    response::Response,
+};
 
 use crate::http::response::fail;
 

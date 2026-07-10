@@ -22,8 +22,7 @@ use crate::{
 const API_DOMAIN: &str = "https://interface.music.163.com";
 const DOMAIN: &str = "https://music.163.com";
 const UA_API_IPHONE: &str = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)";
-const UA_WEAPI_PC: &str =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
+const UA_WEAPI_PC: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
 const DEFAULT_APPVER: &str = "9.0.90";
 const DEFAULT_CHANNEL: &str = "distribution";
 const DEFAULT_OS: &str = "iPhone OS";
@@ -289,6 +288,39 @@ impl NeteaseClient {
         .await
     }
 
+    pub async fn vip_info(&self, uid: &str) -> Result<Value> {
+        let uid = uid.trim();
+        if uid.is_empty() {
+            return Ok(json!({}));
+        }
+
+        let cookie = self.current_cookie().await;
+        let client_v2 = self
+            .request_weapi(
+                "/api/music-vip-membership/client/vip/info",
+                json!({ "userId": uid }),
+                cookie.as_deref(),
+            )
+            .await;
+        let legacy = self
+            .request_weapi(
+                "/api/music-vip-membership/front/vip/info",
+                json!({ "userId": uid }),
+                cookie.as_deref(),
+            )
+            .await;
+
+        let mut body = serde_json::Map::new();
+        if let Ok(value) = client_v2 {
+            body.insert("vipInfoV2".to_owned(), value);
+        }
+        if let Ok(value) = legacy {
+            body.insert("vipInfo".to_owned(), value);
+        }
+
+        Ok(Value::Object(body))
+    }
+
     pub async fn logout(&self) -> Result<Value> {
         self.request_eapi(
             "/api/logout",
@@ -386,8 +418,16 @@ impl NeteaseClient {
         .await
     }
 
-    async fn request_weapi(&self, uri: &str, payload: Value, cookie: Option<&str>) -> Result<Value> {
-        Ok(self.request_weapi_response(uri, payload, cookie).await?.body)
+    async fn request_weapi(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+    ) -> Result<Value> {
+        Ok(self
+            .request_weapi_response(uri, payload, cookie)
+            .await?
+            .body)
     }
 
     async fn request_weapi_response(
@@ -406,12 +446,12 @@ impl NeteaseClient {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(UA_WEAPI_PC));
         headers.insert(REFERER, HeaderValue::from_static(DOMAIN));
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-www-form-urlencoded"));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
         if !cookie_map.is_empty() {
-            headers.insert(
-                COOKIE,
-                header_value(&cookie_map_to_string(&cookie_map))?,
-            );
+            headers.insert(COOKIE, header_value(&cookie_map_to_string(&cookie_map))?);
         }
 
         self.post_form_response(
@@ -443,17 +483,20 @@ impl NeteaseClient {
 
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(UA_API_IPHONE));
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/x-www-form-urlencoded"));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
         headers.insert(COOKIE, header_value(&header_cookie_string(&header))?);
 
         Ok(self
             .post_form_response(
-            format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
-            headers,
-            HashMap::from([("params".to_owned(), encrypted.params)]),
-        )
-        .await?
-        .body)
+                format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
+                headers,
+                HashMap::from([("params".to_owned(), encrypted.params)]),
+            )
+            .await?
+            .body)
     }
 
     async fn post_form_response(
@@ -490,7 +533,8 @@ impl NeteaseClient {
             .get("code")
             .and_then(Value::as_i64)
             .unwrap_or(i64::from(status.as_u16()));
-        if (200..300).contains(&status.as_u16()) && matches!(code, 200 | 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
+        if (200..300).contains(&status.as_u16())
+            && matches!(code, 200 | 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
         {
             return Ok(NeteaseClientResponse { body, cookie });
         }
@@ -589,10 +633,7 @@ fn create_eapi_header(cookie: &HashMap<String, String>) -> HashMap<String, Strin
                 .cloned()
                 .unwrap_or_else(|| DEFAULT_APPVER.to_owned()),
         ),
-        (
-            "buildver".to_owned(),
-            format!("{}", unix_ms() / 1_000),
-        ),
+        ("buildver".to_owned(), format!("{}", unix_ms() / 1_000)),
         (
             "channel".to_owned(),
             cookie

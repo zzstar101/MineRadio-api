@@ -479,14 +479,14 @@ fn soda_quality_detail(raw_quality: &str, label_info: Option<&Value>) -> String 
         == Some(true)
         || vip_download_qualities.contains(&quality);
     let mut parts = vec![if vip_playable {
-        "VIP 鍙挱鏀?".to_owned()
+        "仅 VIP 可播放".to_owned()
     } else {
-        "鍙挱鏀?".to_owned()
+        "可播放".to_owned()
     }];
     if vip_download {
-        parts.push("VIP 鍙笅杞?".to_owned());
+        parts.push("仅VIP可下载".to_owned());
     }
-    parts.join(" 路 ")
+    parts.join(" · ")
 }
 
 fn read_soda_quality_list(value: Option<&Value>) -> std::collections::HashSet<String> {

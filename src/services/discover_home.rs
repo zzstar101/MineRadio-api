@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -94,7 +98,10 @@ pub async fn build_discover_home(options: DiscoverHomeServiceOptions) -> anyhow:
         .map(|status| status.provider.clone())
         .collect::<Vec<_>>();
 
-    let netease_discover = if logged_providers.iter().any(|provider| provider == "netease") {
+    let netease_discover = if logged_providers
+        .iter()
+        .any(|provider| provider == "netease")
+    {
         load_netease_discover(options.discover_requester.as_ref()).await
     } else {
         DiscoverBundle::default()
@@ -116,9 +123,13 @@ pub async fn build_discover_home(options: DiscoverHomeServiceOptions) -> anyhow:
     .collect::<Vec<_>>();
 
     let daily_songs = if !netease_discover.daily_songs.is_empty() {
-        netease_discover.daily_songs.iter().take(12).cloned().collect()
-    } else if let Some(tracks) =
-        first_playlist_tracks(&options.provider_adapters, &playlists).await
+        netease_discover
+            .daily_songs
+            .iter()
+            .take(12)
+            .cloned()
+            .collect()
+    } else if let Some(tracks) = first_playlist_tracks(&options.provider_adapters, &playlists).await
     {
         tracks
     } else {
@@ -188,14 +199,15 @@ async fn safe_login_status(
     }
 }
 
-async fn load_netease_discover(
-    requester: Option<&Arc<dyn DiscoverRequester>>,
-) -> DiscoverBundle {
+async fn load_netease_discover(requester: Option<&Arc<dyn DiscoverRequester>>) -> DiscoverBundle {
     let Some(requester) = requester else {
         return DiscoverBundle::default();
     };
 
-    let personalized = requester.personalized(hashmap([("limit", Value::from(8))])).await.ok();
+    let personalized = requester
+        .personalized(hashmap([("limit", Value::from(8))]))
+        .await
+        .ok();
     let dj_hot = requester
         .dj_hot(hashmap([
             ("limit", Value::from(6)),
@@ -257,7 +269,11 @@ async fn load_netease_discover(
                 .and_then(Value::as_object)
                 .cloned()
                 .unwrap_or_default();
-            array_of(data.get("dailySongs").or_else(|| data.get("recommend")).or_else(|| body.get("recommend")))
+            array_of(
+                data.get("dailySongs")
+                    .or_else(|| data.get("recommend"))
+                    .or_else(|| body.get("recommend")),
+            )
         })
         .unwrap_or_default()
         .iter()
@@ -354,7 +370,10 @@ async fn first_search_tracks(
 
 async fn load_podcast_fallback(podcast: &PodcastService) -> Vec<Value> {
     podcast
-        .hot(PodcastPageParams { limit: 6, offset: 0 })
+        .hot(PodcastPageParams {
+            limit: 6,
+            offset: 0,
+        })
         .await
         .ok()
         .and_then(|value| record(&value).get("podcasts").cloned())
@@ -447,7 +466,12 @@ fn map_podcast_radio(raw: &Value) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let id = string_id(radio.get("id").or_else(|| radio.get("rid")).or_else(|| radio.get("radioId")));
+    let id = string_id(
+        radio
+            .get("id")
+            .or_else(|| radio.get("rid"))
+            .or_else(|| radio.get("radioId")),
+    );
     json!({
         "id": id.clone(),
         "rid": id,
@@ -495,9 +519,17 @@ fn is_low_signal_podcast_item(item: &Value) -> bool {
         string_value(record.get("description"))
     )
     .to_lowercase();
-    ["购买播客", "付费精品", "qzone", "空间背景音乐", "背景音乐", "四只烤翅", "试纸烤翅"]
-        .iter()
-        .any(|pattern| text.contains(pattern))
+    [
+        "购买播客",
+        "付费精品",
+        "qzone",
+        "空间背景音乐",
+        "背景音乐",
+        "四只烤翅",
+        "试纸烤翅",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
 }
 
 fn body_of(response: &Value) -> Map<String, Value> {
@@ -558,9 +590,11 @@ fn number_i64(value: Option<&Value>) -> Option<i64> {
 }
 
 fn number_u64(value: Option<&Value>) -> Option<u64> {
-    value
-        .and_then(Value::as_u64)
-        .or_else(|| value.and_then(Value::as_i64).and_then(|number| u64::try_from(number).ok()))
+    value.and_then(Value::as_u64).or_else(|| {
+        value
+            .and_then(Value::as_i64)
+            .and_then(|number| u64::try_from(number).ok())
+    })
 }
 
 fn has_non_empty_key(value: &Value, key: &str) -> bool {
@@ -598,18 +632,14 @@ fn hashmap<const N: usize>(pairs: [(&str, Value); N]) -> HashMap<String, Value> 
 mod tests {
     use super::*;
     use crate::{
-        providers::{
-            ProviderAdapter,
-            Result as ProviderResult,
-            error::ProviderError,
-        },
+        providers::{ProviderAdapter, Result as ProviderResult, error::ProviderError},
         services::podcast::{
             PodcastLoginInfo, PodcastRequester, PodcastServiceDeps, create_podcast_service,
         },
         types::{
-            LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-            ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
-            Track, TrackQualityAvailability,
+            LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
+            SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
+            TrackQualityAvailability,
         },
     };
 
@@ -640,7 +670,10 @@ mod tests {
             unimplemented!()
         }
 
-        async fn track_qualities(&self, _track: &Track) -> ProviderResult<TrackQualityAvailability> {
+        async fn track_qualities(
+            &self,
+            _track: &Track,
+        ) -> ProviderResult<TrackQualityAvailability> {
             unimplemented!()
         }
 
@@ -786,7 +819,9 @@ mod tests {
         })
     }
 
-    fn adapter_map(adapters: Vec<Arc<dyn ProviderAdapter>>) -> HashMap<ProviderId, Arc<dyn ProviderAdapter>> {
+    fn adapter_map(
+        adapters: Vec<Arc<dyn ProviderAdapter>>,
+    ) -> HashMap<ProviderId, Arc<dyn ProviderAdapter>> {
         adapters
             .into_iter()
             .map(|adapter| (adapter.id(), adapter))
@@ -823,10 +858,12 @@ mod tests {
             provider_adapters: adapter_map(vec![Arc::new(MockProviderAdapter {
                 id: "netease".to_owned(),
                 login_status: ProviderLoginStatus {
+                    provider: "netease".to_owned(),
                     logged_in: true,
                     nickname: Some("tester".to_owned()),
                     user_id: Some("42".to_owned()),
                     avatar_url: None,
+                    ..Default::default()
                 },
                 ..Default::default()
             })]),
@@ -886,15 +923,21 @@ mod tests {
             provider_adapters: adapter_map(vec![Arc::new(MockProviderAdapter {
                 id: "soda".to_owned(),
                 login_status: ProviderLoginStatus {
+                    provider: "soda".to_owned(),
                     logged_in: true,
                     nickname: Some("soda user".to_owned()),
                     user_id: Some("soda-42".to_owned()),
                     avatar_url: None,
+                    ..Default::default()
                 },
                 playlists: vec![PlaylistSummary {
+                    provider: "soda".to_owned(),
                     id: "playlist-1".to_owned(),
                     name: "empty playlist".to_owned(),
+                    cover_url: String::new(),
                     track_count: Some(0),
+                    track_ids: Vec::new(),
+                    subscribed: Some(false),
                 }],
                 search_tracks: vec![make_track("soda", "track-1", "search fallback")],
                 ..Default::default()

@@ -1,7 +1,9 @@
-use regex::Regex;
 use serde_json::Value;
 
-use crate::types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track};
+use crate::{
+    parsers::{lrc, netease},
+    types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
+};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -9,7 +11,7 @@ pub fn normalize_provider_image_url(url: &str) -> String {
         return String::new();
     }
     if let Some(stripped) = value.strip_prefix("//") {
-        return format!("https:{stripped}");
+        return format!("https://{stripped}");
     }
     value.replacen("http://", "https://", 1)
 }
@@ -91,114 +93,18 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
 }
 
 pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
-    let Ok(marker_re) = Regex::new(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]") else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-
-    for raw_line in text.lines() {
-        let mut markers = Vec::new();
-        for marker in marker_re.captures_iter(raw_line) {
-            let min = marker
-                .get(1)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let sec = marker
-                .get(2)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let frac = marker
-                .get(3)
-                .map(|value| {
-                    let mut padded = value.as_str().to_owned();
-                    padded.push_str("000");
-                    padded.chars().take(3).collect::<String>()
-                })
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or_default();
-            let end = marker.get(0).map(|value| value.end()).unwrap_or_default();
-            markers.push((min * 60_000 + sec * 1_000 + frac, end));
-        }
-        if markers.is_empty() {
-            continue;
-        }
-        let text = raw_line
-            .get(markers.last().map(|(_, end)| *end).unwrap_or_default()..)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        for (time_ms, _) in markers {
-            lines.push(LyricLine {
-                time_ms,
-                text: text.clone(),
-            });
-        }
-    }
-
-    lines.sort_by_key(|line| line.time_ms);
-    lines
+    lrc::parse_lrc(text)
 }
 
 pub fn parse_yrc_text(text: &str) -> Vec<LyricLine> {
-    let Ok(line_re) = Regex::new(r"^\[(\d+),(\d+)\](.*)$") else {
-        return Vec::new();
-    };
-    let Ok(word_re) = Regex::new(r"\((\d+),(\d+),\d+\)([^()]*)") else {
-        return Vec::new();
-    };
-    let spacer_re = Regex::new(r"\s+").ok();
-    let marker_re = Regex::new(r"\(\d+,\d+,\d+\)").ok();
-
-    let mut lines = Vec::new();
-    for raw_line in text.lines() {
-        let Some(caps) = line_re.captures(raw_line) else {
-            continue;
-        };
-        let time_ms = caps
-            .get(1)
-            .and_then(|value| value.as_str().parse::<u64>().ok())
-            .unwrap_or_default();
-        let body = caps.get(3).map(|value| value.as_str()).unwrap_or_default();
-        let mut full_text = String::new();
-
-        for word in word_re.captures_iter(body) {
-            let fragment = word.get(3).map(|value| value.as_str()).unwrap_or_default();
-            let normalized = spacer_re
-                .as_ref()
-                .map(|re| re.replace_all(fragment, " ").to_string())
-                .unwrap_or_else(|| fragment.to_owned());
-            if !normalized.is_empty() {
-                full_text.push_str(&normalized);
-            }
-        }
-
-        if full_text.trim().is_empty() {
-            full_text = marker_re
-                .as_ref()
-                .map(|re| re.replace_all(body, "").to_string())
-                .unwrap_or_else(|| body.to_owned());
-        }
-
-        let text = spacer_re
-            .as_ref()
-            .map(|re| re.replace_all(full_text.trim(), " ").to_string())
-            .unwrap_or_else(|| full_text.trim().to_owned());
-        if text.is_empty() {
-            continue;
-        }
-
-        lines.push(LyricLine { time_ms, text });
-    }
-
-    lines.sort_by_key(|line| line.time_ms);
-    lines
+    netease::parse_yrc_text(text)
 }
 
 pub fn map_hana_lyric_to_payload(
-    _track_id: &str,
+    track_id: &str,
     lrc: &str,
     tlyric: &str,
-    _klyric: Option<&str>,
+    klyric: Option<&str>,
     yrc: Option<&str>,
 ) -> LyricPayload {
     let base_lines = yrc
@@ -206,52 +112,31 @@ pub fn map_hana_lyric_to_payload(
         .filter(|lines| !lines.is_empty())
         .unwrap_or_else(|| parse_lrc(lrc));
     let translation_lines = parse_lrc(tlyric);
-
-    if translation_lines.is_empty() {
-        return LyricPayload {
-            lines: base_lines,
-            raw: if lrc.trim().is_empty() {
-                None
-            } else {
-                Some(lrc.to_owned())
-            },
-        };
-    }
-
     let translation_map = translation_lines
         .into_iter()
         .map(|line| (line.time_ms, line.text))
         .collect::<std::collections::HashMap<_, _>>();
 
-    let lines = base_lines
+    let lines: Vec<LyricLine> = base_lines
         .into_iter()
-        .map(|line| {
-            let text = translation_map
-                .get(&line.time_ms)
-                .map(|translation| {
-                    if translation.trim().is_empty() {
-                        line.text.clone()
-                    } else if line.text.trim().is_empty() {
-                        translation.clone()
-                    } else {
-                        format!("{}\n{}", line.text, translation)
-                    }
-                })
-                .unwrap_or_else(|| line.text.clone());
-            LyricLine {
-                time_ms: line.time_ms,
-                text,
-            }
+        .map(|mut line| {
+            line.translation = translation_map.get(&line.time_ms).cloned();
+            line
         })
         .collect();
+    let is_word_by_word = lines.iter().any(|line| {
+        line.words
+            .as_ref()
+            .map(|words| !words.is_empty())
+            .unwrap_or(false)
+    }) || !klyric.unwrap_or_default().trim().is_empty();
 
     LyricPayload {
+        provider: "netease".to_owned(),
+        track_id: track_id.to_owned(),
         lines,
-        raw: if lrc.trim().is_empty() {
-            None
-        } else {
-            Some(lrc.to_owned())
-        },
+        has_translation: !tlyric.trim().is_empty() && !translation_map.is_empty(),
+        is_word_by_word,
     }
 }
 
@@ -266,15 +151,39 @@ pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
         .get("trackCount")
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok());
+    let track_ids = raw
+        .get("trackIds")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("id").map(value_to_string).or_else(|| match item {
+                        Value::String(_) | Value::Number(_) => Some(value_to_string(item)),
+                        _ => None,
+                    })
+                })
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     PlaylistSummary {
+        provider: "netease".to_owned(),
         id,
         name: raw
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        cover_url: normalize_provider_image_url(
+            raw.get("coverImgUrl")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
         track_count,
+        track_ids,
+        subscribed: raw.get("subscribed").and_then(Value::as_bool),
     }
 }
 
@@ -289,8 +198,13 @@ pub fn map_hana_playlist_to_detail(raw: &Value, id_hint: Option<&str>) -> Playli
         .collect();
 
     PlaylistDetail {
+        provider: summary.provider,
         id: summary.id,
         name: summary.name,
+        cover_url: summary.cover_url,
+        track_count: summary.track_count,
+        track_ids: summary.track_ids,
+        subscribed: summary.subscribed,
         tracks,
     }
 }

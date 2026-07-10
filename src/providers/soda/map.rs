@@ -1,7 +1,9 @@
-use regex::Regex;
 use serde_json::Value;
 
-use crate::types::{LyricLine, LyricPayload, LyricWord, PlaylistDetail, PlaylistSummary, Track};
+use crate::{
+    parsers::{lrc, soda_music},
+    types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
+};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -83,153 +85,11 @@ pub fn map_soda_song_to_track(raw: &Value) -> Track {
 }
 
 pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
-    let Ok(marker_re) = Regex::new(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]") else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-
-    for raw_line in text.lines() {
-        let mut markers = Vec::new();
-        for marker in marker_re.captures_iter(raw_line) {
-            let min = marker
-                .get(1)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let sec = marker
-                .get(2)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let frac = marker
-                .get(3)
-                .map(|value| {
-                    let mut padded = value.as_str().to_owned();
-                    padded.push_str("000");
-                    padded.chars().take(3).collect::<String>()
-                })
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or_default();
-            let end = marker.get(0).map(|value| value.end()).unwrap_or_default();
-            markers.push((min * 60_000 + sec * 1_000 + frac, end));
-        }
-        if markers.is_empty() {
-            continue;
-        }
-        let text = raw_line
-            .get(markers.last().map(|(_, end)| *end).unwrap_or_default()..)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        for (time_ms, _) in markers {
-            lines.push(LyricLine {
-                time_ms,
-                text: text.clone(),
-                ..Default::default()
-            });
-        }
-    }
-    lines
+    lrc::parse_lrc(text)
 }
 
 pub fn parse_soda_lyric_text(text: &str) -> Vec<LyricLine> {
-    let Ok(line_re) = Regex::new(r"^\[(\d+),(\d+)\](.*)$") else {
-        return Vec::new();
-    };
-    let Ok(word_marker_re) = Regex::new(r"<\d+,\d+(?:,\d+)?>") else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-
-    for raw_line in text.lines() {
-        let Some(caps) = line_re.captures(raw_line) else {
-            continue;
-        };
-        let time_ms = caps
-            .get(1)
-            .and_then(|value| value.as_str().parse::<u64>().ok())
-            .unwrap_or_default();
-        let line_duration_ms = caps
-            .get(2)
-            .and_then(|value| value.as_str().parse::<u64>().ok())
-            .unwrap_or_default();
-        let body = caps.get(3).map(|value| value.as_str()).unwrap_or_default();
-        let mut full_text = String::new();
-        let mut words = Vec::new();
-        let mut pos = 0usize;
-
-        while pos < body.len() {
-            let Some(open) = body[pos..].find('<').map(|index| pos + index) else {
-                break;
-            };
-            let after_open = open + 1;
-            if body
-                .as_bytes()
-                .get(after_open)
-                .map(|byte| byte.is_ascii_digit())
-                != Some(true)
-            {
-                pos = after_open;
-                continue;
-            }
-            let Some(comma1_rel) = body[after_open..].find(',') else {
-                break;
-            };
-            let comma1 = after_open + comma1_rel;
-            let raw_start = body[after_open..comma1].parse::<u64>().unwrap_or_default();
-            let Some(close) = body[after_open..].find('>').map(|index| after_open + index) else {
-                break;
-            };
-            let duration_end = body[comma1 + 1..close]
-                .find(',')
-                .map(|index| comma1 + 1 + index)
-                .unwrap_or(close);
-            let raw_duration = body[comma1 + 1..duration_end]
-                .parse::<u64>()
-                .unwrap_or_default();
-            let text_start = close + 1;
-            let next_open = body[text_start..]
-                .find('<')
-                .map(|index| text_start + index)
-                .unwrap_or(body.len());
-            let segment = &body[text_start..next_open];
-            let c0 = utf16_len(&full_text);
-            full_text.push_str(segment);
-            if !segment.is_empty() {
-                words.push(LyricWord {
-                    text: Some(segment.to_owned()),
-                    time_ms: time_ms + raw_start,
-                    duration_ms: Some(raw_duration),
-                    c0,
-                    c1: utf16_len(&full_text),
-                });
-            }
-            pos = next_open;
-        }
-
-        let plain = if full_text.trim().is_empty() {
-            word_marker_re.replace_all(body, "").trim().to_owned()
-        } else {
-            full_text
-        };
-
-        if plain.trim().is_empty() {
-            continue;
-        }
-        lines.push(LyricLine {
-            time_ms,
-            duration_ms: Some(line_duration_ms),
-            text: plain.clone(),
-            source: Some(if words.is_empty() {
-                "soda-line".to_owned()
-            } else {
-                "soda-word".to_owned()
-            }),
-            words: (!words.is_empty()).then_some(words),
-            char_count: Some(utf16_len(&plain).max(1)),
-            ..Default::default()
-        });
-    }
-
-    finalize_lyric_line_durations(lines)
+    soda_music::parse_soda_lyric_text(text)
 }
 
 pub fn map_soda_lyric_to_payload(track_id: &str, lyric: &str, trans: &str) -> LyricPayload {
@@ -330,31 +190,6 @@ pub fn map_soda_playlist_detail_to_detail(
     }
 }
 
-fn finalize_lyric_line_durations(mut lines: Vec<LyricLine>) -> Vec<LyricLine> {
-    lines.sort_by_key(|line| line.time_ms);
-    for index in 0..lines.len() {
-        let next_time = lines.get(index + 1).map(|line| line.time_ms);
-        if let Some(current) = lines.get_mut(index) {
-            let inferred = next_time
-                .filter(|time| *time > current.time_ms)
-                .map(|time| time - current.time_ms)
-                .unwrap_or(4_800);
-            let duration = current
-                .duration_ms
-                .filter(|value| *value > 0)
-                .unwrap_or(inferred);
-            let duration = duration.clamp(450, 12_000);
-            current.duration_ms = Some(duration);
-            current.char_count = Some(
-                current
-                    .char_count
-                    .unwrap_or_else(|| utf16_len(&current.text).max(1)),
-            );
-        }
-    }
-    lines
-}
-
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -400,10 +235,6 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter(|value| seen.insert(value.clone()))
         .collect()
-}
-
-fn utf16_len(value: &str) -> usize {
-    value.encode_utf16().count()
 }
 
 #[cfg(test)]

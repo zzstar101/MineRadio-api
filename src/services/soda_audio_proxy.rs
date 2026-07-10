@@ -101,7 +101,6 @@ impl SodaAudioProxy {
     pub async fn resolve(&self, input: SodaAudioProxyRequest) -> Response {
         proxy_soda_audio(input, &self.deps, &self.cache).await
     }
-
 }
 
 pub fn create_soda_audio_proxy(deps: SodaAudioProxyDeps) -> SodaAudioProxy {

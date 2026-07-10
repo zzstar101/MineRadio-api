@@ -1,96 +1,116 @@
 # Pending Service Migration
 
-This file tracks service modules that are not fully migrated yet, or are intentionally paused
-because strict migration needs missing external capabilities.
+This file tracks the remaining migration work based on the current Rust codebase state.
 
-## Blocked By `hana-music-api`
+## Current Status
 
-### `discover-home.ts` -> `src/services/discover_home.rs`
+Most major sidecar services are now migrated and wired into the Rust router.
 
-Status: placeholder.
+Recently completed chunks:
 
-Rust file exists, but `build_discover_home` is not implemented.
+- `feat: wire Netease QR login and podcast routes`
+- `feat: complete discover home service flow`
+- `feat: complete shared playlist import external providers`
+- `feat: migrate podcast dj beatmap analyzer to Rust`
 
-Needs equivalent capabilities for these `hana-music-api` functions:
+## Completed Service Migrations
 
-- `personalized(params)` for public recommended playlists.
-- `djHot(params)` for hot podcast/radio recommendations.
-- `recommendResource(params)` for logged-in recommended playlists.
-- `recommendSongs(params)` for logged-in daily songs.
+These service flows now have meaningful Rust implementations and route wiring:
 
-Also depends on:
+- `discover-home.ts` -> `src/services/discover_home.rs`
+- `podcast.ts` -> `src/services/podcast.rs`
+- `shared-playlist-import.ts` -> `src/services/shared_playlist_import.rs`
+- `audio-proxy.ts` -> `src/services/audio_proxy.rs`
+- `image-proxy.ts` -> `src/services/image_proxy.rs`
+- `soda-audio-proxy.ts` -> `src/services/soda_audio_proxy.rs`
+- `cross-source-resolver.ts` -> `src/services/cross_source_resolver.rs`
+- `weather-radio.ts` -> `src/services/weather_radio.rs`
+- Netease QR login wiring
+- QQ Music provider core flows
+- Soda provider core flows
+- Netease provider core flows
 
-- provider adapter `login_status`, `playlist_list`, `playlist_detail`, and `search`
-- podcast service `hot`
-- Netease auth cookie lookup
+## Podcast
 
 ### `podcast.ts` -> `src/services/podcast.rs`
 
-Status: placeholder.
+Status: migrated and wired.
 
-Rust file exists, but main methods still return not implemented and mappers return placeholder
-values.
+Rust now supports:
 
-Needs equivalent capabilities for these `hana-music-api` functions:
+- `search`
+- `hot`
+- `detail`
+- `programs`
+- `my`
+- `myItems`
+- `djBeatmap`
+- Rust-side beatmap analyzer in `src/utils/podcast_analyzer.rs`
 
-- `cloudsearch(params)` with `type: 1009` for podcast search.
-- `djHot(params)` for hot podcasts.
-- `djDetail(params)` for podcast detail.
-- `djProgram(params)` for podcast programs.
-- `djSublist(params)` for collected podcasts.
-- `userAudio(params)` for user-created podcasts.
-- `djPaygift(params)` for paid podcast collections.
-- `recordRecentVoice(params)` for liked/recent voice items.
+Remaining work:
 
-Also depends on local analyzer capability currently loaded by TS from:
+- run end-to-end validation against real podcast audio URLs
+- compare Rust beatmap output with the historical JS analyzer output on representative samples
+- confirm long-audio fallback behavior under real network conditions
 
-- `../../../../dj-analyzer.js`
-- `analyzePodcastDjStream(url, { durationSec, userAgent })`
-- `analyzePodcastDjIntro(url, { durationSec, introSec, userAgent })`
+## Discover Home
 
-## Large Remaining Service
+### `discover-home.ts` -> `src/services/discover_home.rs`
+
+Status: migrated and wired.
+
+Rust now provides:
+
+- logged-in / logged-out discover home composition
+- Netease recommendation requester integration
+- provider-backed playlist fallback behavior
+- podcast hot fallback behavior
+
+Remaining work:
+
+- broader API integration verification with real provider/session states
+
+## Shared Playlist Import
 
 ### `shared-playlist-import.ts` -> `src/services/shared_playlist_import.rs`
 
-Status: partially migrated.
+Status: core migration completed.
 
 Rust now supports:
 
 - shared link detection for QQ, Netease, Apple Music, Qishui, and Kugou
 - adapter-backed playlist import for QQ / Netease / Soda
+- Apple Music public metadata import
+- Kugou shared playlist parsing and normalization
+- import-only track generation
 - `/shared-playlist/import` route wiring
 
-Still missing:
+Paused / intentionally not continuing:
 
-- Apple Music HTML/JSON-LD parsing and iTunes lookup enrichment
-- Qishui rendered/JSON track parsing
-- Kugou share/API parsing, signing, and normalization
-- import-only track generation
+- Qishui import completion is intentionally paused because Soda already has a full provider path
 
-Suggested migration split:
+Remaining work:
 
-- First: `detect_shared_playlist` and adapter-backed QQ/Netease/Soda import. Done.
-- Second: Apple Music import.
-- Third: Qishui and Kugou import helpers.
+- verify Apple Music and Kugou flows against real public share links
+- confirm front-end compatibility of import-only track payloads
 
-## Needs Final Wiring
+## Integration Verification Still Worth Doing
 
-These services have meaningful Rust implementations but still need route wiring and broader API
-integration checks:
+These services are wired, but still deserve broader real-world verification:
 
 - `audio_proxy.rs`
 - `image_proxy.rs`
 - `soda_audio_proxy.rs`
-- QR login services
 - `cross_source_resolver.rs`
 - `weather_radio.rs`
 
-## Completed Service Chunks
+## Known Remaining TODOs
 
-Committed chunks so far:
+- `src/utils/cryptors/netease.rs`
+  - add an EAPI decompressed-size limit after confirming the real payload size range
 
-- `feat: port service interfaces`
-- `feat: port qr login services`
-- `feat: port soda audio proxy`
-- `feat: port cross source resolver`
-- `feat: port weather radio service`
+## Suggested Next Steps
+
+1. Run real end-to-end checks for `podcast/dj-beatmap`.
+2. Run real share-link checks for Apple Music and Kugou import.
+3. Backfill targeted regression tests where current coverage is still mostly unit-level.

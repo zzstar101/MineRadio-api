@@ -70,7 +70,6 @@ impl SidecarLogger {
         };
         let _ = append_sidecar_log(file_path, entry, Some(self.max_bytes)).await;
     }
-
 }
 
 pub fn sidecar_log_file() -> Option<String> {

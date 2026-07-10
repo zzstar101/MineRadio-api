@@ -1667,8 +1667,13 @@ mod tests {
 
         async fn playlist_detail(&self, id: &str) -> providers::Result<PlaylistDetail> {
             Ok(PlaylistDetail {
+                provider: self.provider.clone(),
                 id: id.to_owned(),
                 name: "Imported".to_owned(),
+                cover_url: String::new(),
+                track_count: None,
+                track_ids: Vec::new(),
+                subscribed: Some(false),
                 tracks: vec![track(&self.provider)],
             })
         }

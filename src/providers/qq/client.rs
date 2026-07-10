@@ -204,30 +204,30 @@ impl QqClient {
     pub async fn vip_info_with_cookie(&self, user_id: &str, cookie: &str) -> Result<Value> {
         self.get_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            &[(
-                "format",
-                "json".to_owned(),
-            ), (
-                "data",
-                serde_json::to_string(&json!({
-                    "getVipInfo": {
-                        "module": "userInfo.VipQueryServer",
-                        "method": "SRFVipQuery_V2",
-                        "param": { "uin_list": [user_id] }
-                    },
-                    "getNickHead": {
-                        "module": "userInfo.BaseUserInfoServer",
-                        "method": "get_user_baseinfo_v2",
-                        "param": { "vec_uin": [user_id] }
-                    },
-                    "getVipIcon": {
-                        "module": "music.lvz.VipIconUiShowSvr",
-                        "method": "GetVipIconUiV2",
-                        "param": { "MusicID": user_id, "PID": 8 }
-                    }
-                }))
-                .unwrap_or_default(),
-            )],
+            &[
+                ("format", "json".to_owned()),
+                (
+                    "data",
+                    serde_json::to_string(&json!({
+                        "getVipInfo": {
+                            "module": "userInfo.VipQueryServer",
+                            "method": "SRFVipQuery_V2",
+                            "param": { "uin_list": [user_id] }
+                        },
+                        "getNickHead": {
+                            "module": "userInfo.BaseUserInfoServer",
+                            "method": "get_user_baseinfo_v2",
+                            "param": { "vec_uin": [user_id] }
+                        },
+                        "getVipIcon": {
+                            "module": "music.lvz.VipIconUiShowSvr",
+                            "method": "GetVipIconUiV2",
+                            "param": { "MusicID": user_id, "PID": 8 }
+                        }
+                    }))
+                    .unwrap_or_default(),
+                ),
+            ],
             Some("https://y.qq.com/m/myservice/index.html"),
             Some(cookie),
         )
@@ -241,9 +241,10 @@ impl QqClient {
 
     pub fn has_playback_key(cookie: &str) -> bool {
         let cookie_map = parse_cookie(cookie);
-        !qq_playback_key_from_cookie_map(&cookie_map).trim().is_empty()
+        !qq_playback_key_from_cookie_map(&cookie_map)
+            .trim()
+            .is_empty()
     }
-    
 
     pub async fn user_songlists(&self, user_id: &str) -> Result<Value> {
         self.get_json(
@@ -305,38 +306,38 @@ impl QqClient {
         let song_num = limit.clamp(1, 500);
         self.get_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            &[(
-                "format",
-                "json".to_owned(),
-            ), (
-                "data",
-                serde_json::to_string(&json!({
-                    "comm": { "ct": 24, "cv": 0 },
-                    "req_0": {
-                        "module": "music.srfDissInfo.aiDissInfo",
-                        "method": "uniform_get_Dissinfo",
-                        "param": {
-                            "disstid": disstid,
-                            "userinfo": 1,
-                            "tag": 1,
-                            "orderlist": 1,
-                            "song_begin": 0,
-                            "song_num": song_num,
-                            "onlysonglist": 0,
-                            "enc_host_uin": ""
+            &[
+                ("format", "json".to_owned()),
+                (
+                    "data",
+                    serde_json::to_string(&json!({
+                        "comm": { "ct": 24, "cv": 0 },
+                        "req_0": {
+                            "module": "music.srfDissInfo.aiDissInfo",
+                            "method": "uniform_get_Dissinfo",
+                            "param": {
+                                "disstid": disstid,
+                                "userinfo": 1,
+                                "tag": 1,
+                                "orderlist": 1,
+                                "song_begin": 0,
+                                "song_num": song_num,
+                                "onlysonglist": 0,
+                                "enc_host_uin": ""
+                            }
+                        },
+                        "req_1": {
+                            "module": "music.srfDissInfo.PlExtServer",
+                            "method": "getPlExtInfo",
+                            "param": {
+                                "tid": disstid,
+                                "need": [6]
+                            }
                         }
-                    },
-                    "req_1": {
-                        "module": "music.srfDissInfo.PlExtServer",
-                        "method": "getPlExtInfo",
-                        "param": {
-                            "tid": disstid,
-                            "need": [6]
-                        }
-                    }
-                }))
-                .unwrap_or_default(),
-            )],
+                    }))
+                    .unwrap_or_default(),
+                ),
+            ],
             Some("https://y.qq.com/"),
             None,
         )
@@ -420,7 +421,7 @@ impl QqClient {
                     .unwrap_or_default()
                     .into_iter()
                     .map(|(key, value)| (key, value_to_form(value)))
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>(),
             )
             .send()
             .await
@@ -435,7 +436,11 @@ impl QqClient {
     }
 }
 
-fn build_headers(referer: Option<&str>, cookie: Option<&str>, with_origin: bool) -> Result<HeaderMap> {
+fn build_headers(
+    referer: Option<&str>,
+    cookie: Option<&str>,
+    with_origin: bool,
+) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static(UA));
     if let Some(referer) = referer {
@@ -509,7 +514,10 @@ fn qq_user_id_from_cookie_map(
             .or_else(|| cookie.get("wxuin"))
             .or_else(|| cookie.get("p_uin"))
     }?;
-    let digits = raw.chars().filter(|ch| ch.is_ascii_digit()).collect::<String>();
+    let digits = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
     (!digits.is_empty()).then_some(digits)
 }
 

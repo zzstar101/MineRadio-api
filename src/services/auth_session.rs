@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::PathBuf,
-    sync::OnceLock,
-};
+use std::{collections::HashMap, env, fs, path::PathBuf, sync::OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;

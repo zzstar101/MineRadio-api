@@ -128,7 +128,6 @@ impl WeatherRadioService {
     pub async fn build(&self, params: WeatherRadioParams) -> anyhow::Result<Value> {
         build_weather_radio(params, self.deps.clone()).await
     }
-
 }
 
 pub fn create_weather_radio_service(deps: WeatherRadioDeps) -> WeatherRadioService {

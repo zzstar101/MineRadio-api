@@ -62,8 +62,9 @@ pub fn decrypt_aes(
     };
 
     match mode {
-        AesMode::Cbc => decrypt_cbc(&encrypted, key.as_bytes(), iv.as_bytes())
-            .map_err(|err| err.to_string()),
+        AesMode::Cbc => {
+            decrypt_cbc(&encrypted, key.as_bytes(), iv.as_bytes()).map_err(|err| err.to_string())
+        }
         AesMode::Ecb => decrypt_ecb(&encrypted, key.as_bytes()).map_err(|err| err.to_string()),
     }
 }

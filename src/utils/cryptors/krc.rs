@@ -23,7 +23,10 @@ pub fn decrypt_krc(encoded: &str) -> Result<String, String> {
         .with_context(|| format!("failed to base64 decode krc payload, len={}", clean.len()))
         .map_err(|err| err.to_string())?;
     if decoded.len() <= 4 {
-        return Err(format!("decoded krc data too short: {} bytes", decoded.len()));
+        return Err(format!(
+            "decoded krc data too short: {} bytes",
+            decoded.len()
+        ));
     }
 
     let mut data = decoded[4..].to_vec();

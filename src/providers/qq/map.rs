@@ -1,7 +1,9 @@
-use regex::Regex;
 use serde_json::Value;
 
-use crate::types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track};
+use crate::{
+    parsers::{lrc, qqmusic},
+    types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
+};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -9,7 +11,7 @@ pub fn normalize_provider_image_url(url: &str) -> String {
         return String::new();
     }
     if let Some(stripped) = value.strip_prefix("//") {
-        return format!("https:{stripped}");
+        return format!("https://{stripped}");
     }
     value.replacen("http://", "https://", 1)
 }
@@ -90,92 +92,28 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
 }
 
 pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
-    let Ok(marker_re) = Regex::new(r"\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]") else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-
-    for raw_line in text.lines() {
-        let mut markers = Vec::new();
-        for marker in marker_re.captures_iter(raw_line) {
-            let min = marker
-                .get(1)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let sec = marker
-                .get(2)
-                .and_then(|value| value.as_str().parse::<u64>().ok())
-                .unwrap_or_default();
-            let frac = marker
-                .get(3)
-                .map(|value| {
-                    let mut padded = value.as_str().to_owned();
-                    padded.push_str("000");
-                    padded.chars().take(3).collect::<String>()
-                })
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or_default();
-            let end = marker.get(0).map(|value| value.end()).unwrap_or_default();
-            markers.push((min * 60_000 + sec * 1_000 + frac, end));
-        }
-        if markers.is_empty() {
-            continue;
-        }
-        let text = raw_line
-            .get(markers.last().map(|(_, end)| *end).unwrap_or_default()..)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        for (time_ms, _) in markers {
-            lines.push(LyricLine {
-                time_ms,
-                text: text.clone(),
-            });
-        }
-    }
-
-    lines.sort_by_key(|line| line.time_ms);
-    lines
+    lrc::parse_lrc(text)
 }
 
 pub fn parse_qrc(text: &str) -> Vec<LyricLine> {
-    let Ok(line_re) = Regex::new(r"\[(\d+),(\d+)\]([^\r\n]*)") else {
-        return Vec::new();
-    };
-    let Ok(word_re) = Regex::new(r"\(\d+,\d+(?:,\d+)?\)") else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-
-    for caps in line_re.captures_iter(text) {
-        let time_ms = caps
-            .get(1)
-            .and_then(|value| value.as_str().parse::<u64>().ok())
-            .unwrap_or_default();
-        let raw = caps.get(3).map(|value| value.as_str()).unwrap_or_default();
-        let plain = word_re.replace_all(raw, "").trim().to_owned();
-        if plain.is_empty() {
-            continue;
-        }
-        lines.push(LyricLine {
-            time_ms,
-            text: plain,
-        });
-    }
-
-    lines.sort_by_key(|line| line.time_ms);
-    lines
+    qqmusic::parse_qrc_text(text)
 }
 
 pub fn map_qq_lyric_to_payload(
-    _track_id: &str,
+    track_id: &str,
     lyric: &str,
     trans: &str,
     qrc: &str,
+    source: Option<&str>,
 ) -> LyricPayload {
+    let mut line_source = source
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let base_lines = {
         let lrc_lines = parse_lrc(lyric);
         if lrc_lines.is_empty() && !qrc.trim().is_empty() {
+            line_source = Some("qrc".to_owned());
             parse_qrc(qrc)
         } else {
             lrc_lines
@@ -187,38 +125,27 @@ pub fn map_qq_lyric_to_payload(
         .collect::<std::collections::HashMap<_, _>>();
     let lines = base_lines
         .into_iter()
-        .map(|line| {
-            let text = translations
-                .get(&line.time_ms)
-                .map(|translation| {
-                    if translation.trim().is_empty() {
-                        line.text.clone()
-                    } else if line.text.trim().is_empty() {
-                        translation.clone()
-                    } else {
-                        format!("{}\n{}", line.text, translation)
-                    }
-                })
-                .unwrap_or_else(|| line.text.clone());
-            LyricLine {
-                time_ms: line.time_ms,
-                text,
+        .map(|mut line| {
+            if let Some(source) = line_source.as_deref() {
+                line.source = Some(source.to_owned());
             }
+            line.translation = translations.get(&line.time_ms).cloned();
+            line
         })
         .collect::<Vec<_>>();
 
     LyricPayload {
+        provider: "qq".to_owned(),
+        track_id: track_id.to_owned(),
         lines,
-        raw: if lyric.trim().is_empty() {
-            None
-        } else {
-            Some(lyric.to_owned())
-        },
+        has_translation: !trans.trim().is_empty() && !translations.is_empty(),
+        is_word_by_word: false,
     }
 }
 
 pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     PlaylistSummary {
+        provider: "qq".to_owned(),
         id: {
             let id = first_string(&[
                 raw.get("disstid"),
@@ -239,12 +166,33 @@ pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playlis
             raw.get("name"),
             raw.get("title"),
         ]),
+        cover_url: normalize_provider_image_url(&first_string(&[
+            raw.get("logo"),
+            raw.get("diss_cover"),
+            raw.get("picurl"),
+            raw.get("cover"),
+        ])),
         track_count: first_u32(&[
             raw.get("total_song_num"),
             raw.get("song_cnt"),
             raw.get("songnum"),
             raw.get("song_count"),
         ]),
+        track_ids: raw
+            .get("songlist")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        item.get("songmid")
+                            .or_else(|| item.get("mid"))
+                            .and_then(value_to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        subscribed: Some(false),
     }
 }
 
@@ -259,8 +207,13 @@ pub fn map_qq_playlist_to_detail(raw: Option<&Value>, id_hint: Option<&str>) -> 
         .collect::<Vec<_>>();
 
     PlaylistDetail {
+        provider: summary.provider,
         id: summary.id,
         name: summary.name,
+        cover_url: summary.cover_url,
+        track_count: summary.track_count,
+        track_ids: summary.track_ids,
+        subscribed: summary.subscribed,
         tracks,
     }
 }
@@ -276,12 +229,15 @@ fn first_string(values: &[Option<&Value>]) -> String {
 
 fn first_u32(values: &[Option<&Value>]) -> Option<u32> {
     values.iter().copied().flatten().find_map(|value| {
-        value.as_u64().and_then(|value| u32::try_from(value).ok()).or_else(|| {
-            value
-                .as_i64()
-                .and_then(|value| u64::try_from(value).ok())
-                .and_then(|value| u32::try_from(value).ok())
-        })
+        value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| {
+                value
+                    .as_i64()
+                    .and_then(|value| u64::try_from(value).ok())
+                    .and_then(|value| u32::try_from(value).ok())
+            })
     })
 }
 

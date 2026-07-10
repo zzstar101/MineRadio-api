@@ -10,16 +10,15 @@ use crate::{
     providers::{
         netease::{adapter::NeteaseAdapter, client::NeteaseClient},
         qq::adapter::QqAdapter,
-        registry::ProviderRegistry, soda::adapter::SodaAdapter,
+        registry::ProviderRegistry,
+        soda::adapter::SodaAdapter,
     },
     router,
     services::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
-        image_proxy::{ImageProxy, ImageProxyDeps, create_image_proxy},
-        netease_qr_login::{
-            NeteaseQrLoginService, create_netease_qr_login_service_with_client,
-        },
         discover_home::DiscoverRequester,
+        image_proxy::{ImageProxy, ImageProxyDeps, create_image_proxy},
+        netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
         qq_qr_login::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         sidecar_log,

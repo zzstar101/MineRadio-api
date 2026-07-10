@@ -91,10 +91,9 @@ fn qmc_decode_in_place(data: &mut [u8]) {
 
 pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> Result<String, String> {
     let path = path.as_ref();
-    let mut data =
-        fs::read(path)
-            .with_context(|| format!("failed to read qrc file {}", path.display()))
-            .map_err(|err| err.to_string())?;
+    let mut data = fs::read(path)
+        .with_context(|| format!("failed to read qrc file {}", path.display()))
+        .map_err(|err| err.to_string())?;
     if data.is_empty() {
         return Err(format!("qrc file is empty: {}", path.display()));
     }
@@ -108,7 +107,8 @@ pub fn decrypt_qrc_file(path: impl AsRef<Path>) -> Result<String, String> {
 }
 
 pub fn decrypt_qrc(encrypted_lyrics: &str) -> Result<String, String> {
-    let encrypted_text_byte = hex_string_to_byte_array(encrypted_lyrics).map_err(|err| err.to_string())?;
+    let encrypted_text_byte =
+        hex_string_to_byte_array(encrypted_lyrics).map_err(|err| err.to_string())?;
     if encrypted_text_byte.len() % 8 != 0 {
         return Err(format!(
             "qrc ciphertext length not aligned to 8-byte blocks: {}",

@@ -252,7 +252,11 @@ impl NeteaseApiCall for NeteaseQrCheckCall {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_REQUIRED"))?;
-        let cookie = if query.get("noCookie").and_then(Value::as_bool).unwrap_or(false) {
+        let cookie = if query
+            .get("noCookie")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             None
         } else {
             self.client.current_cookie().await
