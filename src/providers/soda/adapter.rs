@@ -603,7 +603,7 @@ fn soda_quality_rank(level: &str) -> usize {
 
 fn soda_quality_label(mapped: &str, raw: &str) -> String {
     match mapped {
-        "jymaster" => "录音室".to_owned(),
+        "jymaster" => "录音室音质".to_owned(),
         "hires" => "超清全景声".to_owned(),
         "lossless" => "无损音质".to_owned(),
         "exhigh" => "极高音质".to_owned(),
