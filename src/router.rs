@@ -66,59 +66,59 @@ pub fn build(state: AppState) -> Router {
             post(shared_playlist_import).options(preflight),
         )
         .route(
-            "/providers/:pid/login-qr-key",
+            "/providers/{pid}/login-qr-key",
             get(provider_login_qr_key).options(preflight),
         )
         .route(
-            "/providers/:pid/login-qr-create",
+            "/providers/{pid}/login-qr-create",
             get(provider_login_qr_create).options(preflight),
         )
         .route(
-            "/providers/:pid/login-qr-check",
+            "/providers/{pid}/login-qr-check",
             get(provider_login_qr_check).options(preflight),
         )
         .route(
-            "/providers/:pid/session-cookie",
+            "/providers/{pid}/session-cookie",
             post(set_provider_session_cookie)
                 .delete(clear_provider_session_cookie)
                 .options(preflight),
         )
         .route(
-            "/providers/:pid/search",
+            "/providers/{pid}/search",
             get(provider_search).options(preflight),
         )
         .route(
-            "/providers/:pid/song-url",
+            "/providers/{pid}/song-url",
             post(provider_song_url).options(preflight),
         )
         .route(
-            "/providers/:pid/qualities",
+            "/providers/{pid}/qualities",
             post(provider_qualities).options(preflight),
         )
         .route(
-            "/providers/:pid/lyric",
+            "/providers/{pid}/lyric",
             post(provider_lyric).options(preflight),
         )
         .route(
-            "/providers/:pid/playlists",
+            "/providers/{pid}/playlists",
             get(provider_playlists).options(preflight),
         )
         .route(
-            "/providers/:pid/playlists/:id",
+            "/providers/{pid}/playlists/{id}",
             get(provider_playlist_detail).options(preflight),
         )
         .route(
-            "/providers/:pid/login-status",
+            "/providers/{pid}/login-status",
             get(provider_login_status).options(preflight),
         )
-        .route("/providers/:pid/logout", post(provider_logout).options(preflight))
-        .route("/providers/:pid/like", post(provider_like).options(preflight))
+        .route("/providers/{pid}/logout", post(provider_logout).options(preflight))
+        .route("/providers/{pid}/like", post(provider_like).options(preflight))
         .route(
-            "/providers/:pid/like-check",
+            "/providers/{pid}/like-check",
             get(provider_like_check).options(preflight),
         )
         .route(
-            "/providers/:pid/playlists/add-song",
+            "/providers/{pid}/playlists/add-song",
             post(provider_playlist_add_song).options(preflight),
         )
         .fallback(fallback)
