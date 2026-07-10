@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::SystemTime};
+use std::sync::Arc;
 
 use anyhow::Context;
 use serde_json::json;
@@ -46,7 +46,6 @@ pub struct AppServices {
 pub struct AppState {
     pub config: Config,
     pub providers: Arc<ProviderRegistry>,
-    pub started_at: SystemTime,
     pub services: AppServices,
 }
 
@@ -61,7 +60,6 @@ impl AppState {
         Self {
             config,
             providers: Arc::new(providers),
-            started_at: SystemTime::now(),
             services: AppServices {
                 discover_requester: netease_client.clone(),
                 netease_qr_login: Arc::new(create_netease_qr_login_service_with_client(

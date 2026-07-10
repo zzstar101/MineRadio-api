@@ -102,9 +102,6 @@ impl SodaAudioProxy {
         proxy_soda_audio(input, &self.deps, &self.cache).await
     }
 
-    pub fn deps(&self) -> &SodaAudioProxyDeps {
-        &self.deps
-    }
 }
 
 pub fn create_soda_audio_proxy(deps: SodaAudioProxyDeps) -> SodaAudioProxy {
@@ -112,12 +109,6 @@ pub fn create_soda_audio_proxy(deps: SodaAudioProxyDeps) -> SodaAudioProxy {
         deps,
         cache: Arc::new(Mutex::new(SodaAudioCache::default())),
     }
-}
-
-pub async fn resolve_soda_audio_proxy(input: SodaAudioProxyRequest) -> Response {
-    create_soda_audio_proxy(SodaAudioProxyDeps::default())
-        .resolve(input)
-        .await
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -445,6 +436,7 @@ impl SpadeDecryptor {
     }
 }
 
+#[cfg(test)]
 pub fn decode_soda_spade_bytes_for_test(spade_key_bytes: &[u8]) -> Vec<u8> {
     SpadeDecryptor::decrypt_spade_inner(spade_key_bytes)
 }

@@ -284,16 +284,13 @@ async fn audio_proxy(
 async fn image_proxy(
     State(state): State<AppState>,
     Query(query): Query<ProxyQuery>,
-    request: Request,
+    _request: Request,
 ) -> Response {
     let target = proxy_target(query);
     state
         .services
         .image_proxy
-        .resolve(services::image_proxy::ImageProxyRequest {
-            target,
-            request: request.map(Body::new),
-        })
+        .resolve(services::image_proxy::ImageProxyRequest { target })
         .await
 }
 
@@ -847,10 +844,6 @@ fn unavailable_provider(provider: &str) -> Response {
     )
 }
 
-fn not_implemented(message: impl Into<String>) -> Response {
-    fail(StatusCode::NOT_IMPLEMENTED, "NOT_IMPLEMENTED", message)
-}
-
 fn bad_request(message: impl Into<String>) -> Response {
     fail(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
 }
@@ -876,8 +869,6 @@ fn provider_error_response(err: ProviderError) -> Response {
         ProviderErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         ProviderErrorCode::NoResult
         | ProviderErrorCode::NoUrl
-        | ProviderErrorCode::NoLyric
-        | ProviderErrorCode::NoPlaylists
         | ProviderErrorCode::NoPlaylist => StatusCode::NOT_FOUND,
         ProviderErrorCode::Unavailable
         | ProviderErrorCode::CopyrightUnavailable

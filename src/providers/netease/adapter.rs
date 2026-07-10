@@ -46,10 +46,6 @@ impl NeteaseAdapter {
         Self { client }
     }
 
-    pub fn shared() -> Arc<Self> {
-        Arc::new(Self::new(Arc::new(NeteaseClient::new())))
-    }
-
     async fn login_status_internal(&self) -> Result<ProviderLoginStatus> {
         let Some(cookie) = self.client.current_cookie().await else {
             return Ok(ProviderLoginStatus {

@@ -59,7 +59,6 @@ struct ExternalTrack {
     album: Option<String>,
     cover: Option<String>,
     duration: Option<u64>,
-    source_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -70,7 +69,6 @@ struct FetchTextResponse {
 
 #[derive(Clone, Debug, Default)]
 struct KugouShareInfo {
-    url: String,
     gcid: String,
     global_collection_id: String,
     uid: String,
@@ -569,7 +567,6 @@ fn parse_kugou_share_input(value: &str) -> KugouShareInfo {
             .unwrap_or_default();
 
     KugouShareInfo {
-        url: url_text,
         gcid,
         global_collection_id,
         uid: parsed
@@ -758,7 +755,6 @@ fn normalize_apple_music_track(
                 let millis = parse_iso_duration_ms(&duration);
                 (millis > 0).then_some(millis)
             }),
-        source_url: (!song_url.is_empty()).then_some(song_url),
     })
 }
 
@@ -1395,7 +1391,6 @@ fn normalize_kugou_shared_song(raw: &Value) -> Option<ExternalTrack> {
             value_string(trans_param.get("union_cover")),
         ]))),
         duration,
-        source_url: None,
     })
 }
 
@@ -1601,13 +1596,6 @@ fn external_url_from_input(value: &str) -> String {
         .find(raw)
         .map(|value| clean_candidate(value.as_str()))
         .unwrap_or_else(|| clean_candidate(raw))
-}
-
-fn extract_title(html: &str) -> String {
-    clean_external_text(&extract_raw_html_match(
-        html,
-        r"<title[^>]*>([\s\S]*?)</title>",
-    ))
 }
 
 #[cfg(test)]

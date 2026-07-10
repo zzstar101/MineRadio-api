@@ -8,8 +8,6 @@ use crate::types::ProviderId;
 pub enum ProviderErrorCode {
     NoResult,
     NoUrl,
-    NoLyric,
-    NoPlaylists,
     NoPlaylist,
     LoginRequired,
     Unavailable,

@@ -289,18 +289,6 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn vip_info(&self, uid: &str) -> Result<Value> {
-        self.request_weapi(
-            "/api/music-vip-membership/front/vip/info",
-            json!({
-                "userId": uid,
-                "e_r": false
-            }),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
     pub async fn logout(&self) -> Result<Value> {
         self.request_eapi(
             "/api/logout",

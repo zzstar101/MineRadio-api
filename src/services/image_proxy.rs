@@ -1,8 +1,4 @@
-use axum::{
-    body::Body,
-    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
-    response::Response,
-};
+use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode}, response::Response};
 
 use crate::http::response::fail;
 
@@ -17,7 +13,6 @@ const COVER_PROXY_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) 
 
 pub struct ImageProxyRequest {
     pub target: String,
-    pub request: Request<Body>,
 }
 
 #[derive(Clone)]
@@ -46,10 +41,6 @@ impl ImageProxy {
 
 pub fn create_image_proxy(deps: ImageProxyDeps) -> ImageProxy {
     ImageProxy { deps }
-}
-
-pub async fn resolve_image_proxy(input: ImageProxyRequest) -> Response {
-    proxy_image(input, &ImageProxyDeps::default()).await
 }
 
 async fn proxy_image(input: ImageProxyRequest, deps: &ImageProxyDeps) -> Response {

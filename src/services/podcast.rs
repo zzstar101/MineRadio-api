@@ -275,10 +275,6 @@ impl PodcastService {
         }))
     }
 
-    pub fn deps(&self) -> &PodcastServiceDeps {
-        &self.deps
-    }
-
     fn requester(&self) -> anyhow::Result<&Arc<dyn PodcastRequester>> {
         self.deps
             .requester

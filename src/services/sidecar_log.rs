@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -71,11 +71,6 @@ impl SidecarLogger {
         let _ = append_sidecar_log(file_path, entry, Some(self.max_bytes)).await;
     }
 
-    pub async fn flush(&self) {}
-
-    pub async fn dispose(&self) {
-        self.flush().await;
-    }
 }
 
 pub fn sidecar_log_file() -> Option<String> {
@@ -222,11 +217,6 @@ fn is_sensitive_value(value: &str) -> bool {
 fn chrono_like_now() -> String {
     // TS uses ISO timestamps. Until time formatting is ported, use a stable debug-friendly value.
     format!("{:?}", std::time::SystemTime::now())
-}
-
-#[allow(dead_code)]
-fn _file_size(path: &Path) -> Option<u64> {
-    fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 #[cfg(test)]

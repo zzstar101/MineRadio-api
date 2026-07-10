@@ -129,9 +129,6 @@ impl WeatherRadioService {
         build_weather_radio(params, self.deps.clone()).await
     }
 
-    pub fn deps(&self) -> &WeatherRadioDeps {
-        &self.deps
-    }
 }
 
 pub fn create_weather_radio_service(deps: WeatherRadioDeps) -> WeatherRadioService {
@@ -195,11 +192,6 @@ pub fn open_meteo_weather_label(code: Value) -> &'static str {
         Some(95) | Some(96) | Some(99) => "闆烽洦",
         _ => "澶╂皵",
     }
-}
-
-pub fn build_weather_mood(weather: Value) -> Value {
-    serde_json::to_value(build_weather_mood_inner(&weather, chrono_like_hour()))
-        .unwrap_or(Value::Null)
 }
 
 fn build_weather_mood_inner(weather: &Value, hour: u32) -> WeatherMood {

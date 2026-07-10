@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::OnceLock,
 };
 
@@ -168,17 +168,4 @@ fn clear_persisted_provider_cookie(provider: &str) {
     let mut cookies = read_persisted_cookies();
     cookies.remove(provider);
     write_persisted_cookies(cookies);
-}
-
-#[allow(dead_code)]
-fn parse_persisted_cookies(raw: &str) -> HashMap<ProviderId, String> {
-    serde_json::from_str::<PersistedProviderSessions>(raw)
-        .ok()
-        .and_then(|sessions| sessions.providers)
-        .unwrap_or_default()
-}
-
-#[allow(dead_code)]
-fn path_exists(path: &Path) -> bool {
-    path.exists()
 }

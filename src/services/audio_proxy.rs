@@ -50,10 +50,6 @@ pub fn create_audio_proxy(deps: AudioProxyDeps) -> AudioProxy {
     AudioProxy { deps }
 }
 
-pub async fn resolve_audio_proxy(input: AudioProxyRequest) -> Response {
-    proxy_audio(input, &AudioProxyDeps::default()).await
-}
-
 async fn proxy_audio(input: AudioProxyRequest, deps: &AudioProxyDeps) -> Response {
     let parsed = match parse_target_url(&input.target) {
         Ok(url) => url,

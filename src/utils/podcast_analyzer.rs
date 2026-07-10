@@ -139,7 +139,6 @@ struct Candidate {
     low_tone: f64,
     hit_tone: f64,
     low_rel: f64,
-    raw: f64,
     power: f64,
 }
 
@@ -165,7 +164,6 @@ struct Profile {
 #[derive(Clone, Debug)]
 struct PhaseInfo {
     phase: f64,
-    step: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -744,7 +742,7 @@ fn phase_from_map(map: &BeatMap, base_step: f64) -> PhaseInfo {
     .filter(|beat| beat.time.is_finite() && beat.time > 0.35)
     .collect::<Vec<_>>();
     if beats.is_empty() {
-        return PhaseInfo { phase: 0.0, step };
+        return PhaseInfo { phase: 0.0 };
     }
     let mut sx = 0.0;
     let mut sy = 0.0;
@@ -765,7 +763,6 @@ fn phase_from_map(map: &BeatMap, base_step: f64) -> PhaseInfo {
     if total <= 0.0 {
         return PhaseInfo {
             phase: beats_first_phase(map, step),
-            step,
         };
     }
     let mut angle = (sy / total).atan2(sx / total);
@@ -774,7 +771,6 @@ fn phase_from_map(map: &BeatMap, base_step: f64) -> PhaseInfo {
     }
     PhaseInfo {
         phase: angle / std::f64::consts::TAU * step,
-        step,
     }
 }
 
@@ -865,7 +861,6 @@ fn build_beat_map_from_low_energy(
                     low_tone,
                     hit_tone,
                     low_rel,
-                    raw: onset_value,
                     power: 0.0,
                 };
                 candidate.power = candidate.score * 0.56

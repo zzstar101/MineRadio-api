@@ -16,7 +16,6 @@ type CookieMap = HashMap<String, String>;
 struct QqPtuiResult {
     code: i64,
     redirect_url: Option<String>,
-    message: Option<String>,
 }
 
 #[derive(Clone)]
@@ -303,7 +302,6 @@ fn parse_ptui_callback(text: &str) -> QqPtuiResult {
             .and_then(|value| value.parse().ok())
             .unwrap_or(-1),
         redirect_url: values.get(2).cloned(),
-        message: values.get(4).cloned(),
     }
 }
 

@@ -126,10 +126,6 @@ impl CrossSourceResolver {
         Err(no_url_error(track.provider, "no playable song URL found"))
     }
 
-    pub fn deps(&self) -> &CrossSourceResolverDeps {
-        &self.deps
-    }
-
     async fn resolve_merged_search(&self, query: ResolveSearchQuery) -> anyhow::Result<Vec<Track>> {
         let provider_order = self.provider_order();
         let mut ranked = Vec::new();
@@ -630,7 +626,7 @@ mod tests {
         async fn lyric(&self, _track: &Track) -> providers::Result<LyricPayload> {
             Err(provider_error(
                 &self.id,
-                ProviderErrorCode::NoLyric,
+                ProviderErrorCode::NoResult,
                 "no lyric",
                 false,
             ))
@@ -639,7 +635,7 @@ mod tests {
         async fn playlist_list(&self) -> providers::Result<Vec<PlaylistSummary>> {
             Err(provider_error(
                 &self.id,
-                ProviderErrorCode::NoPlaylists,
+                ProviderErrorCode::NoPlaylist,
                 "no playlists",
                 false,
             ))
