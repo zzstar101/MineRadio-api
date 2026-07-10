@@ -782,6 +782,7 @@ mod tests {
                     "djRadios": radios
                 }),
             })),
+            beatmap_analyzer: None,
         })
     }
 
