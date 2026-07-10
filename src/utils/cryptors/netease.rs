@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+// These crypto helpers are intentionally kept as forward-compatible utilities and
+// will be enabled as more sidecar features migrate to Rust.
+
 use std::io::Read;
 
 use anyhow::{Context, anyhow};

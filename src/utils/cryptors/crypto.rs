@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+// These crypto helpers are intentionally kept as forward-compatible utilities and
+// will be enabled as more sidecar features migrate to Rust.
+
 use aes::Aes128;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, block_padding::Pkcs7};
 use anyhow::{Context, anyhow};

@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+// These crypto helpers are intentionally kept as forward-compatible utilities and
+// will be enabled as more sidecar features migrate to Rust.
+
 pub mod crypto;
 pub mod krc;
 pub mod netease;
