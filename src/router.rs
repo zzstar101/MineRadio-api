@@ -1,23 +1,24 @@
 use axum::{
-    body::Body,
     Router,
+    body::{Body, to_bytes},
     extract::{Path, Query, Request, State},
     http::{Method, StatusCode},
     middleware::{self, Next},
     response::Response,
     routing::{get, post},
 };
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::time::Instant;
+use tracing::info;
 
 use crate::{
     http::response::{cors_preflight, fail, json, ok},
+    providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     providers::{
         error::{ProviderError, ProviderErrorCode},
         registry::ProviderRegistry,
     },
-    providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     server::AppState,
     services::{
         self, cross_source_resolver, podcast, sidecar_log, weather_radio::WeatherRadioParams,
@@ -55,10 +56,19 @@ pub fn build(state: AppState) -> Router {
         .route("/podcast/search", get(podcast_search).options(preflight))
         .route("/podcast/hot", get(podcast_hot).options(preflight))
         .route("/podcast/detail", get(podcast_detail).options(preflight))
-        .route("/podcast/programs", get(podcast_programs).options(preflight))
+        .route(
+            "/podcast/programs",
+            get(podcast_programs).options(preflight),
+        )
         .route("/podcast/my", get(podcast_my).options(preflight))
-        .route("/podcast/my/items", get(podcast_my_items).options(preflight))
-        .route("/podcast/dj-beatmap", get(podcast_dj_beatmap).options(preflight))
+        .route(
+            "/podcast/my/items",
+            get(podcast_my_items).options(preflight),
+        )
+        .route(
+            "/podcast/dj-beatmap",
+            get(podcast_dj_beatmap).options(preflight),
+        )
         .route("/search", get(search).options(preflight))
         .route("/song-url", post(song_url).options(preflight))
         .route(
@@ -111,8 +121,14 @@ pub fn build(state: AppState) -> Router {
             "/providers/{pid}/login-status",
             get(provider_login_status).options(preflight),
         )
-        .route("/providers/{pid}/logout", post(provider_logout).options(preflight))
-        .route("/providers/{pid}/like", post(provider_like).options(preflight))
+        .route(
+            "/providers/{pid}/logout",
+            post(provider_logout).options(preflight),
+        )
+        .route(
+            "/providers/{pid}/like",
+            post(provider_like).options(preflight),
+        )
         .route(
             "/providers/{pid}/like-check",
             get(provider_like_check).options(preflight),
@@ -129,16 +145,97 @@ pub fn build(state: AppState) -> Router {
 async fn request_logging_middleware(request: Request, next: Next) -> Response {
     let started_at = Instant::now();
     let method = request.method().to_string();
-    let path = request.uri().path().to_owned();
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str().to_owned())
+        .unwrap_or_else(|| request.uri().path().to_owned());
+    info!("HTTP request: {} {}", method, path);
+
     let response = next.run(request).await;
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let content_length = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+
+    let should_log_body = content_type.contains("application/json")
+        || content_type.starts_with("text/")
+        || content_type.contains("javascript")
+        || content_type.contains("xml");
+    let can_buffer_body = content_length
+        .map(|value| value <= 64 * 1024)
+        .unwrap_or(true);
+
+    let (parts, body) = response.into_parts();
+    if should_log_body && can_buffer_body {
+        match to_bytes(body, 64 * 1024).await {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes);
+                info!(
+                    "HTTP response: {} {} -> {} in {:.2}ms body={}",
+                    method, path, status, duration_ms, text
+                );
+                sidecar_log::spawn_runtime_log(json!({
+                    "event": "request",
+                    "method": method,
+                    "path": path,
+                    "status": status,
+                    "contentType": content_type,
+                    "durationMs": duration_ms,
+                    "body": text.to_string()
+                }));
+                return Response::from_parts(parts, Body::from(bytes));
+            }
+            Err(err) => {
+                info!(
+                    "HTTP response: {} {} -> {} in {:.2}ms body=<unavailable: {}>",
+                    method, path, status, duration_ms, err
+                );
+                sidecar_log::spawn_runtime_log(json!({
+                    "event": "request",
+                    "method": method,
+                    "path": path,
+                    "status": status,
+                    "contentType": content_type,
+                    "durationMs": duration_ms,
+                    "body": format!("<unavailable: {err}>")
+                }));
+                return Response::from_parts(parts, Body::from(Vec::<u8>::new()));
+            }
+        }
+    }
+
+    info!(
+        "HTTP response: {} {} -> {} in {:.2}ms content-type={}{}",
+        method,
+        path,
+        status,
+        duration_ms,
+        content_type,
+        if should_log_body && !can_buffer_body {
+            " body=<skipped: too large>"
+        } else {
+            ""
+        }
+    );
     sidecar_log::spawn_runtime_log(json!({
         "event": "request",
         "method": method,
         "path": path,
-        "status": response.status().as_u16(),
-        "durationMs": started_at.elapsed().as_secs_f64() * 1000.0
+        "status": status,
+        "contentType": content_type,
+        "durationMs": duration_ms
     }));
-    response
+    Response::from_parts(parts, body)
 }
 
 async fn health(State(state): State<AppState>) -> impl axum::response::IntoResponse {
@@ -186,10 +283,10 @@ struct SearchQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct SongUrlRequest {
+#[serde(deny_unknown_fields)]
+struct SongUrlTrackQualityRequest {
     track: Track,
-    options: Option<SongUrlOptions>,
-    opts: Option<SongUrlOptions>,
+    quality: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,11 +357,6 @@ struct PlaylistAddSongBody {
     track_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TrackBody {
-    track: Track,
-}
-
 async fn audio_proxy(
     State(state): State<AppState>,
     Query(query): Query<ProxyQuery>,
@@ -322,11 +414,13 @@ async fn weather_radio(
 }
 
 async fn discover_home(State(state): State<AppState>) -> Response {
-    match services::discover_home::build_discover_home(services::discover_home::DiscoverHomeServiceOptions {
-        provider_adapters: state.providers.all(),
-        podcast: state.services.podcast.clone(),
-        discover_requester: Some(state.services.discover_requester.clone()),
-    })
+    match services::discover_home::build_discover_home(
+        services::discover_home::DiscoverHomeServiceOptions {
+            provider_adapters: state.providers.all(),
+            podcast: state.services.podcast.clone(),
+            discover_requester: Some(state.services.discover_requester.clone()),
+        },
+    )
     .await
     {
         Ok(value) => ok(value),
@@ -454,13 +548,11 @@ async fn podcast_dj_beatmap(
     {
         Ok(value) => ok(value),
         Err(err) if err.to_string() == "Invalid audio url" => bad_request(err.to_string()),
-        Err(err) if err.to_string() == "podcast analyzer unavailable" => {
-            fail(
-                StatusCode::NOT_IMPLEMENTED,
-                "NOT_IMPLEMENTED",
-                err.to_string(),
-            )
-        }
+        Err(err) if err.to_string() == "podcast analyzer unavailable" => fail(
+            StatusCode::NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            err.to_string(),
+        ),
         Err(err) => internal_error(err.to_string()),
     }
 }
@@ -487,13 +579,13 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
 
 async fn song_url(
     State(state): State<AppState>,
-    axum::Json(body): axum::Json<SongUrlRequest>,
+    axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
+    let Some((track, options)) = parse_song_url_body(body) else {
+        return bad_request("invalid or missing Track body");
+    };
     let resolver = build_cross_source_resolver(&state.providers);
-    match resolver
-        .resolve_song_url(body.track, body.options.or(body.opts))
-        .await
-    {
+    match resolver.resolve_song_url(track, options).await {
         Ok(result) => ok(result),
         Err(err) => anyhow_error_response(err),
     }
@@ -512,24 +604,23 @@ async fn shared_playlist_import(
     .await
     {
         Ok(result) => ok(result),
-        Err(err) => match err.downcast::<services::shared_playlist_import::SharedPlaylistImportError>() {
-            Ok(err) => {
-                let status = match err.code.as_str() {
-                    "UNSUPPORTED_LINK" => StatusCode::BAD_REQUEST,
-                    "UNSUPPORTED_PROVIDER" | "NOT_IMPLEMENTED" => StatusCode::NOT_IMPLEMENTED,
-                    _ => StatusCode::INTERNAL_SERVER_ERROR,
-                };
-                fail(status, err.code, err.message)
+        Err(err) => {
+            match err.downcast::<services::shared_playlist_import::SharedPlaylistImportError>() {
+                Ok(err) => {
+                    let status = match err.code.as_str() {
+                        "UNSUPPORTED_LINK" => StatusCode::BAD_REQUEST,
+                        "UNSUPPORTED_PROVIDER" | "NOT_IMPLEMENTED" => StatusCode::NOT_IMPLEMENTED,
+                        _ => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    fail(status, err.code, err.message)
+                }
+                Err(err) => anyhow_error_response(err),
             }
-            Err(err) => anyhow_error_response(err),
-        },
+        }
     }
 }
 
-async fn provider_login_qr_key(
-    State(state): State<AppState>,
-    Path(pid): Path<String>,
-) -> Response {
+async fn provider_login_qr_key(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
     match pid.as_str() {
         "qq" => match state.services.qq_qr_login.create_key().await {
             Ok(data) => ok(data),
@@ -629,7 +720,10 @@ async fn provider_search(
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    match provider.search(&keyword, query.limit.unwrap_or(20).max(1)).await {
+    match provider
+        .search(&keyword, query.limit.unwrap_or(20).max(1))
+        .await
+    {
         Ok(tracks) => ok(tracks),
         Err(err) => provider_error_response(err),
     }
@@ -638,12 +732,15 @@ async fn provider_search(
 async fn provider_song_url(
     State(state): State<AppState>,
     Path(pid): Path<String>,
-    axum::Json(body): axum::Json<SongUrlRequest>,
+    axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    match provider.song_url(&body.track, body.options.or(body.opts)).await {
+    let Some((track, options)) = parse_song_url_body(body) else {
+        return bad_request("invalid or missing Track body");
+    };
+    match provider.song_url(&track, options).await {
         Ok(result) => ok(result),
         Err(err) => provider_error_response(err),
     }
@@ -652,12 +749,15 @@ async fn provider_song_url(
 async fn provider_qualities(
     State(state): State<AppState>,
     Path(pid): Path<String>,
-    axum::Json(body): axum::Json<TrackBody>,
+    axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    match provider.track_qualities(&body.track).await {
+    let Some(track) = parse_track_body(body) else {
+        return bad_request("invalid or missing Track body");
+    };
+    match provider.track_qualities(&track).await {
         Ok(result) => ok(result),
         Err(err) => provider_error_response(err),
     }
@@ -666,12 +766,15 @@ async fn provider_qualities(
 async fn provider_lyric(
     State(state): State<AppState>,
     Path(pid): Path<String>,
-    axum::Json(body): axum::Json<TrackBody>,
+    axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    match provider.lyric(&body.track).await {
+    let Some(track) = parse_track_body(body) else {
+        return bad_request("invalid or missing Track body");
+    };
+    match provider.lyric(&track).await {
         Ok(result) => ok(result),
         Err(err) => provider_error_response(err),
     }
@@ -700,10 +803,7 @@ async fn provider_playlist_detail(
     }
 }
 
-async fn provider_login_status(
-    State(state): State<AppState>,
-    Path(pid): Path<String>,
-) -> Response {
+async fn provider_login_status(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
@@ -717,10 +817,57 @@ async fn provider_logout(State(state): State<AppState>, Path(pid): Path<String>)
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    match provider.logout().await {
-        Ok(()) => ok(serde_json::json!({ "ok": true })),
-        Err(err) => provider_error_response(err),
+    let had_runtime_or_env_session = services::auth_session::get_provider_cookie(&pid)
+        .await
+        .map(|cookie| !cookie.trim().is_empty())
+        .unwrap_or(false);
+
+    if pid == "soda" {
+        let logout_result = provider.logout().await;
+        services::auth_session::clear_runtime_provider_cookie(&pid).await;
+        match logout_result {
+            Ok(()) => ok(serde_json::json!({ "provider": pid, "loggedOut": true })),
+            Err(err)
+                if had_runtime_or_env_session
+                    && matches!(err.code, ProviderErrorCode::NotImplemented)
+                    && err.action.as_deref() == Some("no-session") =>
+            {
+                ok(serde_json::json!({ "provider": pid, "loggedOut": true }))
+            }
+            Err(err) => provider_error_response(err),
+        }
+    } else {
+        services::auth_session::clear_runtime_provider_cookie(&pid).await;
+        match provider.logout().await {
+            Ok(()) => ok(serde_json::json!({ "provider": pid, "loggedOut": true })),
+            Err(err)
+                if had_runtime_or_env_session
+                    && matches!(err.code, ProviderErrorCode::NotImplemented)
+                    && err.action.as_deref() == Some("no-session") =>
+            {
+                ok(serde_json::json!({ "provider": pid, "loggedOut": true }))
+            }
+            Err(err) => provider_error_response(err),
+        }
     }
+}
+
+fn parse_song_url_body(body: serde_json::Value) -> Option<(Track, Option<SongUrlOptions>)> {
+    if let Ok(request) = serde_json::from_value::<SongUrlTrackQualityRequest>(body.clone()) {
+        return Some((
+            request.track,
+            Some(SongUrlOptions {
+                quality: request.quality,
+            }),
+        ));
+    }
+    serde_json::from_value::<Track>(body)
+        .ok()
+        .map(|track| (track, None))
+}
+
+fn parse_track_body(body: serde_json::Value) -> Option<Track> {
+    serde_json::from_value::<Track>(body).ok()
 }
 
 async fn provider_like(
@@ -867,9 +1014,9 @@ fn provider_error_response(err: ProviderError) -> Response {
     let status = match err.code {
         ProviderErrorCode::LoginRequired => StatusCode::UNAUTHORIZED,
         ProviderErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
-        ProviderErrorCode::NoResult
-        | ProviderErrorCode::NoUrl
-        | ProviderErrorCode::NoPlaylist => StatusCode::NOT_FOUND,
+        ProviderErrorCode::NoResult | ProviderErrorCode::NoUrl | ProviderErrorCode::NoPlaylist => {
+            StatusCode::NOT_FOUND
+        }
         ProviderErrorCode::Unavailable
         | ProviderErrorCode::CopyrightUnavailable
         | ProviderErrorCode::PaidRequired
@@ -877,7 +1024,11 @@ fn provider_error_response(err: ProviderError) -> Response {
         | ProviderErrorCode::VipRequired => StatusCode::BAD_GATEWAY,
         ProviderErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    fail(status, format!("{:?}", err.code).to_uppercase(), err.message)
+    fail(
+        status,
+        format!("{:?}", err.code).to_uppercase(),
+        err.message,
+    )
 }
 
 fn anyhow_error_response(err: anyhow::Error) -> Response {

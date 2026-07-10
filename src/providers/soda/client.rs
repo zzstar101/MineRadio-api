@@ -12,8 +12,7 @@ use crate::providers::{
 use crate::services::auth_session;
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?q=&aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
-const TRACK_URL: &str =
-    "https://api.qishui.com/luna/pc/track_v2?track_id=&media_type=track&queue_type=&aid=386088&iid=27960026095955";
+const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?track_id=&media_type=track&queue_type=&aid=386088&iid=27960026095955";
 const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=386088";
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
 const ME_URL: &str = "https://api.qishui.com/luna/pc/me?aid=386088&version_code=30050100";
@@ -45,6 +44,14 @@ impl SodaClient {
             .await
     }
 
+    pub async fn song_url(&self, track_id: &str) -> Result<Value> {
+        self.track_detail(track_id).await
+    }
+
+    pub async fn lyric(&self, track_id: &str) -> Result<Value> {
+        self.track_detail(track_id).await
+    }
+
     pub async fn track_detail(&self, track_id: &str) -> Result<Value> {
         let mut url = reqwest::Url::parse(TRACK_URL).map_err(internal_error)?;
         url.query_pairs_mut().append_pair("track_id", track_id);
@@ -53,8 +60,11 @@ impl SodaClient {
     }
 
     pub async fn playlist_list(&self) -> Result<Value> {
-        self.get_json(PLAYLIST_LIST_URL.to_owned(), self.current_cookie().await.as_deref())
-            .await
+        self.get_json(
+            PLAYLIST_LIST_URL.to_owned(),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
     }
 
     pub async fn playlist_detail(&self, playlist_id: &str) -> Result<Value> {
@@ -134,8 +144,11 @@ impl SodaClient {
     }
 
     pub async fn logout(&self) -> Result<Value> {
-        self.get_json(LOGOUT_URL.to_owned(), self.current_cookie().await.as_deref())
-            .await
+        self.get_json(
+            LOGOUT_URL.to_owned(),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
     }
 
     pub async fn read_json_url(&self, url: &str) -> Result<Value> {

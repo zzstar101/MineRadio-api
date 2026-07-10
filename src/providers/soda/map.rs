@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde_json::Value;
 
-use crate::types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track};
+use crate::types::{LyricLine, LyricPayload, LyricWord, PlaylistDetail, PlaylistSummary, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -9,13 +9,21 @@ pub fn normalize_provider_image_url(url: &str) -> String {
         return String::new();
     }
     if let Some(stripped) = value.strip_prefix("//") {
-        return format!("https:{stripped}");
+        return format!("https://{stripped}");
     }
-    value.replacen("http://", "https://", 1)
+    if value.len() >= 7 && value[..7].eq_ignore_ascii_case("http://") {
+        return format!("https://{}", &value[7..]);
+    }
+    value.to_owned()
 }
 
 pub fn map_soda_song_to_track(raw: &Value) -> Track {
-    let id = raw.get("id").map(value_to_string).unwrap_or_default();
+    let id = raw
+        .get("id")
+        .map(value_to_string)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
     let artists = raw
         .get("artists")
         .and_then(Value::as_array)
@@ -34,7 +42,7 @@ pub fn map_soda_song_to_track(raw: &Value) -> Track {
         .flatten()
         .filter_map(|item| item.get("quality").and_then(Value::as_str))
         .map(str::trim)
-        .filter(|item| !item.is_empty() && !item.eq_ignore_ascii_case("lossless"))
+        .filter(|item| !item.is_empty())
         .map(str::to_owned)
         .collect::<Vec<_>>();
 
@@ -115,11 +123,10 @@ pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
             lines.push(LyricLine {
                 time_ms,
                 text: text.clone(),
+                ..Default::default()
             });
         }
     }
-
-    lines.sort_by_key(|line| line.time_ms);
     lines
 }
 
@@ -140,8 +147,13 @@ pub fn parse_soda_lyric_text(text: &str) -> Vec<LyricLine> {
             .get(1)
             .and_then(|value| value.as_str().parse::<u64>().ok())
             .unwrap_or_default();
+        let line_duration_ms = caps
+            .get(2)
+            .and_then(|value| value.as_str().parse::<u64>().ok())
+            .unwrap_or_default();
         let body = caps.get(3).map(|value| value.as_str()).unwrap_or_default();
-        let mut words = String::new();
+        let mut full_text = String::new();
+        let mut words = Vec::new();
         let mut pos = 0usize;
 
         while pos < body.len() {
@@ -158,23 +170,45 @@ pub fn parse_soda_lyric_text(text: &str) -> Vec<LyricLine> {
                 pos = after_open;
                 continue;
             }
+            let Some(comma1_rel) = body[after_open..].find(',') else {
+                break;
+            };
+            let comma1 = after_open + comma1_rel;
+            let raw_start = body[after_open..comma1].parse::<u64>().unwrap_or_default();
             let Some(close) = body[after_open..].find('>').map(|index| after_open + index) else {
                 break;
             };
+            let duration_end = body[comma1 + 1..close]
+                .find(',')
+                .map(|index| comma1 + 1 + index)
+                .unwrap_or(close);
+            let raw_duration = body[comma1 + 1..duration_end]
+                .parse::<u64>()
+                .unwrap_or_default();
             let text_start = close + 1;
             let next_open = body[text_start..]
                 .find('<')
                 .map(|index| text_start + index)
                 .unwrap_or(body.len());
             let segment = &body[text_start..next_open];
-            words.push_str(segment);
+            let c0 = utf16_len(&full_text);
+            full_text.push_str(segment);
+            if !segment.is_empty() {
+                words.push(LyricWord {
+                    text: Some(segment.to_owned()),
+                    time_ms: time_ms + raw_start,
+                    duration_ms: Some(raw_duration),
+                    c0,
+                    c1: utf16_len(&full_text),
+                });
+            }
             pos = next_open;
         }
 
-        let plain = if words.trim().is_empty() {
+        let plain = if full_text.trim().is_empty() {
             word_marker_re.replace_all(body, "").trim().to_owned()
         } else {
-            words
+            full_text
         };
 
         if plain.trim().is_empty() {
@@ -182,15 +216,23 @@ pub fn parse_soda_lyric_text(text: &str) -> Vec<LyricLine> {
         }
         lines.push(LyricLine {
             time_ms,
-            text: plain,
+            duration_ms: Some(line_duration_ms),
+            text: plain.clone(),
+            source: Some(if words.is_empty() {
+                "soda-line".to_owned()
+            } else {
+                "soda-word".to_owned()
+            }),
+            words: (!words.is_empty()).then_some(words),
+            char_count: Some(utf16_len(&plain).max(1)),
+            ..Default::default()
         });
     }
 
-    lines.sort_by_key(|line| line.time_ms);
-    lines
+    finalize_lyric_line_durations(lines)
 }
 
-pub fn map_soda_lyric_to_payload(_track_id: &str, lyric: &str, trans: &str) -> LyricPayload {
+pub fn map_soda_lyric_to_payload(track_id: &str, lyric: &str, trans: &str) -> LyricPayload {
     let base_lines = {
         let soda_lines = parse_soda_lyric_text(lyric);
         if soda_lines.is_empty() {
@@ -205,41 +247,37 @@ pub fn map_soda_lyric_to_payload(_track_id: &str, lyric: &str, trans: &str) -> L
         .collect::<std::collections::HashMap<_, _>>();
     let lines = base_lines
         .into_iter()
-        .map(|line| {
-            let text = translations
+        .map(|mut line| {
+            line.translation = translations
                 .get(&line.time_ms)
-                .map(|translation| {
-                    if translation.trim().is_empty() {
-                        line.text.clone()
-                    } else if line.text.trim().is_empty() {
-                        translation.clone()
-                    } else {
-                        format!("{}\n{}", line.text, translation)
-                    }
-                })
-                .unwrap_or_else(|| line.text.clone());
-            LyricLine {
-                time_ms: line.time_ms,
-                text,
-            }
+                .cloned()
+                .filter(|value| !value.is_empty());
+            line
         })
         .collect::<Vec<_>>();
+    let is_word_by_word = lines.iter().any(|line| {
+        line.words
+            .as_ref()
+            .map(|words| !words.is_empty())
+            .unwrap_or(false)
+    });
 
     LyricPayload {
+        provider: "soda".to_owned(),
+        track_id: track_id.to_owned(),
         lines,
-        raw: if lyric.trim().is_empty() {
-            None
-        } else {
-            Some(lyric.to_owned())
-        },
+        has_translation: !translations.is_empty(),
+        is_word_by_word,
     }
 }
 
 pub fn map_soda_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     PlaylistSummary {
+        provider: "soda".to_owned(),
         id: raw
             .get("id")
             .map(value_to_string)
+            .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .or_else(|| id_hint.map(str::to_owned))
             .unwrap_or_default(),
@@ -250,14 +288,20 @@ pub fn map_soda_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
             .unwrap_or_default()
             .trim()
             .to_owned(),
+        cover_url: normalize_provider_image_url(&soda_sized_cover_url(raw.get("url_cover"))),
         track_count: raw
             .get("count_tracks")
             .and_then(Value::as_u64)
             .and_then(|value| u32::try_from(value).ok()),
+        track_ids: Vec::new(),
+        subscribed: Some(raw.get("is_private").and_then(Value::as_bool) == Some(false)),
     }
 }
 
-pub fn map_soda_playlist_detail_to_detail(raw: Option<&Value>, id_hint: Option<&str>) -> PlaylistDetail {
+pub fn map_soda_playlist_detail_to_detail(
+    raw: Option<&Value>,
+    id_hint: Option<&str>,
+) -> PlaylistDetail {
     let playlist = raw.and_then(|value| value.get("playlist"));
     let summary = map_soda_playlist_to_summary(playlist.unwrap_or(&Value::Null), id_hint);
     let tracks = raw
@@ -269,15 +313,46 @@ pub fn map_soda_playlist_detail_to_detail(raw: Option<&Value>, id_hint: Option<&
             item.get("entity")
                 .and_then(|entity| entity.get("track_wrapper"))
                 .and_then(|wrapper| wrapper.get("track"))
+                .filter(|track| track.is_object())
         })
         .map(map_soda_song_to_track)
         .collect::<Vec<_>>();
 
     PlaylistDetail {
+        provider: summary.provider,
         id: summary.id,
         name: summary.name,
+        cover_url: summary.cover_url,
+        track_count: summary.track_count,
+        track_ids: summary.track_ids,
+        subscribed: summary.subscribed,
         tracks,
     }
+}
+
+fn finalize_lyric_line_durations(mut lines: Vec<LyricLine>) -> Vec<LyricLine> {
+    lines.sort_by_key(|line| line.time_ms);
+    for index in 0..lines.len() {
+        let next_time = lines.get(index + 1).map(|line| line.time_ms);
+        if let Some(current) = lines.get_mut(index) {
+            let inferred = next_time
+                .filter(|time| *time > current.time_ms)
+                .map(|time| time - current.time_ms)
+                .unwrap_or(4_800);
+            let duration = current
+                .duration_ms
+                .filter(|value| *value > 0)
+                .unwrap_or(inferred);
+            let duration = duration.clamp(450, 12_000);
+            current.duration_ms = Some(duration);
+            current.char_count = Some(
+                current
+                    .char_count
+                    .unwrap_or_else(|| utf16_len(&current.text).max(1)),
+            );
+        }
+    }
+    lines
 }
 
 fn value_to_string(value: &Value) -> String {
@@ -309,8 +384,13 @@ fn soda_sized_cover_url(cover: Option<&Value>) -> String {
     let prefix = cover
         .get("template_prefix")
         .and_then(Value::as_str)
-        .unwrap_or("tplv-b829550vbb")
+        .unwrap_or_default()
         .trim();
+    let prefix = if prefix.is_empty() {
+        "tplv-b829550vbb"
+    } else {
+        prefix
+    };
     format!("{cdn}{uri}~{prefix}-crop-center:256:256.webp")
 }
 
@@ -320,4 +400,61 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter(|value| seen.insert(value.clone()))
         .collect()
+}
+
+fn utf16_len(value: &str) -> usize {
+    value.encode_utf16().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn soda_song_track_keeps_lossless_quality_hint() {
+        let track = map_soda_song_to_track(&json!({
+            "id": "123",
+            "name": "Demo Song",
+            "artists": [{ "name": "Alice" }],
+            "album": { "name": "Demo Album" },
+            "bit_rates": [
+                { "quality": "highest" },
+                { "quality": "lossless" },
+                { "quality": "higher" }
+            ]
+        }));
+
+        assert_eq!(track.quality_hints, vec!["highest", "lossless", "higher"]);
+    }
+
+    #[test]
+    fn soda_playlist_detail_skips_null_tracks_and_defaults_subscribed_false() {
+        let detail = map_soda_playlist_detail_to_detail(
+            Some(&json!({
+                "playlist": {
+                    "id": "pl-1",
+                    "title": "Playlist"
+                },
+                "media_resources": [
+                    { "entity": { "track_wrapper": { "track": null } } },
+                    { "entity": { "track_wrapper": { "track": { "id": "t-1", "name": "Track 1" } } } }
+                ]
+            })),
+            Some("pl-1"),
+        );
+
+        assert_eq!(detail.subscribed, Some(false));
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].id, "t-1");
+    }
+
+    #[test]
+    fn soda_lyric_zero_duration_uses_inferred_duration() {
+        let lines = parse_soda_lyric_text("[1000,0]hello\n[3000,0]world");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].duration_ms, Some(2000));
+        assert_eq!(lines[1].duration_ms, Some(4800));
+    }
 }
