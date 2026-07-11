@@ -126,7 +126,7 @@ impl NeteaseAdapter {
         }
 
         let body = self.client.login_status().await?;
-        let profile = body.get("data").and_then(|data| data.get("profile"));
+        let profile = body.get("profile");
         let Some(profile) = profile else {
             return Ok(ProviderLoginStatus {
                 provider: "netease".to_owned(),
@@ -383,20 +383,24 @@ impl ProviderAdapter for NeteaseAdapter {
             Ok(body) => body,
             Err(_) => self.client.lyric(&track.source_id).await?,
         };
+        let lrc = body.get("lrc");
         Ok(map_hana_lyric_to_payload(
             &track.source_id,
-            body.get("lrc")
+            lrc
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            body.get("tlyric")
+            lrc
+                .and_then(|value| value.get("tlyric"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            body.get("klyric")
+            lrc
+                .and_then(|value| value.get("klyric"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str),
-            body.get("yrc")
+            lrc
+                .and_then(|value| value.get("yrc"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str),
         ))
@@ -405,7 +409,7 @@ impl ProviderAdapter for NeteaseAdapter {
     async fn playlist_list(&self) -> Result<Vec<PlaylistSummary>> {
         ensure_logged_in(self.client.current_cookie().await)?;
         let status_body = self.client.login_status().await?;
-        let profile = status_body.get("data").and_then(|data| data.get("profile"));
+        let profile = status_body.get("profile");
         let uid = profile
             .and_then(|value| value.get("userId"))
             .map(read_id_like)
@@ -532,6 +536,7 @@ impl ProviderAdapter for NeteaseAdapter {
         playlist_id: &str,
         track_id: &str,
     ) -> Result<PlaylistAddSongAck> {
+        //未测试
         ensure_logged_in(self.client.current_cookie().await)?;
         let primary = self.client.playlist_tracks(playlist_id, track_id).await?;
         let final_response = if is_successful(&primary) {

@@ -39,7 +39,7 @@ impl NeteaseQrLoginService {
             .qr_key
             .call(serde_json::json!({ "timestamp": self.now() }))
             .await?;
-        let key = read_string(response_data(&resp).get("unikey"))
+        let key = read_string(response_body(&resp).get("unikey"))
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_MISSING"))?;
         Ok(ProviderLoginQrKey {
             provider: "netease".to_owned(),
