@@ -1,16 +1,13 @@
 use axum::{
     Router,
-    body::{Body, to_bytes},
+    body::Body,
     extract::{Path, Query, Request, State},
     http::{Method, StatusCode},
-    middleware::{self, Next},
     response::Response,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Instant;
-use tracing::info;
 
 use crate::{
     http::response::{cors_preflight, fail, json, ok},
@@ -138,104 +135,7 @@ pub fn build(state: AppState) -> Router {
             post(provider_playlist_add_song).options(preflight),
         )
         .fallback(fallback)
-        .layer(middleware::from_fn(request_logging_middleware))
         .with_state(state)
-}
-
-async fn request_logging_middleware(request: Request, next: Next) -> Response {
-    let started_at = Instant::now();
-    let method = request.method().to_string();
-    let path = request
-        .uri()
-        .path_and_query()
-        .map(|value| value.as_str().to_owned())
-        .unwrap_or_else(|| request.uri().path().to_owned());
-    info!("HTTP request: {} {}", method, path);
-
-    let response = next.run(request).await;
-    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-    let status = response.status().as_u16();
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-    let content_length = response
-        .headers()
-        .get("content-length")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok());
-
-    let should_log_body = content_type.contains("application/json")
-        || content_type.starts_with("text/")
-        || content_type.contains("javascript")
-        || content_type.contains("xml");
-    let can_buffer_body = content_length
-        .map(|value| value <= 64 * 1024)
-        .unwrap_or(true);
-
-    let (parts, body) = response.into_parts();
-    if should_log_body && can_buffer_body {
-        match to_bytes(body, 64 * 1024).await {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                info!(
-                    "HTTP response: {} {} -> {} in {:.2}ms body={}",
-                    method, path, status, duration_ms, text
-                );
-                sidecar_log::spawn_runtime_log(json!({
-                    "event": "request",
-                    "method": method,
-                    "path": path,
-                    "status": status,
-                    "contentType": content_type,
-                    "durationMs": duration_ms,
-                    "body": text.to_string()
-                }));
-                return Response::from_parts(parts, Body::from(bytes));
-            }
-            Err(err) => {
-                info!(
-                    "HTTP response: {} {} -> {} in {:.2}ms body=<unavailable: {}>",
-                    method, path, status, duration_ms, err
-                );
-                sidecar_log::spawn_runtime_log(json!({
-                    "event": "request",
-                    "method": method,
-                    "path": path,
-                    "status": status,
-                    "contentType": content_type,
-                    "durationMs": duration_ms,
-                    "body": format!("<unavailable: {err}>")
-                }));
-                return Response::from_parts(parts, Body::from(Vec::<u8>::new()));
-            }
-        }
-    }
-
-    info!(
-        "HTTP response: {} {} -> {} in {:.2}ms content-type={}{}",
-        method,
-        path,
-        status,
-        duration_ms,
-        content_type,
-        if should_log_body && !can_buffer_body {
-            " body=<skipped: too large>"
-        } else {
-            ""
-        }
-    );
-    sidecar_log::spawn_runtime_log(json!({
-        "event": "request",
-        "method": method,
-        "path": path,
-        "status": status,
-        "contentType": content_type,
-        "durationMs": duration_ms
-    }));
-    Response::from_parts(parts, body)
 }
 
 async fn health(State(state): State<AppState>) -> impl axum::response::IntoResponse {
