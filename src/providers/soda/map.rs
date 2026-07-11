@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    parsers::{lrc, soda_music},
+    parsers::{lrc, soda},
     types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
 };
 
@@ -89,7 +89,7 @@ pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
 }
 
 pub fn parse_soda_lyric_text(text: &str) -> Vec<LyricLine> {
-    soda_music::parse_soda_lyric_text(text)
+    soda::parse_soda_lyric_text(text)
 }
 
 pub fn map_soda_lyric_to_payload(track_id: &str, lyric: &str, trans: &str) -> LyricPayload {

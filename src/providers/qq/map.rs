@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    parsers::{lrc, qqmusic},
+    parsers::{lrc, qq},
     types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
 };
 
@@ -96,7 +96,7 @@ pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
 }
 
 pub fn parse_qrc(text: &str) -> Vec<LyricLine> {
-    qqmusic::parse_qrc_text(text)
+    qq::parse_qrc_text(text)
 }
 
 pub fn map_qq_lyric_to_payload(
