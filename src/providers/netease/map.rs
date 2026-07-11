@@ -13,7 +13,10 @@ pub fn normalize_provider_image_url(url: &str) -> String {
     if let Some(stripped) = value.strip_prefix("//") {
         return format!("https://{stripped}");
     }
-    value.replacen("http://", "https://", 1)
+    if value.len() >= 7 && value[..7].eq_ignore_ascii_case("http://") {
+        return format!("https://{}", &value[7..]);
+    }
+    value.to_owned()
 }
 
 pub fn map_playable(
@@ -183,7 +186,7 @@ pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
         ),
         track_count,
         track_ids,
-        subscribed: raw.get("subscribed").and_then(Value::as_bool),
+        subscribed: Some(raw.get("subscribed").and_then(Value::as_bool) == Some(true)),
     }
 }
 
@@ -256,5 +259,12 @@ mod tests {
         assert_eq!(track.id, "42");
         assert_eq!(track.cover_url, "https://a/b.jpg");
         assert_eq!(track.artists, vec!["A"]);
+    }
+
+    #[test]
+    fn playlist_summary_defaults_subscribed_to_false() {
+        let summary = map_hana_playlist_to_summary(&json!({ "id": 1 }), None);
+
+        assert_eq!(summary.subscribed, Some(false));
     }
 }

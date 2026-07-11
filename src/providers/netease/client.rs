@@ -367,10 +367,11 @@ impl NeteaseClient {
     }
 
     pub async fn song_like_check(&self, ids: &[String]) -> Result<Value> {
+        let track_ids = json!(ids).to_string();
         self.request_eapi(
             "/api/song/like/check",
             json!({
-                "trackIds": serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_owned()),
+                "trackIds": track_ids,
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
@@ -391,12 +392,13 @@ impl NeteaseClient {
     }
 
     pub async fn playlist_tracks(&self, playlist_id: &str, track_id: &str) -> Result<Value> {
+        let track_ids = json!([track_id]).to_string();
         self.request_eapi(
             "/api/playlist/manipulate/tracks",
             json!({
                 "op": "add",
                 "pid": playlist_id,
-                "trackIds": serde_json::to_string(&vec![track_id]).unwrap_or_else(|_| "[]".to_owned()),
+                "trackIds": track_ids,
                 "imme": "true",
                 "e_r": false
             }),
@@ -406,11 +408,12 @@ impl NeteaseClient {
     }
 
     pub async fn playlist_track_add(&self, playlist_id: &str, track_id: &str) -> Result<Value> {
+        let tracks = json!([{"type": 3, "id": track_id}]).to_string();
         self.request_weapi(
             "/api/playlist/track/add",
             json!({
                 "id": playlist_id,
-                "tracks": serde_json::to_string(&vec![json!({"type": 3, "id": track_id})]).unwrap_or_else(|_| "[]".to_owned()),
+                "tracks": tracks,
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
@@ -522,12 +525,11 @@ impl NeteaseClient {
             .await
             .context("read netease upstream response")
             .map_err(|err| unavailable_error(err.to_string()))?;
-        let body = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| {
-            json!({
-                "code": i64::from(status.as_u16()),
-                "message": text
-            })
-        });
+        let body = serde_json::from_str::<Value>(&text).map_err(|err| {
+            unavailable_error(format!(
+                "parse netease upstream response: {err}; body: {text}"
+            ))
+        })?;
 
         let code = body
             .get("code")
@@ -547,7 +549,6 @@ impl NeteaseClient {
             provider: "netease".to_owned(),
             message: body
                 .get("message")
-                .or_else(|| body.get("msg"))
                 .and_then(Value::as_str)
                 .unwrap_or("netease upstream error")
                 .to_owned(),
