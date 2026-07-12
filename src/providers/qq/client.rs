@@ -1,9 +1,12 @@
+use std::sync::OnceLock;
+
 use anyhow::Context;
 use base64::Engine;
 use reqwest::{
     Client,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
 };
+use rquickjs::{CatchResultExt, Context as JsContext, Function, Runtime};
 use serde_json::{Value, json};
 
 use crate::{
@@ -15,6 +18,10 @@ use crate::{
 };
 
 const UA: &str = "Mozilla/5.0";
+#[allow(dead_code)]
+const QQ_SIGN_LOADER: &str = include_str!("../../../assets/qq_sign/loader.js");
+#[allow(dead_code)]
+const QQ_SIGN_MODULE: &str = include_str!("../../../assets/qq_sign/module.js");
 
 #[derive(Clone, Default)]
 pub struct QqClient {
@@ -30,6 +37,23 @@ impl QqClient {
 
     pub async fn current_cookie(&self) -> Option<String> {
         auth_session::get_provider_cookie("qq").await
+    }
+
+    #[allow(dead_code)]
+    pub fn get_sign(&self, data: &str) -> Result<String> {
+        let runtime = Runtime::new().map_err(internal)?;
+        let context = JsContext::full(&runtime).map_err(internal)?;
+        context.with(|context| {
+            context
+                .eval::<(), _>(qq_sign_source())
+                .catch(&context)
+                .map_err(internal)?;
+            let get_sign = context
+                .globals()
+                .get::<_, Function>("get_sign")
+                .map_err(internal)?;
+            get_sign.call((data,)).catch(&context).map_err(internal)
+        })
     }
 
     pub async fn search(&self, keyword: &str, limit: u32) -> Result<Value> {
@@ -283,7 +307,7 @@ impl QqClient {
             }),
             None,
             None,
-            None
+            None,
         )
         .await
     }
@@ -319,21 +343,16 @@ impl QqClient {
         )
         .await
     }
-
+    //实测过后官方歌单需走该接口获取, 后续会接入待sign校验版本
     pub async fn official_playlist_detail(&self, playlist_id: &str, limit: u32) -> Result<Value> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal)?;
         let song_num = limit.clamp(1, 500);
-        self.get_json(
+        self.post_raw_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            &[
-                ("format", "json".to_owned()),
-                (
-                    "data",
-                    serde_json::to_string(&json!({
-                        "comm": { "ct": 24, "cv": 0 },
+            &json!({
                         "req_0": {
-                            "module": "music.srfDissInfo.aiDissInfo",
-                            "method": "uniform_get_Dissinfo",
+                            "module": "music.srfDissInfo.DissInfoForPc",
+                            "method": "uniform_get_Dissinfo", 
                             "param": {
                                 "disstid": disstid,
                                 "userinfo": 1,
@@ -344,20 +363,10 @@ impl QqClient {
                                 "onlysonglist": 0,
                                 "enc_host_uin": ""
                             }
-                        },
-                        "req_1": {
-                            "module": "music.srfDissInfo.PlExtServer",
-                            "method": "getPlExtInfo",
-                            "param": {
-                                "tid": disstid,
-                                "need": [6]
-                            }
                         }
-                    }))
-                    .unwrap_or_default(),
-                ),
-            ],
+                    }),
             Some("https://y.qq.com/"),
+            self.current_cookie().await.as_deref(),
             None,
         )
         .await
@@ -642,5 +651,34 @@ fn unavailable(err: impl std::fmt::Display) -> ProviderError {
         retryable: true,
         action: None,
         raw_message: None,
+    }
+}
+
+#[allow(dead_code)]
+fn qq_sign_source() -> &'static str {
+    static SOURCE: OnceLock<String> = OnceLock::new();
+
+    SOURCE
+        .get_or_init(|| {
+            let loader = QQ_SIGN_LOADER.replacen("require('./module')", QQ_SIGN_MODULE, 1);
+            format!(
+                "var global = globalThis; var window = globalThis; var location = {{}}; var document = {{}}; var navigator = {{}}; var console = {{ log: function() {{}} }}; var data; var origin_rsult; var result;\n{loader}"
+            )
+        })
+        .as_str()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QqClient;
+
+    #[test]
+    fn get_sign_executes_the_bundled_javascript() {
+        let data = r#"{"comm":{"ct":24},"req_1":{"module":"test","method":"test","param":{}}}"#;
+
+        assert_eq!(
+            QqClient::new().get_sign(data).expect("calculate qq sign"),
+            "zzcfcaa938yzk1nuourdgrzbse3gvchq0j1vk92298b96"
+        );
     }
 }

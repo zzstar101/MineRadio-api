@@ -21,6 +21,7 @@ rand = "0.8"
 regex = "1"
 reqwest = { version = "0.12", features = ["json", "cookies", "stream", "rustls-tls"], default-features = false }
 qrcode-generator = "5"
+rquickjs = "0.12"
 rsa = { version = "0.9", features = ["pem"] }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
