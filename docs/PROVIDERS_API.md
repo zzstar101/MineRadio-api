@@ -317,7 +317,7 @@ Track 请求体示例：
 | GET `/providers/{pid}/playlists` | 当前用户歌单列表 | 无 | `{ "ok":true, "data":[{ "provider":"qq", "id":"123", "name":"示例歌单", "coverUrl":"", "trackIds":[] }] }` |
 | GET `/providers/{pid}/playlists/{id}` | 歌单详情 | `/providers/qq/playlists/123` | `{ "ok":true, "data":{ "provider":"qq", "id":"123", "name":"示例歌单", "trackIds":[], "tracks":[] } }` |
 | POST `/providers/{pid}/like` | 收藏或取消收藏歌曲 | 请求体 `{"id":"1","liked":true}` | `{ "ok":true, "data":{ "provider":"qq", "id":"1", "liked":true, "code":0 } }` |
-| GET `/providers/{pid}/like-check` | 查询歌曲收藏状态 | `?ids=1,2` | `{ "ok":true, "data":{ "provider":"qq", "ids":["1","2"], "liked":{ "1":true, "2":false } } }` |
+| GET `/providers/{pid}/like-check` | 查询歌曲收藏状态 | `?ids=1,2`；`id` 可作别名，至少提供一个有效 ID | `{ "ok":true, "data":{ "provider":"qq", "ids":["1","2"], "liked":{ "1":true, "2":false } } }` |
 | POST `/providers/{pid}/playlists/add-song` | 添加歌曲到歌单 | 请求体 `{"playlist_id":"123","track_id":"1"}` | `{ "ok":true, "data":{ "provider":"qq", "playlistId":"123", "trackId":"1", "success":true, "code":0 } }` |
 
 ## 常见错误

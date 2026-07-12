@@ -253,6 +253,7 @@ struct LikeBody {
 #[derive(Debug, Deserialize)]
 struct LikeCheckQuery {
     ids: Option<String>,
+    id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -796,18 +797,26 @@ async fn provider_like_check(
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
     };
-    let ids = query
+    let ids = parse_like_check_ids(query);
+    if ids.is_empty() {
+        return bad_request("ids required");
+    }
+    match provider.check_song_likes(&ids).await {
+        Ok(result) => ok(result),
+        Err(err) => provider_error_response(err),
+    }
+}
+
+fn parse_like_check_ids(query: LikeCheckQuery) -> Vec<String> {
+    query
         .ids
+        .or(query.id)
         .unwrap_or_default()
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-        .collect::<Vec<_>>();
-    match provider.check_song_likes(&ids).await {
-        Ok(result) => ok(result),
-        Err(err) => provider_error_response(err),
-    }
+        .collect()
 }
 
 async fn provider_playlist_add_song(
@@ -947,5 +956,30 @@ fn anyhow_error_response(err: anyhow::Error) -> Response {
             sidecar_log::spawn_runtime_log(entry);
             internal_error(err.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LikeCheckQuery, parse_like_check_ids};
+
+    #[test]
+    fn like_check_ids_accepts_the_id_alias() {
+        let ids = parse_like_check_ids(LikeCheckQuery {
+            ids: None,
+            id: Some(" 1, ,2 ".to_owned()),
+        });
+
+        assert_eq!(ids, ["1", "2"]);
+    }
+
+    #[test]
+    fn like_check_ids_prefers_ids_over_the_id_alias() {
+        let ids = parse_like_check_ids(LikeCheckQuery {
+            ids: Some("3".to_owned()),
+            id: Some("1,2".to_owned()),
+        });
+
+        assert_eq!(ids, ["3"]);
     }
 }
