@@ -91,6 +91,10 @@ pub fn build(state: AppState) -> Router {
                 .options(preflight),
         )
         .route(
+            "/providers/{pid}/session-cookie/clear",
+            post(clear_provider_session_cookie).options(preflight),
+        )
+        .route(
             "/providers/{pid}/search",
             get(provider_search).options(preflight),
         )
