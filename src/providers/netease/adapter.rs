@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     providers::{
-        ProviderAdapter, Result,
+        ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -103,7 +103,7 @@ impl NeteaseAdapter {
         Self { client }
     }
 
-    async fn login_status_internal(&self) -> Result<ProviderLoginStatus> {
+    async fn login_status_internal(&self) -> ProviderResult<ProviderLoginStatus> {
         let Some(cookie) = self.client.current_cookie().await else {
             return Ok(ProviderLoginStatus {
                 provider: "netease".to_owned(),
@@ -155,7 +155,7 @@ impl ProviderAdapter for NeteaseAdapter {
         "netease".to_owned()
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> Result<Vec<Track>> {
+    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
         let body = self.client.cloudsearch(keyword, limit).await?;
         let songs = body
             .get("result")
@@ -167,7 +167,11 @@ impl ProviderAdapter for NeteaseAdapter {
         Ok(songs.iter().map(map_hana_song_to_track).collect())
     }
 
-    async fn song_url(&self, track: &Track, opts: Option<SongUrlOptions>) -> Result<SongUrlResult> {
+    async fn song_url(
+        &self,
+        track: &Track,
+        opts: Option<SongUrlOptions>,
+    ) -> ProviderResult<SongUrlResult> {
         let requested = opts
             .and_then(|value| value.quality)
             .unwrap_or_else(|| "hires".to_owned());
@@ -296,7 +300,7 @@ impl ProviderAdapter for NeteaseAdapter {
         Err(state_error(&last_state, &track.source_id))
     }
 
-    async fn track_qualities(&self, track: &Track) -> Result<TrackQualityAvailability> {
+    async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
         let has_cookie = self
             .client
             .current_cookie()
@@ -378,7 +382,7 @@ impl ProviderAdapter for NeteaseAdapter {
         })
     }
 
-    async fn lyric(&self, track: &Track) -> Result<LyricPayload> {
+    async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let body = match self.client.lyric_new(&track.source_id).await {
             Ok(body) => body,
             Err(_) => self.client.lyric(&track.source_id).await?,
@@ -402,7 +406,7 @@ impl ProviderAdapter for NeteaseAdapter {
         ))
     }
 
-    async fn playlist_list(&self) -> Result<Vec<PlaylistSummary>> {
+    async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         ensure_logged_in(self.client.current_cookie().await)?;
         let status_body = self.client.login_status().await?;
         let profile = status_body.get("profile");
@@ -426,7 +430,7 @@ impl ProviderAdapter for NeteaseAdapter {
             .unwrap_or_default())
     }
 
-    async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
+    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
         let body = self.client.playlist_detail(id).await?;
         let Some(playlist) = body.get("playlist") else {
             return Err(ProviderError {
@@ -441,17 +445,17 @@ impl ProviderAdapter for NeteaseAdapter {
         Ok(map_hana_playlist_to_detail(playlist, Some(id)))
     }
 
-    async fn login_status(&self) -> Result<ProviderLoginStatus> {
+    async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
         self.login_status_internal().await
     }
 
-    async fn logout(&self) -> Result<()> {
+    async fn logout(&self) -> ProviderResult<()> {
         self.client.logout().await?;
         auth_session::clear_runtime_provider_cookie("netease").await;
         Ok(())
     }
 
-    async fn like_song(&self, id: &str, liked: bool) -> Result<SongLikeAck> {
+    async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
         ensure_logged_in(self.client.current_cookie().await)?;
         let body = self.client.like(id, liked).await?;
         Ok(SongLikeAck {
@@ -462,7 +466,7 @@ impl ProviderAdapter for NeteaseAdapter {
         })
     }
 
-    async fn check_song_likes(&self, ids: &[String]) -> Result<SongLikeCheckAck> {
+    async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
         ensure_logged_in(self.client.current_cookie().await)?;
         let clean_ids = ids
             .iter()
@@ -531,7 +535,7 @@ impl ProviderAdapter for NeteaseAdapter {
         &self,
         playlist_id: &str,
         track_id: &str,
-    ) -> Result<PlaylistAddSongAck> {
+    ) -> ProviderResult<PlaylistAddSongAck> {
         //未测试
         ensure_logged_in(self.client.current_cookie().await)?;
         let primary = self.client.playlist_tracks(playlist_id, track_id).await?;
@@ -562,7 +566,7 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 }
 
-fn ensure_logged_in(cookie: Option<String>) -> Result<()> {
+fn ensure_logged_in(cookie: Option<String>) -> ProviderResult<()> {
     if cookie
         .as_deref()
         .map(str::trim)

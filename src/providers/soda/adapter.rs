@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     providers::{
-        ProviderAdapter, Result,
+        ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -90,7 +90,7 @@ impl ProviderAdapter for SodaAdapter {
         "soda".to_owned()
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> Result<Vec<Track>> {
+    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
         let body = self.client.search(keyword).await?;
         let tracks = body
             .get("result_groups")
@@ -119,7 +119,11 @@ impl ProviderAdapter for SodaAdapter {
         Ok(tracks)
     }
 
-    async fn song_url(&self, track: &Track, opts: Option<SongUrlOptions>) -> Result<SongUrlResult> {
+    async fn song_url(
+        &self,
+        track: &Track,
+        opts: Option<SongUrlOptions>,
+    ) -> ProviderResult<SongUrlResult> {
         ensure_cookie_for_action(self.client.current_cookie().await, "song-url")?;
         let requested = opts
             .and_then(|value| value.quality)
@@ -169,12 +173,12 @@ impl ProviderAdapter for SodaAdapter {
         })
     }
 
-    async fn track_qualities(&self, track: &Track) -> Result<TrackQualityAvailability> {
+    async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
         let detail = self.client.track_detail(&track.source_id).await?;
         Ok(build_track_quality_availability(&track.source_id, &detail))
     }
 
-    async fn lyric(&self, track: &Track) -> Result<LyricPayload> {
+    async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let body = self.client.lyric(&track.source_id).await?;
         let lyric = body.get("lyric");
         let base = lyric
@@ -190,7 +194,7 @@ impl ProviderAdapter for SodaAdapter {
         Ok(map_soda_lyric_to_payload(&track.source_id, base, trans))
     }
 
-    async fn playlist_list(&self) -> Result<Vec<PlaylistSummary>> {
+    async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         let Some(cookie) = self.client.current_cookie().await else {
             return Ok(Vec::new());
         };
@@ -207,12 +211,12 @@ impl ProviderAdapter for SodaAdapter {
             .collect())
     }
 
-    async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
+    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
         let body = self.client.playlist_detail(id).await?;
         Ok(map_soda_playlist_detail_to_detail(Some(&body), Some(id)))
     }
 
-    async fn login_status(&self) -> Result<ProviderLoginStatus> {
+    async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
         let Some(cookie) = self.client.current_cookie().await else {
             return Ok(ProviderLoginStatus {
                 provider: "soda".to_owned(),
@@ -291,7 +295,7 @@ impl ProviderAdapter for SodaAdapter {
         Ok(status)
     }
 
-    async fn logout(&self) -> Result<()> {
+    async fn logout(&self) -> ProviderResult<()> {
         if self
             .client
             .current_cookie()
@@ -311,7 +315,7 @@ impl ProviderAdapter for SodaAdapter {
         Ok(())
     }
 
-    async fn like_song(&self, id: &str, liked: bool) -> Result<SongLikeAck> {
+    async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
         ensure_cookie_for_action(self.client.current_cookie().await, "like-song")?;
         let clean_id = id.trim();
         let (body, status) = self.client.collection_media(clean_id, liked).await?;
@@ -340,7 +344,7 @@ impl ProviderAdapter for SodaAdapter {
         })
     }
 
-    async fn check_song_likes(&self, ids: &[String]) -> Result<SongLikeCheckAck> {
+    async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
         ensure_cookie_for_action(self.client.current_cookie().await, "like-check")?;
         let clean_ids = ids
             .iter()
@@ -367,7 +371,7 @@ impl ProviderAdapter for SodaAdapter {
     }
 }
 
-fn ensure_cookie_for_action(cookie: Option<String>, action: &str) -> Result<()> {
+fn ensure_cookie_for_action(cookie: Option<String>, action: &str) -> ProviderResult<()> {
     if cookie
         .as_deref()
         .map(str::trim)

@@ -6,7 +6,7 @@ use reqwest::{
 use serde_json::{Value, json};
 
 use crate::providers::{
-    Result,
+    ProviderResult,
     error::{ProviderError, ProviderErrorCode},
 };
 use crate::services::auth_session;
@@ -37,29 +37,29 @@ impl SodaClient {
         auth_session::get_provider_cookie("soda").await
     }
 
-    pub async fn search(&self, keyword: &str) -> Result<Value> {
+    pub async fn search(&self, keyword: &str) -> ProviderResult<Value> {
         let mut url = reqwest::Url::parse(SEARCH_URL).map_err(internal_error)?;
         url.query_pairs_mut().append_pair("q", keyword);
         self.get_json(url.to_string(), self.current_cookie().await.as_deref())
             .await
     }
 
-    pub async fn song_url(&self, track_id: &str) -> Result<Value> {
+    pub async fn song_url(&self, track_id: &str) -> ProviderResult<Value> {
         self.track_detail(track_id).await
     }
 
-    pub async fn lyric(&self, track_id: &str) -> Result<Value> {
+    pub async fn lyric(&self, track_id: &str) -> ProviderResult<Value> {
         self.track_detail(track_id).await
     }
 
-    pub async fn track_detail(&self, track_id: &str) -> Result<Value> {
+    pub async fn track_detail(&self, track_id: &str) -> ProviderResult<Value> {
         let mut url = reqwest::Url::parse(TRACK_URL).map_err(internal_error)?;
         url.query_pairs_mut().append_pair("track_id", track_id);
         self.get_json(url.to_string(), self.current_cookie().await.as_deref())
             .await
     }
 
-    pub async fn playlist_list(&self) -> Result<Value> {
+    pub async fn playlist_list(&self) -> ProviderResult<Value> {
         self.get_json(
             PLAYLIST_LIST_URL.to_owned(),
             self.current_cookie().await.as_deref(),
@@ -67,7 +67,7 @@ impl SodaClient {
         .await
     }
 
-    pub async fn playlist_detail(&self, playlist_id: &str) -> Result<Value> {
+    pub async fn playlist_detail(&self, playlist_id: &str) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
         let mut first = self
             .get_json(
@@ -101,12 +101,16 @@ impl SodaClient {
         Ok(first)
     }
 
-    pub async fn login_status(&self) -> Result<Value> {
+    pub async fn login_status(&self) -> ProviderResult<Value> {
         self.get_json(ME_URL.to_owned(), self.current_cookie().await.as_deref())
             .await
     }
 
-    pub async fn collection_media(&self, track_id: &str, liked: bool) -> Result<(Value, u16)> {
+    pub async fn collection_media(
+        &self,
+        track_id: &str,
+        liked: bool,
+    ) -> ProviderResult<(Value, u16)> {
         let url = if liked {
             COLLECTION_MEDIA_URL
         } else {
@@ -143,7 +147,7 @@ impl SodaClient {
         Ok((body, status))
     }
 
-    pub async fn logout(&self) -> Result<Value> {
+    pub async fn logout(&self) -> ProviderResult<Value> {
         self.get_json(
             LOGOUT_URL.to_owned(),
             self.current_cookie().await.as_deref(),
@@ -151,12 +155,12 @@ impl SodaClient {
         .await
     }
 
-    pub async fn read_json_url(&self, url: &str) -> Result<Value> {
+    pub async fn read_json_url(&self, url: &str) -> ProviderResult<Value> {
         self.get_json(url.to_owned(), self.current_cookie().await.as_deref())
             .await
     }
 
-    async fn get_json(&self, url: String, cookie: Option<&str>) -> Result<Value> {
+    async fn get_json(&self, url: String, cookie: Option<&str>) -> ProviderResult<Value> {
         let mut headers = HeaderMap::new();
         if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
             headers.insert(COOKIE, header_value(cookie)?);
@@ -199,7 +203,7 @@ fn next_cursor(body: &Value) -> String {
         .to_owned()
 }
 
-fn playlist_detail_url(playlist_id: &str, cursor: &str, count: u32) -> Result<String> {
+fn playlist_detail_url(playlist_id: &str, cursor: &str, count: u32) -> ProviderResult<String> {
     let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
     url.query_pairs_mut()
         .append_pair("playlist_id", playlist_id)
@@ -208,7 +212,7 @@ fn playlist_detail_url(playlist_id: &str, cursor: &str, count: u32) -> Result<St
     Ok(url.to_string())
 }
 
-fn header_value(value: &str) -> Result<HeaderValue> {
+fn header_value(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(internal_error)
 }
 

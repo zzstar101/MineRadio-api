@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     providers::{
-        Result,
+        ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -50,7 +50,7 @@ impl NeteaseClient {
         auth_session::get_provider_cookie("netease").await
     }
 
-    pub async fn cloudsearch(&self, keyword: &str, limit: u32) -> Result<Value> {
+    pub async fn cloudsearch(&self, keyword: &str, limit: u32) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/cloudsearch/pc",
             json!({
@@ -66,7 +66,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn song_url_v1(&self, id: &str, level: &str) -> Result<Value> {
+    pub async fn song_url_v1(&self, id: &str, level: &str) -> ProviderResult<Value> {
         let mut body = json!({
             "ids": format!("[{id}]"),
             "level": level,
@@ -84,7 +84,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn song_url(&self, id: &str, br: u32) -> Result<Value> {
+    pub async fn song_url(&self, id: &str, br: u32) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/song/enhance/player/url",
             json!({
@@ -97,7 +97,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn lyric_new(&self, id: &str) -> Result<Value> {
+    pub async fn lyric_new(&self, id: &str) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/song/lyric/v1",
             json!({
@@ -117,7 +117,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn lyric(&self, id: &str) -> Result<Value> {
+    pub async fn lyric(&self, id: &str) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/song/lyric",
             json!({
@@ -134,7 +134,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn playlist_detail(&self, id: &str) -> Result<Value> {
+    pub async fn playlist_detail(&self, id: &str) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/v6/playlist/detail",
             json!({
@@ -148,7 +148,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn user_playlist(&self, uid: &str, limit: u32) -> Result<Value> {
+    pub async fn user_playlist(&self, uid: &str, limit: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/user/playlist",
             json!({
@@ -163,7 +163,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_hot(&self, limit: u32, offset: u32) -> Result<Value> {
+    pub async fn dj_hot(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/hot/v1",
             json!({
@@ -175,7 +175,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_detail(&self, rid: &str) -> Result<Value> {
+    pub async fn dj_detail(&self, rid: &str) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/v2/get",
             json!({
@@ -186,7 +186,13 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_program(&self, rid: &str, limit: u32, offset: u32, asc: bool) -> Result<Value> {
+    pub async fn dj_program(
+        &self,
+        rid: &str,
+        limit: u32,
+        offset: u32,
+        asc: bool,
+    ) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/dj/program/byradio",
             json!({
@@ -200,7 +206,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_sublist(&self, limit: u32, offset: u32) -> Result<Value> {
+    pub async fn dj_sublist(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/get/subed",
             json!({
@@ -213,7 +219,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn user_audio(&self, uid: &str) -> Result<Value> {
+    pub async fn user_audio(&self, uid: &str) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/get/byuser",
             json!({
@@ -224,7 +230,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_paygift(&self, limit: u32, offset: u32) -> Result<Value> {
+    pub async fn dj_paygift(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/home/paygift/list",
             json!({
@@ -237,7 +243,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn record_recent_voice(&self, limit: u32) -> Result<Value> {
+    pub async fn record_recent_voice(&self, limit: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/play-record/voice/list",
             json!({
@@ -248,7 +254,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn personalized(&self, limit: u32) -> Result<Value> {
+    pub async fn personalized(&self, limit: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/personalized/playlist",
             json!({
@@ -261,7 +267,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn recommend_resource(&self) -> Result<Value> {
+    pub async fn recommend_resource(&self) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/v1/discovery/recommend/resource",
             json!({}),
@@ -270,7 +276,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn recommend_songs(&self) -> Result<Value> {
+    pub async fn recommend_songs(&self) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/v3/discovery/recommend/songs",
             json!({}),
@@ -279,7 +285,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn login_status(&self) -> Result<Value> {
+    pub async fn login_status(&self) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/w/nuser/account/get",
             json!({ "e_r": false }),
@@ -288,7 +294,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn vip_info(&self, uid: &str) -> Result<Value> {
+    pub async fn vip_info(&self, uid: &str) -> ProviderResult<Value> {
         let uid = uid.trim();
         if uid.is_empty() {
             return Ok(json!({}));
@@ -321,7 +327,7 @@ impl NeteaseClient {
         Ok(Value::Object(body))
     }
 
-    pub async fn logout(&self) -> Result<Value> {
+    pub async fn logout(&self) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/logout",
             json!({ "e_r": false }),
@@ -330,7 +336,10 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn login_qr_key(&self, cookie: Option<&str>) -> Result<NeteaseClientResponse> {
+    pub async fn login_qr_key(
+        &self,
+        cookie: Option<&str>,
+    ) -> ProviderResult<NeteaseClientResponse> {
         self.request_weapi_response("/api/login/qrcode/unikey", json!({ "type": 3 }), cookie)
             .await
     }
@@ -339,7 +348,7 @@ impl NeteaseClient {
         &self,
         key: &str,
         cookie: Option<&str>,
-    ) -> Result<NeteaseClientResponse> {
+    ) -> ProviderResult<NeteaseClientResponse> {
         self.request_weapi_response(
             "/api/login/qrcode/client/login",
             json!({
@@ -351,7 +360,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn like(&self, id: &str, liked: bool) -> Result<Value> {
+    pub async fn like(&self, id: &str, liked: bool) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/radio/like",
             json!({
@@ -366,7 +375,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn song_like_check(&self, ids: &[String]) -> Result<Value> {
+    pub async fn song_like_check(&self, ids: &[String]) -> ProviderResult<Value> {
         let track_ids = json!(ids).to_string();
         self.request_eapi(
             "/api/song/like/check",
@@ -379,7 +388,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn likelist(&self, uid: &str) -> Result<Value> {
+    pub async fn likelist(&self, uid: &str) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/song/like/get",
             json!({
@@ -391,7 +400,11 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn playlist_tracks(&self, playlist_id: &str, track_id: &str) -> Result<Value> {
+    pub async fn playlist_tracks(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+    ) -> ProviderResult<Value> {
         let track_ids = json!([track_id]).to_string();
         self.request_eapi(
             "/api/playlist/manipulate/tracks",
@@ -407,7 +420,11 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn playlist_track_add(&self, playlist_id: &str, track_id: &str) -> Result<Value> {
+    pub async fn playlist_track_add(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+    ) -> ProviderResult<Value> {
         let tracks = json!([{"type": 3, "id": track_id}]).to_string();
         self.request_weapi(
             "/api/playlist/track/add",
@@ -426,7 +443,7 @@ impl NeteaseClient {
         uri: &str,
         payload: Value,
         cookie: Option<&str>,
-    ) -> Result<Value> {
+    ) -> ProviderResult<Value> {
         Ok(self
             .request_weapi_response(uri, payload, cookie)
             .await?
@@ -438,7 +455,7 @@ impl NeteaseClient {
         uri: &str,
         payload: Value,
         cookie: Option<&str>,
-    ) -> Result<NeteaseClientResponse> {
+    ) -> ProviderResult<NeteaseClientResponse> {
         let cookie_map = process_cookie_map(parse_cookie_header(cookie.unwrap_or_default()));
         let csrf = cookie_map.get("__csrf").cloned().unwrap_or_default();
         let mut body = payload.as_object().cloned().unwrap_or_default();
@@ -468,7 +485,12 @@ impl NeteaseClient {
         .await
     }
 
-    async fn request_eapi(&self, uri: &str, payload: Value, cookie: Option<&str>) -> Result<Value> {
+    async fn request_eapi(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+    ) -> ProviderResult<Value> {
         let cookie_map = parse_cookie_header(cookie.unwrap_or_default());
         let header = create_eapi_header(&cookie_map);
         let mut body = payload.as_object().cloned().unwrap_or_default();
@@ -507,7 +529,7 @@ impl NeteaseClient {
         url: String,
         headers: HeaderMap,
         form: HashMap<String, String>,
-    ) -> Result<NeteaseClientResponse> {
+    ) -> ProviderResult<NeteaseClientResponse> {
         let response = self
             .http
             .post(url)
@@ -686,7 +708,7 @@ fn header_cookie_string(header: &HashMap<String, String>) -> String {
         .join("; ")
 }
 
-fn header_value(value: &str) -> Result<HeaderValue> {
+fn header_value(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(|err| internal_error(err.to_string(), "build header"))
 }
 

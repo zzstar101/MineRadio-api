@@ -1638,7 +1638,11 @@ mod tests {
             self.provider.clone()
         }
 
-        async fn search(&self, _keyword: &str, _limit: u32) -> providers::Result<Vec<Track>> {
+        async fn search(
+            &self,
+            _keyword: &str,
+            _limit: u32,
+        ) -> providers::ProviderResult<Vec<Track>> {
             Ok(Vec::new())
         }
 
@@ -1646,26 +1650,26 @@ mod tests {
             &self,
             _track: &Track,
             _opts: Option<SongUrlOptions>,
-        ) -> providers::Result<SongUrlResult> {
+        ) -> providers::ProviderResult<SongUrlResult> {
             Ok(SongUrlResult::default())
         }
 
         async fn track_qualities(
             &self,
             _track: &Track,
-        ) -> providers::Result<TrackQualityAvailability> {
+        ) -> providers::ProviderResult<TrackQualityAvailability> {
             Ok(TrackQualityAvailability::default())
         }
 
-        async fn lyric(&self, _track: &Track) -> providers::Result<LyricPayload> {
+        async fn lyric(&self, _track: &Track) -> providers::ProviderResult<LyricPayload> {
             Ok(LyricPayload::default())
         }
 
-        async fn playlist_list(&self) -> providers::Result<Vec<PlaylistSummary>> {
+        async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Ok(Vec::new())
         }
 
-        async fn playlist_detail(&self, id: &str) -> providers::Result<PlaylistDetail> {
+        async fn playlist_detail(&self, id: &str) -> providers::ProviderResult<PlaylistDetail> {
             Ok(PlaylistDetail {
                 provider: self.provider.clone(),
                 id: id.to_owned(),
@@ -1678,19 +1682,26 @@ mod tests {
             })
         }
 
-        async fn login_status(&self) -> providers::Result<ProviderLoginStatus> {
+        async fn login_status(&self) -> providers::ProviderResult<ProviderLoginStatus> {
             Ok(ProviderLoginStatus::default())
         }
 
-        async fn logout(&self) -> providers::Result<()> {
+        async fn logout(&self) -> providers::ProviderResult<()> {
             Ok(())
         }
 
-        async fn like_song(&self, _id: &str, _liked: bool) -> providers::Result<SongLikeAck> {
+        async fn like_song(
+            &self,
+            _id: &str,
+            _liked: bool,
+        ) -> providers::ProviderResult<SongLikeAck> {
             Ok(SongLikeAck::default())
         }
 
-        async fn check_song_likes(&self, _ids: &[String]) -> providers::Result<SongLikeCheckAck> {
+        async fn check_song_likes(
+            &self,
+            _ids: &[String],
+        ) -> providers::ProviderResult<SongLikeCheckAck> {
             Ok(SongLikeCheckAck::default())
         }
 
@@ -1698,7 +1709,7 @@ mod tests {
             &self,
             _playlist_id: &str,
             _track_id: &str,
-        ) -> providers::Result<PlaylistAddSongAck> {
+        ) -> providers::ProviderResult<PlaylistAddSongAck> {
             Ok(PlaylistAddSongAck::default())
         }
     }

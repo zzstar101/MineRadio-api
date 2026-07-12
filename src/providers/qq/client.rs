@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::{
     providers::{
-        Result,
+        ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -40,7 +40,7 @@ impl QqClient {
     }
 
     #[allow(dead_code)]
-    pub fn get_sign(&self, data: &str) -> Result<String> {
+    pub fn get_sign(&self, data: &str) -> ProviderResult<String> {
         let runtime = Runtime::new().map_err(internal)?;
         let context = JsContext::full(&runtime).map_err(internal)?;
         context.with(|context| {
@@ -56,7 +56,7 @@ impl QqClient {
         })
     }
 
-    pub async fn search(&self, keyword: &str, limit: u32) -> Result<Value> {
+    pub async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Value> {
         let url = "http://c.y.qq.com/soso/fcgi-bin/client_search_cp";
         self.get_json(
             url,
@@ -75,7 +75,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn smartbox_search(&self, keyword: &str, limit: u32) -> Result<Vec<Value>> {
+    pub async fn smartbox_search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Value>> {
         let body = self
             .get_json(
                 "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg",
@@ -101,7 +101,7 @@ impl QqClient {
         Ok(list)
     }
 
-    pub async fn song_detail(&self, song_mid: &str) -> Result<Value> {
+    pub async fn song_detail(&self, song_mid: &str) -> ProviderResult<Value> {
         self.post_json(
             "http://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
@@ -120,7 +120,12 @@ impl QqClient {
         .await
     }
 
-    pub async fn song_url(&self, song_mid: &str, _quality: &str, filename: &str) -> Result<Value> {
+    pub async fn song_url(
+        &self,
+        song_mid: &str,
+        _quality: &str,
+        filename: &str,
+    ) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
         let uin = qq_user_id_from_cookie_map(&cookie_map).unwrap_or_else(|| "0".to_owned());
@@ -168,17 +173,17 @@ impl QqClient {
         .await
     }
 
-    pub async fn lyric(&self, song_mid: &str) -> Result<Value> {
+    pub async fn lyric(&self, song_mid: &str) -> ProviderResult<Value> {
         self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
             .await
     }
 
-    pub async fn legacy_lyric(&self, song_mid: &str) -> Result<Value> {
+    pub async fn legacy_lyric(&self, song_mid: &str) -> ProviderResult<Value> {
         self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
             .await
     }
 
-    async fn lyric_internal(&self, song_mid: &str, referer: Option<&str>) -> Result<Value> {
+    async fn lyric_internal(&self, song_mid: &str, referer: Option<&str>) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
         let login_uin = cookie
             .as_deref()
@@ -211,7 +216,11 @@ impl QqClient {
         Ok(body)
     }
 
-    pub async fn login_status_with_cookie(&self, user_id: &str, cookie: &str) -> Result<Value> {
+    pub async fn login_status_with_cookie(
+        &self,
+        user_id: &str,
+        cookie: &str,
+    ) -> ProviderResult<Value> {
         self.get_json(
             "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
             &[
@@ -225,7 +234,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn vip_info_with_cookie(&self, user_id: &str, cookie: &str) -> Result<Value> {
+    pub async fn vip_info_with_cookie(&self, user_id: &str, cookie: &str) -> ProviderResult<Value> {
         self.get_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &[
@@ -270,7 +279,7 @@ impl QqClient {
             .is_empty()
     }
 
-    pub async fn user_songlists(&self, uin: &str) -> Result<Value> {
+    pub async fn user_songlists(&self, uin: &str) -> ProviderResult<Value> {
         self.post_raw_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
@@ -289,7 +298,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn user_collect_songlists(&self, user_id: &str) -> Result<Value> {
+    pub async fn user_collect_songlists(&self, user_id: &str) -> ProviderResult<Value> {
         self.get_json(
             "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg",
             &[
@@ -306,7 +315,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn playlist_detail(&self, playlist_id: &str) -> Result<Value> {
+    pub async fn playlist_detail(&self, playlist_id: &str) -> ProviderResult<Value> {
         self.get_json(
             "http://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
             &[
@@ -321,7 +330,11 @@ impl QqClient {
         .await
     }
     //实测过后官方歌单需走该接口获取, 后续会接入待sign校验版本
-    pub async fn official_playlist_detail(&self, playlist_id: &str, limit: u32) -> Result<Value> {
+    pub async fn official_playlist_detail(
+        &self,
+        playlist_id: &str,
+        limit: u32,
+    ) -> ProviderResult<Value> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal)?;
         let song_num = limit.clamp(1, 500);
         self.post_raw_json(
@@ -349,7 +362,11 @@ impl QqClient {
         .await
     }
 
-    pub async fn add_song_to_playlist(&self, playlist_id: &str, track_mid: &str) -> Result<Value> {
+    pub async fn add_song_to_playlist(
+        &self,
+        playlist_id: &str,
+        track_mid: &str,
+    ) -> ProviderResult<Value> {
         self.get_raw_json(
             "https://c.y.qq.com/splcloud/fcgi-bin/fcg_music_add2songdir.fcg",
             &[
@@ -369,7 +386,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn logout(&self) -> Result<Value> {
+    pub async fn logout(&self) -> ProviderResult<Value> {
         Ok(json!({ "ok": true }))
     }
 
@@ -379,7 +396,7 @@ impl QqClient {
         query: &[(&str, String)],
         referer: Option<&str>,
         cookie: Option<&str>,
-    ) -> Result<Value> {
+    ) -> ProviderResult<Value> {
         let mut request = self.http.get(url).query(query);
         request = request.headers(build_headers(referer, cookie, false)?);
         let response = request
@@ -401,7 +418,7 @@ impl QqClient {
         query: &[(&str, String)],
         referer: Option<&str>,
         cookie: Option<&str>,
-    ) -> Result<Value> {
+    ) -> ProviderResult<Value> {
         self.get_json(url, query, referer, cookie).await
     }
 
@@ -412,7 +429,7 @@ impl QqClient {
         referer: Option<&str>,
         cookie: Option<&str>,
         content_type: Option<&str>,
-    ) -> Result<Value> {
+    ) -> ProviderResult<Value> {
         let headers = build_headers(referer, cookie, true)?;
         let mut request = self.http.post(url).headers(headers);
         if let Some(content_type) = content_type {
@@ -447,7 +464,7 @@ impl QqClient {
         referer: Option<&str>,
         cookie: Option<&str>,
         content_type: Option<&str>,
-    ) -> Result<Value> {
+    ) -> ProviderResult<Value> {
         let headers = build_headers(referer, cookie, true)?;
         let mut request = self.http.post(url).headers(headers);
 
@@ -476,7 +493,7 @@ fn build_headers(
     referer: Option<&str>,
     cookie: Option<&str>,
     with_origin: bool,
-) -> Result<HeaderMap> {
+) -> ProviderResult<HeaderMap> {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static(UA));
     if let Some(referer) = referer {
@@ -501,7 +518,7 @@ fn build_headers(
     Ok(headers)
 }
 
-fn parse_json_like(text: &str) -> Result<Value> {
+fn parse_json_like(text: &str) -> ProviderResult<Value> {
     let trimmed = text.trim();
     let cleaned = trimmed
         .trim_start_matches("callback(")
@@ -605,7 +622,7 @@ fn decode_qq_lyric_payload(body: &mut Value) {
     }
 }
 
-fn header_value(value: &str) -> Result<HeaderValue> {
+fn header_value(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(internal)
 }
 

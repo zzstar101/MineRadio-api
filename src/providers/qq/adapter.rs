@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     providers::{
-        ProviderAdapter, Result,
+        ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -48,7 +48,7 @@ impl ProviderAdapter for QqAdapter {
         "qq".to_owned()
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> Result<Vec<Track>> {
+    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
         let list = match self.client.search(keyword, limit).await {
             Ok(body) => {
                 let list = read_search_list(&body);
@@ -63,7 +63,11 @@ impl ProviderAdapter for QqAdapter {
         Ok(list.iter().map(map_qq_song_to_track).collect())
     }
 
-    async fn song_url(&self, track: &Track, opts: Option<SongUrlOptions>) -> Result<SongUrlResult> {
+    async fn song_url(
+        &self,
+        track: &Track,
+        opts: Option<SongUrlOptions>,
+    ) -> ProviderResult<SongUrlResult> {
         let requested = normalize_request_quality(
             opts.and_then(|value| value.quality)
                 .unwrap_or_else(|| "hires".to_owned())
@@ -138,7 +142,7 @@ impl ProviderAdapter for QqAdapter {
         })
     }
 
-    async fn track_qualities(&self, track: &Track) -> Result<TrackQualityAvailability> {
+    async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
         let body = self.client.song_detail(&track.source_id).await?;
         let file = find_file_object(&body);
         let qualities: Vec<TrackQualityOption> = QQ_QUALITIES
@@ -162,7 +166,7 @@ impl ProviderAdapter for QqAdapter {
         })
     }
 
-    async fn lyric(&self, track: &Track) -> Result<LyricPayload> {
+    async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let mut body = self.client.lyric(&track.source_id).await?;
         let mut source = "qq-musicu";
         if body
@@ -197,7 +201,7 @@ impl ProviderAdapter for QqAdapter {
         ))
     }
 
-    async fn playlist_list(&self) -> Result<Vec<PlaylistSummary>> {
+    async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         let cookie = self.client.current_cookie().await;
         let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
             return Ok(Vec::new());
@@ -258,7 +262,7 @@ impl ProviderAdapter for QqAdapter {
         Ok(out)
     }
 
-    async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
+    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
         let official = self
             .client
             .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
@@ -298,7 +302,7 @@ impl ProviderAdapter for QqAdapter {
         Ok(map_qq_playlist_to_detail(Some(first), Some(id)))
     }
 
-    async fn login_status(&self) -> Result<ProviderLoginStatus> {
+    async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
         let cookie = self.client.current_cookie().await;
         let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
             return Ok(ProviderLoginStatus {
@@ -352,7 +356,7 @@ impl ProviderAdapter for QqAdapter {
         }
     }
 
-    async fn logout(&self) -> Result<()> {
+    async fn logout(&self) -> ProviderResult<()> {
         self.client.logout().await?;
         auth_session::clear_runtime_provider_cookie("qq").await;
         Ok(())
@@ -362,7 +366,7 @@ impl ProviderAdapter for QqAdapter {
         &self,
         playlist_id: &str,
         track_id: &str,
-    ) -> Result<PlaylistAddSongAck> {
+    ) -> ProviderResult<PlaylistAddSongAck> {
         ensure_cookie(self.client.current_cookie().await)?;
         let body = self
             .client
@@ -408,7 +412,7 @@ impl ProviderAdapter for QqAdapter {
     }
 }
 
-fn ensure_cookie(cookie: Option<String>) -> Result<()> {
+fn ensure_cookie(cookie: Option<String>) -> ProviderResult<()> {
     if cookie
         .as_deref()
         .map(str::trim)

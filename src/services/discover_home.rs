@@ -632,7 +632,7 @@ fn hashmap<const N: usize>(pairs: [(&str, Value); N]) -> HashMap<String, Value> 
 mod tests {
     use super::*;
     use crate::{
-        providers::{ProviderAdapter, Result as ProviderResult, error::ProviderError},
+        providers::{ProviderAdapter, ProviderResult, error::ProviderError},
         services::podcast::{
             PodcastLoginInfo, PodcastRequester, PodcastServiceDeps, create_podcast_service,
         },

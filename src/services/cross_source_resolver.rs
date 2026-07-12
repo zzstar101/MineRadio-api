@@ -613,7 +613,7 @@ mod tests {
             self.id.clone()
         }
 
-        async fn search(&self, keyword: &str, limit: u32) -> providers::Result<Vec<Track>> {
+        async fn search(&self, keyword: &str, limit: u32) -> providers::ProviderResult<Vec<Track>> {
             self.calls
                 .lock()
                 .unwrap()
@@ -628,7 +628,7 @@ mod tests {
             &self,
             track: &Track,
             _opts: Option<SongUrlOptions>,
-        ) -> providers::Result<SongUrlResult> {
+        ) -> providers::ProviderResult<SongUrlResult> {
             self.calls
                 .lock()
                 .unwrap()
@@ -644,11 +644,11 @@ mod tests {
         async fn track_qualities(
             &self,
             _track: &Track,
-        ) -> providers::Result<TrackQualityAvailability> {
+        ) -> providers::ProviderResult<TrackQualityAvailability> {
             Ok(TrackQualityAvailability::default())
         }
 
-        async fn lyric(&self, _track: &Track) -> providers::Result<LyricPayload> {
+        async fn lyric(&self, _track: &Track) -> providers::ProviderResult<LyricPayload> {
             Err(provider_error(
                 &self.id,
                 ProviderErrorCode::NoResult,
@@ -657,7 +657,7 @@ mod tests {
             ))
         }
 
-        async fn playlist_list(&self) -> providers::Result<Vec<PlaylistSummary>> {
+        async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Err(provider_error(
                 &self.id,
                 ProviderErrorCode::NoPlaylist,
@@ -666,7 +666,7 @@ mod tests {
             ))
         }
 
-        async fn playlist_detail(&self, _id: &str) -> providers::Result<PlaylistDetail> {
+        async fn playlist_detail(&self, _id: &str) -> providers::ProviderResult<PlaylistDetail> {
             Err(provider_error(
                 &self.id,
                 ProviderErrorCode::NoPlaylist,
@@ -675,11 +675,11 @@ mod tests {
             ))
         }
 
-        async fn login_status(&self) -> providers::Result<ProviderLoginStatus> {
+        async fn login_status(&self) -> providers::ProviderResult<ProviderLoginStatus> {
             Ok(ProviderLoginStatus::default())
         }
 
-        async fn logout(&self) -> providers::Result<()> {
+        async fn logout(&self) -> providers::ProviderResult<()> {
             Ok(())
         }
     }

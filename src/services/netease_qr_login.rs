@@ -266,7 +266,7 @@ impl NeteaseApiCall for NeteaseQrCheckCall {
 }
 
 fn map_client_response(
-    response: crate::providers::Result<NeteaseClientResponse>,
+    response: crate::providers::ProviderResult<NeteaseClientResponse>,
 ) -> anyhow::Result<NeteaseApiResponse> {
     let response = response.map_err(anyhow::Error::from)?;
     Ok(NeteaseApiResponse {

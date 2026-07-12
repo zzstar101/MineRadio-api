@@ -7,7 +7,7 @@ use reqwest::{Client, Method, Response};
 use serde_json::Value;
 
 use crate::providers::{
-    Result,
+    ProviderResult,
     error::{ProviderError, ProviderErrorCode},
 };
 
@@ -104,7 +104,7 @@ impl KugouClient {
         Self { http }
     }
 
-    pub async fn request(&self, request: KugouRequest) -> Result<KugouResponse> {
+    pub async fn request(&self, request: KugouRequest) -> ProviderResult<KugouResponse> {
         let clienttime = unix_seconds().to_string();
         let dfid = request
             .cookie
@@ -266,7 +266,7 @@ pub fn sign_key(hash: &str, mid: &str, userid: &str, appid: &str) -> String {
     md5_hex(format!("{hash}{SIGN_KEY_SALT}{appid}{mid}{userid}").as_bytes())
 }
 
-async fn parse_response(response: Response) -> Result<KugouResponse> {
+async fn parse_response(response: Response) -> ProviderResult<KugouResponse> {
     let http_status = response.status();
     let cookies = response_cookies(&response);
     let ssa_code = response
