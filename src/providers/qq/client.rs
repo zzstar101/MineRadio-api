@@ -102,7 +102,7 @@ impl QqClient {
     }
 
     pub async fn song_detail(&self, song_mid: &str) -> ProviderResult<Value> {
-        self.post_json(
+        self.post_form(
             "http://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
                 "data": serde_json::to_string(&json!({
@@ -130,7 +130,7 @@ impl QqClient {
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
         let uin = qq_user_id_from_cookie_map(&cookie_map).unwrap_or_else(|| "0".to_owned());
         let auth = qq_playback_key_from_cookie_map(&cookie_map);
-        self.post_json(
+        self.post_form(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
                 "-": "getplaysongvkey",
@@ -280,7 +280,7 @@ impl QqClient {
     }
 
     pub async fn user_songlists(&self, uin: &str) -> ProviderResult<Value> {
-        self.post_raw_json(
+        self.post_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
                 "music.musicasset.PlaylistBaseRead.GetPlaylistByUin": {
@@ -337,7 +337,7 @@ impl QqClient {
     ) -> ProviderResult<Value> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal)?;
         let song_num = limit.clamp(1, 500);
-        self.post_raw_json(
+        self.post_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
                 "req_0": {
@@ -367,7 +367,7 @@ impl QqClient {
         playlist_id: &str,
         track_mid: &str,
     ) -> ProviderResult<Value> {
-        self.get_raw_json(
+        self.get_json(
             "https://c.y.qq.com/splcloud/fcgi-bin/fcg_music_add2songdir.fcg",
             &[
                 ("g_tk", "5381".to_owned()),
@@ -412,17 +412,7 @@ impl QqClient {
         parse_json_like(&text)
     }
 
-    async fn get_raw_json(
-        &self,
-        url: &str,
-        query: &[(&str, String)],
-        referer: Option<&str>,
-        cookie: Option<&str>,
-    ) -> ProviderResult<Value> {
-        self.get_json(url, query, referer, cookie).await
-    }
-
-    async fn post_json(
+    async fn post_form(
         &self,
         url: &str,
         body: &Value,
@@ -457,7 +447,7 @@ impl QqClient {
         parse_json_like(&text)
     }
 
-    async fn post_raw_json(
+    async fn post_json(
         &self,
         url: &str,
         body: &Value,
