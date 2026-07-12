@@ -140,7 +140,7 @@ impl NeteaseAdapter {
             .map(read_id_like)
             .filter(|value| !value.is_empty());
         let vip_info = if let Some(user_id) = user_id.as_deref() {
-            self.client.vip_info(user_id).await.ok()
+            Some(self.client.vip_info(user_id).await?)
         } else {
             None
         };

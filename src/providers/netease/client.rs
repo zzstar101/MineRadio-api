@@ -316,15 +316,7 @@ impl NeteaseClient {
             )
             .await;
 
-        let mut body = serde_json::Map::new();
-        if let Ok(value) = client_v2 {
-            body.insert("vipInfoV2".to_owned(), value);
-        }
-        if let Ok(value) = legacy {
-            body.insert("vipInfo".to_owned(), value);
-        }
-
-        Ok(Value::Object(body))
+        merge_vip_info(client_v2, legacy)
     }
 
     pub async fn logout(&self) -> ProviderResult<Value> {
@@ -587,6 +579,29 @@ impl Default for NeteaseClient {
     }
 }
 
+fn merge_vip_info(
+    client_v2: ProviderResult<Value>,
+    legacy: ProviderResult<Value>,
+) -> ProviderResult<Value> {
+    let mut body = serde_json::Map::new();
+
+    match (client_v2, legacy) {
+        (Ok(client_v2), Ok(legacy)) => {
+            body.insert("vipInfoV2".to_owned(), client_v2);
+            body.insert("vipInfo".to_owned(), legacy);
+        }
+        (Ok(client_v2), Err(_)) => {
+            body.insert("vipInfoV2".to_owned(), client_v2);
+        }
+        (Err(_), Ok(legacy)) => {
+            body.insert("vipInfo".to_owned(), legacy);
+        }
+        (Err(err), Err(_)) => return Err(err),
+    }
+
+    Ok(Value::Object(body))
+}
+
 fn parse_cookie_header(cookie: &str) -> HashMap<String, String> {
     cookie
         .split(';')
@@ -776,5 +791,34 @@ fn cookie_kv_from_set_cookie(header: String) -> Option<String> {
         None
     } else {
         Some(pair.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_vip_info, unavailable_error};
+    use serde_json::json;
+
+    #[test]
+    fn vip_info_keeps_a_successful_fallback_response() {
+        let body = merge_vip_info(
+            Ok(json!({ "level": 7 })),
+            Err(unavailable_error("down".to_owned())),
+        )
+        .unwrap();
+
+        assert_eq!(body["vipInfoV2"]["level"], 7);
+        assert!(body.get("vipInfo").is_none());
+    }
+
+    #[test]
+    fn vip_info_returns_an_error_when_all_requests_fail() {
+        let err = merge_vip_info(
+            Err(unavailable_error("v2 down".to_owned())),
+            Err(unavailable_error("legacy down".to_owned())),
+        )
+        .unwrap_err();
+
+        assert_eq!(err.message, "v2 down");
     }
 }
