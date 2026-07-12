@@ -34,4 +34,3 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 url = "2"
 urlencoding = "2"
-validator = { version = "0.18", features = ["derive"] }
