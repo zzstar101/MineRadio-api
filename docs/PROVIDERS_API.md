@@ -1,184 +1,344 @@
-# Provider API
+# MineRadio API 路由参考
 
-本文档描述 MineRadio API 的 provider 统一模型与路由。所有示例均使用 JSON；文件编码为 UTF-8。
-
-当前已注册的 provider 为：`netease`、`qq`、`soda`。以下 `{pid}` 可替换为其中之一，例如 `/providers/soda/search`。
-
-> 酷狗目前只有内部 `KugouClient` 核心请求封装，尚未注册 adapter，因此没有 `/providers/kugou/*` 路由。
+本文档记录当前 Rust sidecar 已注册的全部 HTTP 路由。所有 JSON 示例均为 UTF-8，地址中的 `PORT` 请替换为实际监听端口。
 
 ## 通用约定
 
-- 地址示例使用 `http://127.0.0.1:PORT`，请替换为实际 sidecar 地址。
-- 成功响应统一为 `{"ok":true,"data":...}`。
-- 失败响应统一为 `{"ok":false,"error":{"code":"...","message":"..."}}`。
-- 所有路由均支持 `OPTIONS` 跨域预检。
-- Provider 路由中的未知 provider 返回 `404 PROVIDER_NOT_FOUND`；已知但未挂载的 provider 返回 `501 PROVIDER_UNAVAILABLE`。
-- 需要登录态的操作可先使用二维码登录，或通过 `session-cookie` 写入 Cookie。
-
-## ProviderAdapter 模型
-
-每个已注册 provider 实现同一个 `ProviderAdapter`。必需方法如下：
-
-| 方法 | 用途 | 对应路由 |
-| --- | --- | --- |
-| `search` | 搜索歌曲 | `GET /providers/{pid}/search` |
-| `song_url` | 获取播放地址 | `POST /providers/{pid}/song-url` |
-| `track_qualities` | 查询可用音质 | `POST /providers/{pid}/qualities` |
-| `lyric` | 获取歌词 | `POST /providers/{pid}/lyric` |
-| `playlist_list` | 获取歌单列表 | `GET /providers/{pid}/playlists` |
-| `playlist_detail` | 获取歌单详情 | `GET /providers/{pid}/playlists/{id}` |
-| `login_status` | 查询登录状态 | `GET /providers/{pid}/login-status` |
-| `logout` | 登出 | `POST /providers/{pid}/logout` |
-
-可选方法为 `like_song`、`check_song_likes`、`add_song_to_playlist`。未实现时返回 `501 NOT_IMPLEMENTED`。
-
-## 数据模型
-
-### Track
-
-需要 Track 的接口都接受以下 JSON。`id`、`provider`、`sourceId`、`title`、`artists` 是调用时必须提供的核心字段。
+- 除 `/health`、代理路由外，成功 JSON 响应使用 `{"ok":true,"data":...}`。
+- 失败 JSON 响应使用 `{"ok":false,"error":{"code":"...","message":"..."}}`。
+- 所有路由支持 `OPTIONS` CORS 预检。
+- `{pid}` 是 provider 路径参数，例如 `qq`、`netease` 或 `soda`。
+- `Track` 请求体的最小示例：
 
 ```json
 {
   "id": "0039MnYb0qxYhV",
   "provider": "qq",
   "sourceId": "0039MnYb0qxYhV",
-  "mediaMid": "0039MnYb0qxYhV",
   "title": "示例歌曲",
-  "artists": ["示例歌手"],
-  "album": "示例专辑",
-  "coverUrl": "https://example.com/cover.jpg",
-  "qualityHints": ["standard", "lossless"],
-  "playableState": "unknown",
-  "durationMs": 210000,
-  "artworkUrl": "https://example.com/artwork.jpg"
+  "artists": ["示例歌手"]
 }
 ```
 
-常见响应模型：
+可选的 Track 字段为 `mediaMid`、`album`、`coverUrl`、`qualityHints`、`playableState`、`durationMs` 和 `artworkUrl`。
 
-| 模型 | 关键字段 |
-| --- | --- |
-| `SongUrlResult` | `url`、`quality`、`proxied`、`provider`、`playable`、`trial`、`br`、VIP 信息 |
-| `TrackQualityAvailability` | `provider`、`trackId`、`defaultQuality`、`qualities[]`；每个音质含 `label`、`requestQuality`、`level`、`br`、`format` |
-| `LyricPayload` | `provider`、`trackId`、`lines[]`、`hasTranslation`、`isWordByWord` |
-| `PlaylistSummary` | `provider`、`id`、`name`、`coverUrl`、`trackCount`、`trackIds` |
-| `PlaylistDetail` | `PlaylistSummary` 字段加 `tracks[]` |
-| `ProviderLoginStatus` | `provider`、`loggedIn`，以及可选的昵称、用户 ID、头像和 VIP 信息 |
+## 基础与诊断
 
-## 路由
+### GET `/health`
 
-### 能力与会话
+用途：检查服务版本与 provider 状态。无需参数。
 
-| 方法 | 路由 | 参数 / 请求体 | 说明 |
-| --- | --- | --- | --- |
-| GET | `/providers/capabilities` | 无 | 返回当前声明的 provider 能力矩阵。 |
-| POST | `/providers/{pid}/session-cookie` | `{"cookie":"name=value; ..."}` | 写入运行时 Cookie，并持久化到会话存储。 |
-| DELETE | `/providers/{pid}/session-cookie` | 无 | 清除运行时和持久化 Cookie。 |
-| GET | `/providers/{pid}/login-status` | 无 | 查询当前登录态。 |
-| POST | `/providers/{pid}/logout` | 无 | 调用上游登出并清除本地 Cookie。 |
-
-写入 Soda Cookie 示例：
-
-```bash
-curl -X POST http://127.0.0.1:PORT/providers/soda/session-cookie \
-  -H "content-type: application/json" \
-  -d '{"cookie":"sessionid=example; token=example"}'
+```json
+{
+  "ok": true,
+  "appVersion": "0.1.0",
+  "apiVersion": "v1",
+  "schemaVersion": "1",
+  "providers": ["netease", "qq", "soda"],
+  "providerStatus": { "version": "0.1.0", "providers": [] }
+}
 ```
 
-### 二维码登录
+### GET `/providers/capabilities`
 
-QQ、网易云和 Soda 均提供以下三步接口。
+用途：获取 provider 能力矩阵。无需参数。
 
-| 方法 | 路由 | 参数 | 返回数据 |
-| --- | --- | --- | --- |
-| GET | `/providers/{pid}/login-qr-key` | 无 | `ProviderLoginQrKey`：`provider`、`key`。 |
-| GET | `/providers/{pid}/login-qr-create` | `?key=...` | `ProviderLoginQrImage`：`provider`、`key`、`img`（data URL）以及可选 `url`。 |
-| GET | `/providers/{pid}/login-qr-check` | `?key=...` | `ProviderLoginQrCheck`：`code`、`message`、`loggedIn`、`scanned`、`expired`、`stored`。 |
-
-QQ 登录示例：
-
-```bash
-curl "http://127.0.0.1:PORT/providers/qq/login-qr-key"
-curl "http://127.0.0.1:PORT/providers/qq/login-qr-create?key=<上一步的 key>"
-curl "http://127.0.0.1:PORT/providers/qq/login-qr-check?key=<上一步的 key>"
+```json
+{
+  "ok": true,
+  "data": {
+    "version": "0.1.0",
+    "providers": [
+      { "providerId": "qq", "available": true, "capabilities": ["search", "songUrl"], "message": "online" }
+    ]
+  }
+}
 ```
 
-### 搜索与播放
+### GET `/diagnostics`
 
-| 方法 | 路由 | 参数 / 请求体 | 说明 |
-| --- | --- | --- | --- |
-| GET | `/providers/{pid}/search` | `keyword` 或 `q` 必填；`limit` 可选，默认 20 | 返回 `Track[]`。 |
-| POST | `/providers/{pid}/song-url` | `Track`，或 `{"track":Track,"quality":"lossless"}` | 返回 `SongUrlResult`。 |
-| POST | `/providers/{pid}/qualities` | `Track` | 返回 `TrackQualityAvailability`。 |
-| POST | `/providers/{pid}/lyric` | `Track` | 返回 `LyricPayload`。 |
+用途：查看服务版本、provider 状态、近期错误及日志位置。无需参数。
 
-Soda 搜索示例：
-
-```bash
-curl "http://127.0.0.1:PORT/providers/soda/search?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&limit=10"
+```json
+{
+  "ok": true,
+  "appVersion": "0.1.0",
+  "apiVersion": "v1",
+  "schemaVersion": "1",
+  "providers": [],
+  "recentErrors": [],
+  "logPointers": { "sidecarRuntimeLog": "C:\\logs\\sidecar.jsonl" }
+}
 ```
 
-获取播放地址示例：
+## 代理路由
 
-```bash
-curl -X POST http://127.0.0.1:PORT/providers/qq/song-url \
-  -H "content-type: application/json" \
-  -d '{
-    "track": {
-      "id": "0039MnYb0qxYhV",
-      "provider": "qq",
-      "sourceId": "0039MnYb0qxYhV",
-      "title": "示例歌曲",
-      "artists": ["示例歌手"]
+### GET `/audio-proxy`
+
+用途：代理通用音频流，保留客户端的 `Range` 请求头。
+
+请求示例：
+
+```text
+GET /audio-proxy?url=https%3A%2F%2Fcdn.example.com%2Fsong.mp3
+```
+
+成功响应为上游音频二进制流，例如：
+
+```http
+HTTP/1.1 206 Partial Content
+content-type: audio/mpeg
+content-range: bytes 0-1023/1234567
+```
+
+`target` 可以作为 `url` 的别名。
+
+### GET `/image-proxy`
+
+用途：代理图片并使用兼容的请求头访问上游。
+
+请求示例：
+
+```text
+GET /image-proxy?url=https%3A%2F%2Fexample.com%2Fcover.jpg
+```
+
+成功响应为图片二进制流，例如：
+
+```http
+HTTP/1.1 200 OK
+content-type: image/jpeg
+```
+
+### GET `/providers/soda/audio-proxy`
+
+用途：代理 Soda 音频流；可附带播放授权信息。
+
+请求示例：
+
+```text
+GET /providers/soda/audio-proxy?url=https%3A%2F%2Fcdn.example.com%2Faudio.m4a&playAuth=example-token
+```
+
+参数：`url`（或 `target`）为上游地址，`playAuth` 可选。成功响应为音频二进制流。
+
+## 发现、天气与跨源解析
+
+### GET `/weather/radio`
+
+用途：按天气生成推荐歌曲。
+
+请求示例：
+
+```text
+GET /weather/radio?city=Shanghai&timezone=Asia%2FShanghai
+```
+
+可用参数：`city`、`q`、`location`、`lat`、`lon`、`timezone`。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "ok": true,
+    "weather": {
+      "provider": "open-meteo",
+      "location": { "name": "Shanghai", "latitude": 31.23, "longitude": 121.47 },
+      "label": "晴朗",
+      "temperature": 28.0,
+      "mood": { "key": "sunny", "title": "晴日", "tagline": "适合轻快音乐", "keywords": ["晴天"] }
     },
-    "quality": "lossless"
-  }'
+    "radio": { "title": "天气电台", "subtitle": "晴日推荐", "seedQueries": ["晴天"], "songs": [], "updatedAt": 0 }
+  }
+}
+```
+
+### GET `/discover/home`
+
+用途：返回发现页聚合数据。无需参数。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "loggedIn": false,
+    "user": null,
+    "dailySongs": [],
+    "playlists": [],
+    "podcasts": [],
+    "mode": "starter",
+    "updatedAt": 0
+  }
+}
+```
+
+### GET `/search`
+
+用途：跨 provider 搜索歌曲。
+
+请求示例：
+
+```text
+GET /search?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&provider=qq&limit=10
+```
+
+参数：`keyword` 或 `q` 必填；`provider`、`limit` 可选。
+
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": "0039MnYb0qxYhV", "provider": "qq", "sourceId": "0039MnYb0qxYhV", "title": "示例歌曲", "artists": ["示例歌手"] }
+  ]
+}
+```
+
+### POST `/song-url`
+
+用途：根据 Track 跨 provider 获取播放地址。
+
+请求体可直接是 Track，或使用带音质的包装对象：
+
+```json
+{
+  "track": {
+    "id": "0039MnYb0qxYhV",
+    "provider": "qq",
+    "sourceId": "0039MnYb0qxYhV",
+    "title": "示例歌曲",
+    "artists": ["示例歌手"]
+  },
+  "quality": "lossless"
+}
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "url": "https://example.com/song.flac",
+    "proxied": false,
+    "provider": "qq",
+    "playable": true,
+    "quality": "lossless",
+    "requestedQuality": "lossless",
+    "br": 999000
+  }
+}
+```
+
+### POST `/shared-playlist/import`
+
+用途：从分享链接或分享文本导入歌单。
+
+```json
+{ "url": "https://example.com/shared-playlist" }
+```
+
+`text` 可替代 `url`。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "provider": "qq",
+    "playlist": { "provider": "qq", "id": "123", "name": "示例歌单", "trackIds": ["1"] },
+    "tracks": [],
+    "trackCount": 1,
+    "loadedCount": 1,
+    "partial": false,
+    "partialReason": ""
+  }
+}
+```
+
+## 播客
+
+| 方法与地址 | 用途 | 请求示例 | 成功响应 `data` 示例 |
+| --- | --- | --- | --- |
+| GET `/podcast/search` | 搜索播客 | `?keywords=科技&limit=18`；`keyword` 可作别名 | `{ "podcasts": [], "total": 0 }` |
+| GET `/podcast/hot` | 热门播客 | `?limit=18&offset=0` | `{ "podcasts": [], "more": false }` |
+| GET `/podcast/detail` | 播客详情 | `?id=123`；`rid` 可作别名 | `{ "podcast": { "id":"123", "rid":"123", "name":"示例播客" } }` |
+| GET `/podcast/programs` | 播客节目 | `?rid=123&limit=30&offset=0`；`id` 可作别名 | `{ "radio": { "id":"123" }, "programs": [], "more": false, "total": 0 }` |
+| GET `/podcast/my` | 我的播客收藏 | 无 | `{ "loggedIn": true, "collections": [] }` |
+| GET `/podcast/my/items` | 收藏分类项目 | `?key=collect&limit=36&offset=0` | `{ "loggedIn": true, "key":"collect", "title":"我的收藏", "itemType":"radio", "count":0, "items":[] }` |
+| GET `/podcast/dj-beatmap` | 分析音频节拍 | `?url=https%3A%2F%2Fexample.com%2Faudio.mp3&duration=180&intro=10` | `{ "ok": true, "map": {} }` |
+
+上述每个输出都包在通用外层，例如：
+
+```json
+{ "ok": true, "data": { "podcasts": [], "total": 0 } }
+```
+
+## Provider 通用路由
+
+以下路由使用 `/providers/{pid}` 前缀。请求或响应中的 `{pid}` 需替换为实际 provider ID。
+
+### 登录与会话
+
+| 方法与地址 | 用途 | 请求示例 | 成功响应示例 |
+| --- | --- | --- | --- |
+| GET `/providers/{pid}/login-qr-key` | 创建扫码 key | 无 | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value" } }` |
+| GET `/providers/{pid}/login-qr-create` | 创建二维码图片 | `?key=key-value` | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value", "img":"data:image/png;base64,..." } }` |
+| GET `/providers/{pid}/login-qr-check` | 轮询扫码状态 | `?key=key-value` | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value", "code":67, "loggedIn":false, "scanned":true, "expired":false, "stored":false } }` |
+| POST `/providers/{pid}/session-cookie` | 保存本地 Cookie | 请求体 `{"cookie":"name=value; token=value"}` | `{ "ok":true, "data":{ "stored":true } }` |
+| DELETE `/providers/{pid}/session-cookie` | 清除本地 Cookie | 无 | `{ "ok":true, "data":{ "stored":false } }` |
+| POST `/providers/{pid}/session-cookie/clear` | 强制清除本地 Cookie | 无 | `{ "ok":true, "data":{ "stored":false } }` |
+| GET `/providers/{pid}/login-status` | 查询登录状态 | 无 | `{ "ok":true, "data":{ "provider":"qq", "loggedIn":true, "nickname":"用户", "userId":"10001" } }` |
+| POST `/providers/{pid}/logout` | 上游登出并清除本地 Cookie | 无 | `{ "ok":true, "data":{ "provider":"qq", "loggedOut":true } }` |
+
+`session-cookie/clear` 只清理本地保存的 Cookie，不请求上游登出接口；上游登出请使用 `logout`。
+
+### 歌曲、歌词与音质
+
+| 方法与地址 | 用途 | 请求示例 | 成功响应示例 |
+| --- | --- | --- | --- |
+| GET `/providers/{pid}/search` | 单 provider 搜索 | `?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&limit=20`；`q` 可作别名 | `{ "ok":true, "data":[{ "id":"1", "provider":"qq", "sourceId":"1", "title":"示例歌曲", "artists":[] }] }` |
+| POST `/providers/{pid}/song-url` | 获取播放地址 | Track，或 `{ "track": Track, "quality":"lossless" }` | `{ "ok":true, "data":{ "url":"https://example.com/song.mp3", "proxied":false, "quality":"standard" } }` |
+| POST `/providers/{pid}/qualities` | 查询可用音质 | Track | `{ "ok":true, "data":{ "provider":"qq", "trackId":"1", "defaultQuality":"standard", "qualities":[{ "provider":"qq", "id":"standard", "label":"标准", "requestQuality":"standard", "source":"declared" }] } }` |
+| POST `/providers/{pid}/lyric` | 获取歌词 | Track | `{ "ok":true, "data":{ "provider":"qq", "trackId":"1", "lines":[{ "timeMs":0, "text":"歌词" }], "hasTranslation":false, "isWordByWord":false } }` |
+
+Track 请求体示例：
+
+```json
+{
+  "id": "1",
+  "provider": "qq",
+  "sourceId": "1",
+  "title": "示例歌曲",
+  "artists": ["示例歌手"]
+}
 ```
 
 ### 歌单与收藏
 
-| 方法 | 路由 | 参数 / 请求体 | 说明 |
+| 方法与地址 | 用途 | 请求示例 | 成功响应示例 |
 | --- | --- | --- | --- |
-| GET | `/providers/{pid}/playlists` | 无 | 返回当前账号的 `PlaylistSummary[]`。 |
-| GET | `/providers/{pid}/playlists/{id}` | 路径参数 `id` | 返回 `PlaylistDetail`。 |
-| POST | `/providers/{pid}/like` | `{"id":"歌曲 ID","liked":true}` | 收藏或取消收藏。 |
-| GET | `/providers/{pid}/like-check` | `?ids=id1,id2` | 返回各歌曲的收藏状态。 |
-| POST | `/providers/{pid}/playlists/add-song` | `{"playlist_id":"歌单 ID","track_id":"歌曲 ID"}` | 向歌单添加歌曲。 |
+| GET `/providers/{pid}/playlists` | 当前用户歌单列表 | 无 | `{ "ok":true, "data":[{ "provider":"qq", "id":"123", "name":"示例歌单", "coverUrl":"", "trackIds":[] }] }` |
+| GET `/providers/{pid}/playlists/{id}` | 歌单详情 | `/providers/qq/playlists/123` | `{ "ok":true, "data":{ "provider":"qq", "id":"123", "name":"示例歌单", "trackIds":[], "tracks":[] } }` |
+| POST `/providers/{pid}/like` | 收藏或取消收藏歌曲 | 请求体 `{"id":"1","liked":true}` | `{ "ok":true, "data":{ "provider":"qq", "id":"1", "liked":true, "code":0 } }` |
+| GET `/providers/{pid}/like-check` | 查询歌曲收藏状态 | `?ids=1,2` | `{ "ok":true, "data":{ "provider":"qq", "ids":["1","2"], "liked":{ "1":true, "2":false } } }` |
+| POST `/providers/{pid}/playlists/add-song` | 添加歌曲到歌单 | 请求体 `{"playlist_id":"123","track_id":"1"}` | `{ "ok":true, "data":{ "provider":"qq", "playlistId":"123", "trackId":"1", "success":true, "code":0 } }` |
 
-收藏检查示例：
-
-```bash
-curl "http://127.0.0.1:PORT/providers/netease/like-check?ids=123,456"
-```
-
-### Soda 专用音频代理
-
-| 方法 | 路由 | 参数 | 说明 |
-| --- | --- | --- | --- |
-| GET | `/providers/soda/audio-proxy` | `url`（或 `target`）必填；`playAuth` 可选 | 代理 Soda 音频流，可透传 Range 请求。 |
-
-```bash
-curl "http://127.0.0.1:PORT/providers/soda/audio-proxy?url=https%3A%2F%2Fexample.com%2Faudio.mp3&playAuth=<授权值>"
-```
-
-## 当前支持情况
-
-能力矩阵由 `/providers/capabilities` 返回；以下为当前实现状态。`add-song` 有路由但不在能力矩阵中，因此单独列出。
-
-| Provider | 已声明能力 | 已实现的额外写操作 |
-| --- | --- | --- |
-| `netease` | 搜索、播放地址、歌词、歌单列表/详情、登录状态、登出、收藏、音质 | 添加歌曲到歌单 |
-| `qq` | 搜索、播放地址、歌词、歌单列表/详情、登录状态、登出、音质 | 添加歌曲到歌单；不支持收藏与收藏检查 |
-| `soda` | 搜索、播放地址、歌词、歌单列表/详情、登录状态、登出、收藏、音质 | 收藏检查；不支持添加歌曲到歌单 |
-
-provider 可能因未登录、VIP/版权限制或上游不可用而返回错误。常见状态码如下：
+## 常见错误
 
 | HTTP 状态 | 错误码示例 | 含义 |
 | --- | --- | --- |
-| 400 | `BAD_REQUEST` | 参数缺失或请求体不符合模型。 |
-| 401 | `LOGIN_REQUIRED` | 需要登录。 |
-| 404 | `PROVIDER_NOT_FOUND`、`NO_RESULT`、`NO_URL`、`NO_PLAYLIST` | provider 或资源不存在。 |
-| 501 | `NOT_IMPLEMENTED`、`PROVIDER_UNAVAILABLE` | 当前方法或 provider 尚未接入。 |
-| 502 | `UNAVAILABLE`、`VIP_REQUIRED`、`PAID_REQUIRED` 等 | 上游服务、版权或付费限制。 |
+| 400 | `BAD_REQUEST` | 缺少必填参数、请求体格式错误或参数无效。 |
+| 401 | `LOGIN_REQUIRED` | 上游操作需要登录态。 |
+| 404 | `NOT_FOUND`、`PROVIDER_NOT_FOUND`、`NO_RESULT`、`NO_URL` | 路由、provider 或资源不存在。 |
 | 500 | `INTERNAL` | 服务内部错误。 |
+| 501 | `NOT_IMPLEMENTED`、`PROVIDER_UNAVAILABLE` | 当前路由目标不可用。 |
+| 502 | `UNAVAILABLE`、`VIP_REQUIRED`、`PAID_REQUIRED` | 上游不可用、版权或付费限制。 |
+
+错误响应示例：
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "keyword required"
+  }
+}
+```
