@@ -269,29 +269,6 @@ impl QqClient {
             .trim()
             .is_empty()
     }
-    //测试发现已失效, 保留至新接口确定可用
-    pub async fn user_songlists_old(&self, user_id: &str) -> Result<Value> {
-        self.get_json(
-            "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss",
-            &[
-                ("hostUin", "0".to_owned()),
-                ("hostuin", user_id.to_owned()),
-                ("sin", "0".to_owned()),
-                ("size", "200".to_owned()),
-                ("g_tk", "5381".to_owned()),
-                ("loginUin", "0".to_owned()),
-                ("format", "json".to_owned()),
-                ("inCharset", "utf8".to_owned()),
-                ("outCharset", "utf-8".to_owned()),
-                ("notice", "0".to_owned()),
-                ("platform", "yqq.json".to_owned()),
-                ("needNewCode", "0".to_owned()),
-            ],
-            Some("https://y.qq.com/portal/profile.html"),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
 
     pub async fn user_songlists(&self, uin: &str) -> Result<Value> {
         self.post_raw_json(
