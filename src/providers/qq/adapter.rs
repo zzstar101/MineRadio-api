@@ -19,8 +19,8 @@ use crate::{
 use super::{
     client::QqClient,
     map::{
-        map_qq_lyric_to_payload, map_qq_playlist_to_detail, map_qq_playlist_to_detail_official, map_qq_playlist_to_summary,
-        map_qq_song_to_track, normalize_provider_image_url,
+        map_qq_lyric_to_payload, map_qq_playlist_to_detail, map_qq_playlist_to_detail_official,
+        map_qq_playlist_to_summary, map_qq_song_to_track, normalize_provider_image_url,
     },
 };
 
@@ -210,7 +210,7 @@ impl ProviderAdapter for QqAdapter {
         let collected = self.client.user_collect_songlists(&user_id).await.ok();
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-        
+
         if let Some(created) = created {
             if let Some(mm) = created.get("music.musicasset.PlaylistBaseRead.GetPlaylistByUin") {
                 if let Some(data) = mm.get("data") {
@@ -222,13 +222,20 @@ impl ProviderAdapter for QqAdapter {
                                         provider: "qq".to_owned(),
                                         id: id.to_string(),
                                         name: name.to_string(),
-                                        cover_url: l.get("picUrl").and_then(Value::as_str).unwrap_or("").to_string(),
-                                        track_count: Some(l.get("songNum").and_then(Value::as_u64).unwrap_or(0) as u32),
+                                        cover_url: l
+                                            .get("picUrl")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        track_count: Some(
+                                            l.get("songNum").and_then(Value::as_u64).unwrap_or(0)
+                                                as u32,
+                                        ),
                                         track_ids: vec![],
-                                        subscribed: Some(true)
+                                        subscribed: Some(true),
                                     });
                                 }
-                            }                        
+                            }
                         }
                     }
                 }
@@ -253,24 +260,23 @@ impl ProviderAdapter for QqAdapter {
 
     async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
         let official = self
-                .client
-                .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
-                .await?;
-            let fallback = official
-                .get("req_0")
-                .and_then(|value| value.get("data"))
-                .filter(|value| {
-                    value
-                        .get("songlist")
-                        .and_then(Value::as_array)
-                        .map(|items| !items.is_empty())
-                        .unwrap_or(false)
-                });
-            if let Some(fallback) = fallback {
-                let q = map_qq_playlist_to_detail_official(Some(fallback), Some(id));
-                println!("{q:?}");
-                return Ok(q);
-            }
+            .client
+            .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
+            .await?;
+        let fallback = official
+            .get("req_0")
+            .and_then(|value| value.get("data"))
+            .filter(|value| {
+                value
+                    .get("songlist")
+                    .and_then(Value::as_array)
+                    .map(|items| !items.is_empty())
+                    .unwrap_or(false)
+            });
+        if let Some(fallback) = fallback {
+            let q = map_qq_playlist_to_detail_official(Some(fallback), Some(id));
+            return Ok(q);
+        }
         //后续将移除老接口调用
         let body = self.client.playlist_detail(id).await?;
         let first = body

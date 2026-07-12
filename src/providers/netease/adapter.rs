@@ -386,21 +386,17 @@ impl ProviderAdapter for NeteaseAdapter {
         let lrc = body.get("lrc");
         Ok(map_hana_lyric_to_payload(
             &track.source_id,
-            lrc
+            lrc.and_then(|value| value.get("lyric"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            lrc.and_then(|value| value.get("tlyric"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            lrc
-                .and_then(|value| value.get("tlyric"))
-                .and_then(|value| value.get("lyric"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            lrc
-                .and_then(|value| value.get("klyric"))
+            lrc.and_then(|value| value.get("klyric"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str),
-            lrc
-                .and_then(|value| value.get("yrc"))
+            lrc.and_then(|value| value.get("yrc"))
                 .and_then(|value| value.get("lyric"))
                 .and_then(Value::as_str),
         ))

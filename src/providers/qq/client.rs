@@ -327,21 +327,21 @@ impl QqClient {
         self.post_raw_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
             &json!({
-                        "req_0": {
-                            "module": "music.srfDissInfo.DissInfoForPc",
-                            "method": "uniform_get_Dissinfo", 
-                            "param": {
-                                "disstid": disstid,
-                                "userinfo": 1,
-                                "tag": 1,
-                                "orderlist": 1,
-                                "song_begin": 0,
-                                "song_num": song_num,
-                                "onlysonglist": 0,
-                                "enc_host_uin": ""
-                            }
-                        }
-                    }),
+                "req_0": {
+                    "module": "music.srfDissInfo.DissInfoForPc",
+                    "method": "uniform_get_Dissinfo",
+                    "param": {
+                        "disstid": disstid,
+                        "userinfo": 1,
+                        "tag": 1,
+                        "orderlist": 1,
+                        "song_begin": 0,
+                        "song_num": song_num,
+                        "onlysonglist": 0,
+                        "enc_host_uin": ""
+                    }
+                }
+            }),
             Some("https://y.qq.com/"),
             self.current_cookie().await.as_deref(),
             None,
