@@ -19,9 +19,9 @@ use crate::{
 
 const UA: &str = "Mozilla/5.0";
 #[allow(dead_code)]
-const QQ_SIGN_LOADER: &str = include_str!("../../../assets/qq_sign/loader.js");
+const QQ_SIGN_LOADER: &str = include_str!("assets/loader.js");
 #[allow(dead_code)]
-const QQ_SIGN_MODULE: &str = include_str!("../../../assets/qq_sign/module.js");
+const QQ_SIGN_MODULE: &str = include_str!("assets/module.js");
 
 #[derive(Clone, Default)]
 pub struct QqClient {
