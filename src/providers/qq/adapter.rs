@@ -252,20 +252,7 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
-        //后续将移除老接口调用
-        let body = self.client.playlist_detail(id).await?;
-        let first = body
-            .get("cdlist")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first());
-        let needs_fallback = first
-            .and_then(|value| value.get("songlist"))
-            .and_then(Value::as_array)
-            .map(|items| items.is_empty())
-            .unwrap_or(true);
-
-        if needs_fallback {
-            let official = self
+        let official = self
                 .client
                 .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
                 .await?;
@@ -284,7 +271,12 @@ impl ProviderAdapter for QqAdapter {
                 println!("{q:?}");
                 return Ok(q);
             }
-        }
+        //后续将移除老接口调用
+        let body = self.client.playlist_detail(id).await?;
+        let first = body
+            .get("cdlist")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first());
 
         let Some(first) = first else {
             return Err(ProviderError {
