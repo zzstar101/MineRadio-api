@@ -598,8 +598,8 @@ async fn set_provider_session_cookie(
     if !is_known_provider(&pid) {
         return unknown_provider(&pid);
     }
-    match services::auth_session::set_runtime_provider_cookie(pid, body.cookie).await {
-        Ok(()) => ok(serde_json::json!({ "stored": true })),
+    match services::auth_session::set_runtime_provider_cookie(pid.clone(), body.cookie).await {
+        Ok(()) => ok(serde_json::json!({ "provider": pid, "stored": true })),
         Err(err) => bad_request(err),
     }
 }
@@ -609,7 +609,7 @@ async fn clear_provider_session_cookie(Path(pid): Path<String>) -> Response {
         return unknown_provider(&pid);
     }
     services::auth_session::clear_runtime_provider_cookie(&pid).await;
-    ok(serde_json::json!({ "stored": false }))
+    ok(serde_json::json!({ "provider": pid, "stored": false }))
 }
 
 async fn provider_search(

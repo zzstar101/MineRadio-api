@@ -281,9 +281,9 @@ GET /search?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&provider=qq&limit=10
 | GET `/providers/{pid}/login-qr-key` | 创建扫码 key | 无 | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value" } }` |
 | GET `/providers/{pid}/login-qr-create` | 创建二维码图片 | `?key=key-value` | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value", "img":"data:image/png;base64,..." } }` |
 | GET `/providers/{pid}/login-qr-check` | 轮询扫码状态 | `?key=key-value` | `{ "ok":true, "data":{ "provider":"qq", "key":"key-value", "code":67, "loggedIn":false, "scanned":true, "expired":false, "stored":false } }` |
-| POST `/providers/{pid}/session-cookie` | 保存本地 Cookie | 请求体 `{"cookie":"name=value; token=value"}` | `{ "ok":true, "data":{ "stored":true } }` |
-| DELETE `/providers/{pid}/session-cookie` | 清除本地 Cookie | 无 | `{ "ok":true, "data":{ "stored":false } }` |
-| POST `/providers/{pid}/session-cookie/clear` | 强制清除本地 Cookie | 无 | `{ "ok":true, "data":{ "stored":false } }` |
+| POST `/providers/{pid}/session-cookie` | 保存本地 Cookie | 请求体 `{"cookie":"name=value; token=value"}` | `{ "ok":true, "data":{ "provider":"qq", "stored":true } }` |
+| DELETE `/providers/{pid}/session-cookie` | 清除本地 Cookie | 无 | `{ "ok":true, "data":{ "provider":"qq", "stored":false } }` |
+| POST `/providers/{pid}/session-cookie/clear` | 强制清除本地 Cookie | 无 | `{ "ok":true, "data":{ "provider":"qq", "stored":false } }` |
 | GET `/providers/{pid}/login-status` | 查询登录状态 | 无 | `{ "ok":true, "data":{ "provider":"qq", "loggedIn":true, "nickname":"用户", "userId":"10001" } }` |
 | POST `/providers/{pid}/logout` | 上游登出并清除本地 Cookie | 无 | `{ "ok":true, "data":{ "provider":"qq", "loggedOut":true } }` |
 
