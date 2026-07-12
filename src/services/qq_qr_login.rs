@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{HeaderMap, SET_COOKIE},
+};
 
 use crate::{
     providers::qq::sign::{gtk_from_pskey, hash33},
@@ -57,8 +60,8 @@ impl QqQrLoginService {
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .send()
             .await?;
-        let qrsig = read_set_cookie(resp.headers())
-            .and_then(|header| {
+        let qrsig = read_set_cookies(resp.headers())
+            .find_map(|header| {
                 regex::Regex::new(r"qrsig=([^;]+)").ok().and_then(|re| {
                     re.captures(&header)
                         .and_then(|cap| cap.get(1).map(|m| m.as_str().to_owned()))
@@ -108,10 +111,7 @@ impl QqQrLoginService {
             .header("cookie", format!("qrsig={}", decoded.qrsig))
             .send()
             .await?;
-        merge_cookies(
-            &mut cookies,
-            read_set_cookie(check_resp.headers()).as_deref(),
-        );
+        merge_cookies(&mut cookies, read_set_cookies(check_resp.headers()));
         let text = check_resp.text().await?;
         let ptui = parse_ptui_callback(&text);
         let message = normalize_poll_message(&ptui, &text);
@@ -139,16 +139,12 @@ impl QqQrLoginService {
         let check_sig_resp = self
             .deps
             .client
-            .get(redirect_url)
+            .get(&redirect_url)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .header("cookie", cookie_header(&cookies))
             .send()
             .await?;
-        merge_cookies(
-            &mut cookies,
-            read_set_cookie(check_sig_resp.headers()).as_deref(),
-        );
-
+        merge_cookies(&mut cookies, read_set_cookies(check_sig_resp.headers()));
         let p_skey = cookie_value(&cookies, "p_skey");
         if p_skey.is_empty() {
             anyhow::bail!("QQ_QR_PSKEY_MISSING");
@@ -163,10 +159,7 @@ impl QqQrLoginService {
             .form(&build_authorize_form(gtk))
             .send()
             .await?;
-        merge_cookies(
-            &mut cookies,
-            read_set_cookie(authorize_resp.headers()).as_deref(),
-        );
+        merge_cookies(&mut cookies, read_set_cookies(authorize_resp.headers()));
         let status = authorize_resp.status();
         let location = authorize_resp
             .headers()
@@ -189,10 +182,7 @@ impl QqQrLoginService {
             .body(build_musicu_body(gtk, &code))
             .send()
             .await?;
-        merge_cookies(
-            &mut cookies,
-            read_set_cookie(musicu_resp.headers()).as_deref(),
-        );
+        merge_cookies(&mut cookies, read_set_cookies(musicu_resp.headers()));
         let cookie = cookie_header(&cookies);
         if cookie.is_empty() {
             anyhow::bail!("QQ_QR_COOKIE_MISSING");
@@ -227,17 +217,16 @@ struct DecodedKey {
     ptqrtoken: String,
 }
 
-fn read_set_cookie(headers: &HeaderMap) -> Option<String> {
+fn read_set_cookies(headers: &HeaderMap) -> impl Iterator<Item = &str> {
     headers
-        .get("set-cookie")
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned)
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
 }
 
-fn parse_set_cookie(header: Option<&str>) -> Vec<String> {
-    header
-        .unwrap_or_default()
-        .split(',')
+fn parse_set_cookie(header: &str) -> Vec<String> {
+    split_set_cookie_header(header)
+        .into_iter()
         .map(|part| part.split(';').next().unwrap_or_default().trim().to_owned())
         .filter(|part| {
             part.contains('=')
@@ -249,10 +238,32 @@ fn parse_set_cookie(header: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-fn merge_cookies(cookies: &mut CookieMap, header: Option<&str>) {
-    for cookie in parse_set_cookie(header) {
-        if let Some((name, _)) = cookie.split_once('=') {
-            cookies.insert(name.to_owned(), cookie);
+fn split_set_cookie_header(header: &str) -> Vec<&str> {
+    let mut cookies = Vec::new();
+    let mut start = 0;
+
+    for (index, character) in header.char_indices() {
+        if character != ',' {
+            continue;
+        }
+        let next = header[index + character.len_utf8()..].trim_start();
+        let candidate = next.split([';', ',']).next().unwrap_or_default().trim();
+        if !candidate.is_empty() && candidate.contains('=') {
+            cookies.push(header[start..index].trim());
+            start = index + character.len_utf8();
+        }
+    }
+
+    cookies.push(header[start..].trim());
+    cookies
+}
+
+fn merge_cookies<'a>(cookies: &mut CookieMap, headers: impl IntoIterator<Item = &'a str>) {
+    for header in headers {
+        for cookie in parse_set_cookie(header) {
+            if let Some((name, _)) = cookie.split_once('=') {
+                cookies.insert(name.to_owned(), cookie);
+            }
         }
     }
 }
@@ -401,4 +412,32 @@ fn now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::header::HeaderValue;
+
+    use super::*;
+
+    #[test]
+    fn merge_cookies_reads_every_set_cookie_header() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("ptcz=first; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/"),
+        );
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("p_skey=needed; Path=/"),
+        );
+        headers.append(SET_COOKIE, HeaderValue::from_static("u_key=final; Path=/"));
+
+        let mut cookies = CookieMap::new();
+        merge_cookies(&mut cookies, read_set_cookies(&headers));
+
+        assert_eq!(cookie_value(&cookies, "ptcz"), "first");
+        assert_eq!(cookie_value(&cookies, "p_skey"), "needed");
+        assert_eq!(cookie_value(&cookies, "u_key"), "final");
+    }
 }
