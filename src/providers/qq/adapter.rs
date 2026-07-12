@@ -19,7 +19,7 @@ use crate::{
 use super::{
     client::QqClient,
     map::{
-        map_qq_lyric_to_payload, map_qq_playlist_to_detail, map_qq_playlist_to_summary,
+        map_qq_lyric_to_payload, map_qq_playlist_to_detail, map_qq_playlist_to_detail_official, map_qq_playlist_to_summary,
         map_qq_song_to_track, normalize_provider_image_url,
     },
 };
@@ -252,6 +252,7 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn playlist_detail(&self, id: &str) -> Result<PlaylistDetail> {
+        //后续将移除老接口调用
         let body = self.client.playlist_detail(id).await?;
         let first = body
             .get("cdlist")
@@ -279,7 +280,9 @@ impl ProviderAdapter for QqAdapter {
                         .unwrap_or(false)
                 });
             if let Some(fallback) = fallback {
-                return Ok(map_qq_playlist_to_detail(Some(fallback), Some(id)));
+                let q = map_qq_playlist_to_detail_official(Some(fallback), Some(id));
+                println!("{q:?}");
+                return Ok(q);
             }
         }
 

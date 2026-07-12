@@ -168,9 +168,7 @@ pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playlis
         ]),
         cover_url: normalize_provider_image_url(&first_string(&[
             raw.get("logo"),
-            raw.get("diss_cover"),
             raw.get("picurl"),
-            raw.get("cover"),
         ])),
         track_count: first_u32(&[
             raw.get("total_song_num"),
@@ -193,6 +191,66 @@ pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playlis
             })
             .unwrap_or_default(),
         subscribed: Some(false),
+    }
+}
+
+pub fn map_qq_playlist_to_detail_official(raw: Option<&Value>, id_hint: Option<&str>) -> PlaylistDetail {
+    let dirinfo = raw.and_then(|d| d.get("dirinfo")).unwrap_or(&Value::Null);
+    let mut track_ids = Vec::new();
+    let tracks = raw
+        .and_then(|d| d.get("songlist"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|s| {
+            let id = s.get("id").and_then(Value::as_u64).unwrap_or(0).to_string();
+            track_ids.push(id.clone());
+            let album = s.get("album");
+            Track {
+                id: id.clone(),
+                source_id: id,
+                provider: "qq".to_owned(),
+                media_mid: s.get("songlist").and_then(Value::as_str).map(|s| s.to_owned()),
+                title: s.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+                artists: s
+                    .get("singer")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| {
+                        v.get("name")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect(),
+                album: album.and_then(|s| s.get("name")).and_then(Value::as_str).unwrap_or("").to_string(),
+                cover_url: format!(
+                    "http://y.gtimg.cn/music/photo_new/T002R500x500M000{}.jpg?n=1",
+                    album
+                    .and_then(|s| s.get("mid"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+                ),
+                quality_hints: vec!["standard".to_owned()],
+                playable_state: "unknown".to_owned(),
+                duration_ms: s
+                    .get("interval")
+                    .and_then(Value::as_u64)
+                    .map(|value| value * 1_000),
+                artwork_url: None,
+            }
+        })
+        .collect::<Vec<_>>();
+    PlaylistDetail {
+        provider: "qq".to_owned(),
+        id: dirinfo.get("id").and_then(Value::as_u64).map(|i| i.to_string()).unwrap_or(id_hint.unwrap_or("").to_string()),
+        name: dirinfo.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+        cover_url: dirinfo.get("picurl").and_then(Value::as_str).unwrap_or("").to_string(),
+        subscribed: Some(false),
+        track_count: Some(dirinfo.get("songnum").and_then(Value::as_u64).unwrap_or(0) as u32),
+        track_ids: track_ids,
+        tracks,
     }
 }
 
