@@ -210,15 +210,27 @@ impl ProviderAdapter for QqAdapter {
         let collected = self.client.user_collect_songlists(&user_id).await.ok();
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-
+        
         if let Some(created) = created {
-            for item in read_playlist_list(&created) {
-                let summary = map_qq_playlist_to_summary(item, None);
-                if !summary.id.is_empty()
-                    && !is_qzone_background_playlist(&summary, item)
-                    && seen.insert(summary.id.clone())
-                {
-                    out.push(summary);
+            if let Some(mm) = created.get("music.musicasset.PlaylistBaseRead.GetPlaylistByUin") {
+                if let Some(data) = mm.get("data") {
+                    if let Some(list) = data.get("v_playlist").and_then(Value::as_array) {
+                        for l in list {
+                            if let Some(id) = l.get("tid").and_then(Value::as_u64) {
+                                if let Some(name) = l.get("dirName").and_then(Value::as_str) {
+                                    out.push(PlaylistSummary {
+                                        provider: "qq".to_owned(),
+                                        id: id.to_string(),
+                                        name: name.to_string(),
+                                        cover_url: l.get("picUrl").and_then(Value::as_str).unwrap_or("").to_string(),
+                                        track_count: Some(l.get("songnum").and_then(Value::as_u64).unwrap_or(0) as u32),
+                                        track_ids: vec![],
+                                        subscribed: Some(true)
+                                    });
+                                }
+                            }                        
+                        }
+                    }
                 }
             }
         }
@@ -712,6 +724,7 @@ fn qq_login_avatar_url(
 }
 
 fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
+    //待审查微信uin形状
     let map = cookie
         .split(';')
         .filter_map(|segment| {

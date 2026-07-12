@@ -245,8 +245,8 @@ impl QqClient {
             .trim()
             .is_empty()
     }
-
-    pub async fn user_songlists(&self, user_id: &str) -> Result<Value> {
+    //测试发现已失效, 保留至新接口确定可用
+    pub async fn user_songlists_old(&self, user_id: &str) -> Result<Value> {
         self.get_json(
             "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss",
             &[
@@ -265,6 +265,25 @@ impl QqClient {
             ],
             Some("https://y.qq.com/portal/profile.html"),
             self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn user_songlists(&self, uin: &str) -> Result<Value> {
+        self.post_raw_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &json!({
+                "music.musicasset.PlaylistBaseRead.GetPlaylistByUin": {
+                    "method": "GetPlaylistByUin",
+                    "module": "music.musicasset.PlaylistBaseRead",
+                    "param": {
+                        "uin": uin
+                    }
+                }
+            }),
+            None,
+            None,
+            None
         )
         .await
     }
@@ -433,6 +452,37 @@ impl QqClient {
             .context("read qq upstream post response")
             .map_err(unavailable)?;
         parse_json_like(&text)
+    }
+
+    async fn post_raw_json(
+        &self,
+        url: &str,
+        body: &Value,
+        referer: Option<&str>,
+        cookie: Option<&str>,
+        content_type: Option<&str>,
+    ) -> Result<Value> {
+        let headers = build_headers(referer, cookie, true)?;
+        let mut request = self.http.post(url).headers(headers);
+
+        if let Some(content_type) = content_type {
+            request = request.header(CONTENT_TYPE, content_type);
+        }
+
+        let response = request
+            .json(body)
+            .send()
+            .await
+            .context("send qq upstream post request")
+            .map_err(unavailable)?;
+
+        let text = response
+            .text()
+            .await
+            .context("read qq upstream post response")
+            .map_err(unavailable)?;
+
+        serde_json::from_str(&text).map_err(internal)
     }
 }
 
