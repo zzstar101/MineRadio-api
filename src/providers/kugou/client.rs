@@ -46,6 +46,13 @@ impl KugouRequestBody {
             Self::Bytes(value) => value.clone(),
         }
     }
+
+    fn content_type(&self) -> Option<&'static str> {
+        match self {
+            Self::Json(_) => Some("application/json"),
+            Self::Text(_) | Self::Bytes(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +173,14 @@ impl KugouClient {
         }
 
         let body = request.body.as_ref().map(KugouRequestBody::bytes);
+        let body_content_type = request
+            .body
+            .as_ref()
+            .and_then(KugouRequestBody::content_type);
+        let has_content_type = request
+            .headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("content-type"));
         if !request.skip_signature && !params.contains_key("signature") {
             let signature = match request.signature {
                 KugouSignature::Android => signature_android(&params, body.as_deref()),
@@ -200,6 +215,9 @@ impl KugouClient {
             if !name.eq_ignore_ascii_case("user-agent") {
                 request_builder = request_builder.header(name, value);
             }
+        }
+        if let Some(content_type) = body_content_type.filter(|_| !has_content_type) {
+            request_builder = request_builder.header("content-type", content_type);
         }
         request_builder = request_builder
             .header("dfid", dfid)
@@ -386,6 +404,16 @@ mod tests {
             signature_register(&params),
             "3be0f2ebde7da28161927749ab76ba88"
         );
+    }
+
+    #[test]
+    fn json_request_body_declares_json_content_type() {
+        assert_eq!(
+            KugouRequestBody::Json(serde_json::json!({})).content_type(),
+            Some("application/json")
+        );
+        assert_eq!(KugouRequestBody::Text(String::new()).content_type(), None);
+        assert_eq!(KugouRequestBody::Bytes(Vec::new()).content_type(), None);
     }
 
     #[test]
