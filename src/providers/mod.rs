@@ -1,4 +1,5 @@
 pub mod error;
+pub mod kugou;
 pub mod netease;
 pub mod qq;
 pub mod registry;
