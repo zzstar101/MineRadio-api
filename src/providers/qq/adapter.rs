@@ -223,7 +223,7 @@ impl ProviderAdapter for QqAdapter {
                                         id: id.to_string(),
                                         name: name.to_string(),
                                         cover_url: l.get("picUrl").and_then(Value::as_str).unwrap_or("").to_string(),
-                                        track_count: Some(l.get("songnum").and_then(Value::as_u64).unwrap_or(0) as u32),
+                                        track_count: Some(l.get("songNum").and_then(Value::as_u64).unwrap_or(0) as u32),
                                         track_ids: vec![],
                                         subscribed: Some(true)
                                     });
