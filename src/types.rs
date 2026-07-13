@@ -214,6 +214,43 @@ pub struct PlaylistDetail {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AlbumSummary {
+    #[serde(default)]
+    pub provider: ProviderId,
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub cover_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_count: Option<u32>,
+    #[serde(default)]
+    pub track_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscribed: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumDetail {
+    #[serde(default)]
+    pub provider: ProviderId,
+    pub id: String,
+    pub name: String,
+    pub singer: Vec<String>,
+    #[serde(default)]
+    pub cover_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_count: Option<u32>,
+    #[serde(default)]
+    pub track_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscribed: Option<bool>,
+    #[serde(default)]
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderLoginStatus {
     pub provider: ProviderId,
     pub logged_in: bool,

@@ -8,9 +8,9 @@ pub mod soda;
 use async_trait::async_trait;
 
 use crate::types::{
-    LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-    TrackQualityAvailability,
+    AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
+    ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
+    Track, TrackQualityAvailability,
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
@@ -51,6 +51,20 @@ pub trait ProviderAdapter: Send + Sync {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "add_to_playlist",
+        ))
+    }
+
+    async fn album_list(&self) -> ProviderResult<AlbumSummary> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "album_list",
+        ))
+    }
+
+    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "album_list",
         ))
     }
 }
