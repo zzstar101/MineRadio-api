@@ -20,6 +20,8 @@ const COLLECTION_MEDIA_URL: &str = "https://api.qishui.com/luna/pc/me/collection
 const COLLECTION_MEDIA_DELETE_URL: &str =
     "https://api.qishui.com/luna/pc/me/collection/media/delete?aid=386088";
 const LOGOUT_URL: &str = "https://api.qishui.com/passport/web/logout/?need_redirect=0&iid=27960026095955&device_platform=PC&version_code=3.5.1&aid=386088";
+const ALBUM_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/collection/mixed?aid=386088&app_name=luna_pc&iid=3242894632956240&version_name=3.5.2&version_code=30050200&channel=official&item_types=album&item_types=playlist";
+const ALBUM_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/albums/AID?aid=386088&app_name=luna_pc&iid=3242894632956240&version_code=30050200&ignore_tracks=false";
 
 #[derive(Clone, Default)]
 pub struct SodaClient {
@@ -99,6 +101,19 @@ impl SodaClient {
             root.insert("media_resources".to_owned(), Value::Array(merged));
         }
         Ok(first)
+    }
+
+    pub async fn album_list(&self) -> ProviderResult<Value> {
+        self.get_json(
+            ALBUM_LIST_URL.to_owned(),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn album_detail(&self, id: &str) -> ProviderResult<Value> {
+        self.get_json(ALBUM_DETAIL_URL.replace("AID", id), None)
+            .await
     }
 
     pub async fn login_status(&self) -> ProviderResult<Value> {
