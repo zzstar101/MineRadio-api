@@ -927,7 +927,7 @@ fn provider_error_response(err: ProviderError) -> Response {
     let status = match err.code {
         ProviderErrorCode::LoginRequired => StatusCode::UNAUTHORIZED,
         ProviderErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
-        ProviderErrorCode::NoResult | ProviderErrorCode::NoUrl | ProviderErrorCode::NoPlaylist => {
+        ProviderErrorCode::InvalidResponse | ProviderErrorCode::NoResult | ProviderErrorCode::NoUrl | ProviderErrorCode::NoPlaylist => {
             StatusCode::NOT_FOUND
         }
         ProviderErrorCode::Unavailable
