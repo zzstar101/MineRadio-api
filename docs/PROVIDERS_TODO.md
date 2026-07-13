@@ -64,10 +64,10 @@
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [ ] | [ ] | [registry.rs](../src/providers/registry.rs) 当前仅列出 `netease`、`qq`、`soda` |
 | 二维码登录 | [ ] | [ ] | 未建立 Kugou QR 登录服务 |
-| 搜索 | [ ] | [ ] | 未建立 `KugouAdapter` |
-| 播放地址 | [ ] | [ ] | 未建立 `KugouAdapter` |
-| 音质列表 | [ ] | [ ] | 未建立 `KugouAdapter` |
-| 歌词 | [ ] | [ ] | 未建立 `KugouAdapter` |
+| 搜索 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
+| 播放地址 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `song_url`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `song_url` |
+| 音质列表 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `track_qualities` |
+| 歌词 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `lyric`，调用 `lyric_search` 与 `lyric` |
 | 歌单列表 | [ ] | [ ] | 未建立 `KugouAdapter` |
 | 歌单详情 | [ ] | [ ] | 未建立 `KugouAdapter` |
 | 登录状态 | [ ] | [ ] | 未建立 `KugouAdapter` |

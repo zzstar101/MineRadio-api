@@ -10,6 +10,7 @@ use crate::providers::{
     ProviderResult,
     error::{ProviderError, ProviderErrorCode},
 };
+use crate::services::auth_session;
 
 const GATEWAY_URL: &str = "https://gateway.kugou.com";
 const APP_ID: &str = "1005";
@@ -109,6 +110,108 @@ impl KugouClient {
 
     pub fn with_http_client(http: Client) -> Self {
         Self { http }
+    }
+
+    pub async fn current_cookie(&self) -> KugouCookie {
+        auth_session::get_provider_cookie("kugou")
+            .await
+            .map(|value| parse_cookie(&value))
+            .unwrap_or_default()
+    }
+
+    pub async fn search(&self, keyword: &str, page: u32, page_size: u32) -> ProviderResult<Value> {
+        let mut request = KugouRequest::new(Method::GET, "/v3/search/song");
+        request.params = KugouParams::from([
+            ("albumhide".to_owned(), Value::from(0)),
+            ("iscorrection".to_owned(), Value::from(1)),
+            ("keyword".to_owned(), Value::String(keyword.to_owned())),
+            ("nocollect".to_owned(), Value::from(0)),
+            ("page".to_owned(), Value::from(page.max(1))),
+            ("pagesize".to_owned(), Value::from(page_size.clamp(1, 100))),
+            (
+                "platform".to_owned(),
+                Value::String("AndroidFilter".to_owned()),
+            ),
+        ]);
+        request
+            .headers
+            .insert("x-router".to_owned(), "complexsearch.kugou.com".to_owned());
+        request.cookie = self.current_cookie().await;
+        Ok(self.request(request).await?.body)
+    }
+
+    pub async fn song_url(
+        &self,
+        hash: &str,
+        album_id: u64,
+        album_audio_id: u64,
+        quality: &str,
+    ) -> ProviderResult<Value> {
+        let mut request = KugouRequest::new(Method::GET, "/v5/url");
+        request.params = KugouParams::from([
+            ("album_id".to_owned(), Value::from(album_id)),
+            ("album_audio_id".to_owned(), Value::from(album_audio_id)),
+            ("area_code".to_owned(), Value::from(1)),
+            ("behavior".to_owned(), Value::String("play".to_owned())),
+            ("cdnBackup".to_owned(), Value::from(1)),
+            ("cmd".to_owned(), Value::from(26)),
+            ("hash".to_owned(), Value::String(hash.to_ascii_lowercase())),
+            ("IsFreePart".to_owned(), Value::from(0)),
+            ("module".to_owned(), Value::String(String::new())),
+            ("page_id".to_owned(), Value::from(151_369_488)),
+            ("pid".to_owned(), Value::from(2)),
+            ("pidversion".to_owned(), Value::from(3001)),
+            (
+                "ppage_id".to_owned(),
+                Value::String("463467626,350369493,788954147".to_owned()),
+            ),
+            ("quality".to_owned(), Value::String(quality.to_owned())),
+            (
+                "ssa_flag".to_owned(),
+                Value::String("is_fromtrack".to_owned()),
+            ),
+            ("version".to_owned(), Value::from(11430)),
+        ]);
+        request.encrypt_key = true;
+        request
+            .headers
+            .insert("x-router".to_owned(), "trackercdn.kugou.com".to_owned());
+        request.cookie = self.current_cookie().await;
+        Ok(self.request(request).await?.body)
+    }
+
+    pub async fn lyric_search(&self, hash: &str) -> ProviderResult<Value> {
+        let mut request = KugouRequest::new(Method::GET, "/v1/search");
+        request.base_url = Some("https://lyrics.kugou.com".to_owned());
+        request.clear_default_params = true;
+        request.skip_signature = true;
+        request.params = KugouParams::from([
+            ("album_audio_id".to_owned(), Value::from(0)),
+            ("appid".to_owned(), Value::from(APP_ID)),
+            ("clientver".to_owned(), Value::from(CLIENT_VERSION)),
+            ("duration".to_owned(), Value::from(0)),
+            ("hash".to_owned(), Value::String(hash.to_owned())),
+            ("keyword".to_owned(), Value::String(String::new())),
+            ("lrctxt".to_owned(), Value::from(1)),
+            ("man".to_owned(), Value::String("no".to_owned())),
+        ]);
+        request.cookie = self.current_cookie().await;
+        Ok(self.request(request).await?.body)
+    }
+
+    pub async fn lyric(&self, id: u64, access_key: &str) -> ProviderResult<Value> {
+        let mut request = KugouRequest::new(Method::GET, "/download");
+        request.base_url = Some("https://lyrics.kugou.com".to_owned());
+        request.params = KugouParams::from([
+            ("accesskey".to_owned(), Value::String(access_key.to_owned())),
+            ("charset".to_owned(), Value::String("utf8".to_owned())),
+            ("client".to_owned(), Value::String("android".to_owned())),
+            ("fmt".to_owned(), Value::String("lrc".to_owned())),
+            ("id".to_owned(), Value::from(id)),
+            ("ver".to_owned(), Value::from(1)),
+        ]);
+        request.cookie = self.current_cookie().await;
+        Ok(self.request(request).await?.body)
     }
 
     pub async fn request(&self, request: KugouRequest) -> ProviderResult<KugouResponse> {
@@ -360,6 +463,17 @@ fn cookie_header(cookie: &KugouCookie) -> String {
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+fn parse_cookie(cookie: &str) -> KugouCookie {
+    cookie
+        .split(';')
+        .filter_map(|part| {
+            let (key, value) = part.trim().split_once('=')?;
+            let key = key.trim();
+            (!key.is_empty()).then(|| (key.to_owned(), value.trim().to_owned()))
+        })
+        .collect()
 }
 
 fn md5_hex(value: &[u8]) -> String {

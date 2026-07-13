@@ -3,16 +3,19 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde_json::Value;
 
 use crate::{
+    parsers::lrc,
     providers::{ProviderAdapter, ProviderResult, error::ProviderError},
     types::{
         LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
-        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
 };
 
-use super::client::KugouClient;
+use super::{client::KugouClient, map::map_kugou_song_to_track};
 
 #[derive(Clone, Default)]
 pub struct KugouAdapter {
@@ -35,24 +38,107 @@ impl ProviderAdapter for KugouAdapter {
         "kugou".to_owned()
     }
 
-    async fn search(&self, _keyword: &str, _limit: u32) -> ProviderResult<Vec<Track>> {
-        Err(not_implemented("search"))
+    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
+        let body = self.client.search(keyword, 1, limit).await?;
+        Ok(search_items(&body)
+            .iter()
+            .map(map_kugou_song_to_track)
+            .filter(|track| !track.source_id.is_empty())
+            .collect())
     }
 
     async fn song_url(
         &self,
-        _track: &Track,
-        _opts: Option<SongUrlOptions>,
+        track: &Track,
+        opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
-        Err(not_implemented("song_url"))
+        let requested_quality = opts.and_then(|value| value.quality);
+        let quality = kugou_quality(requested_quality.as_deref());
+        let album_audio_id = track
+            .media_mid
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_default();
+        let body = self
+            .client
+            .song_url(&track.source_id, 0, album_audio_id, quality)
+            .await?;
+        let url = first_url(&body);
+        Ok(SongUrlResult {
+            url: url.clone(),
+            provider: Some("kugou".to_owned()),
+            playable: Some(url.is_some()),
+            quality: Some(quality.to_owned()),
+            requested_quality,
+            reason: url
+                .is_none()
+                .then(|| "kugou did not return a playable URL".to_owned()),
+            ..Default::default()
+        })
     }
 
-    async fn track_qualities(&self, _track: &Track) -> ProviderResult<TrackQualityAvailability> {
-        Err(not_implemented("track_qualities"))
+    async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
+        let qualities = [
+            ("standard", "128"),
+            ("higher", "320"),
+            ("lossless", "flac"),
+            ("hires", "high"),
+        ]
+        .into_iter()
+        .map(|(id, request_quality)| TrackQualityOption {
+            provider: "kugou".to_owned(),
+            id: id.to_owned(),
+            label: id.to_owned(),
+            request_quality: request_quality.to_owned(),
+            source: "declared".to_owned(),
+            ..Default::default()
+        })
+        .collect();
+        Ok(TrackQualityAvailability {
+            provider: "kugou".to_owned(),
+            track_id: track.id.clone(),
+            default_quality: Some("standard".to_owned()),
+            qualities,
+        })
     }
 
-    async fn lyric(&self, _track: &Track) -> ProviderResult<LyricPayload> {
-        Err(not_implemented("lyric"))
+    async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
+        let candidates = self.client.lyric_search(&track.source_id).await?;
+        let Some(candidate) = lyric_candidates(&candidates).first() else {
+            return Ok(LyricPayload {
+                provider: "kugou".to_owned(),
+                track_id: track.id.clone(),
+                ..Default::default()
+            });
+        };
+        let id = candidate
+            .get("id")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let access_key = candidate
+            .get("accesskey")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if id == 0 || access_key.is_empty() {
+            return Ok(LyricPayload {
+                provider: "kugou".to_owned(),
+                track_id: track.id.clone(),
+                ..Default::default()
+            });
+        }
+        let body = self.client.lyric(id, access_key).await?;
+        let text = body
+            .get("content")
+            .and_then(Value::as_str)
+            .and_then(decode_base64_text)
+            .unwrap_or_default();
+        Ok(LyricPayload {
+            provider: "kugou".to_owned(),
+            track_id: track.id.clone(),
+            lines: lrc::parse_lrc(&text),
+            has_translation: false,
+            is_word_by_word: false,
+        })
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
@@ -74,4 +160,53 @@ impl ProviderAdapter for KugouAdapter {
 
 fn not_implemented(action: &str) -> ProviderError {
     ProviderError::not_implemented("kugou".to_owned(), action)
+}
+
+fn search_items(body: &Value) -> &[Value] {
+    body.get("data")
+        .and_then(|value| value.get("lists"))
+        .or_else(|| body.get("lists"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn lyric_candidates(body: &Value) -> &[Value] {
+    body.get("candidates")
+        .or_else(|| body.get("data").and_then(|value| value.get("candidates")))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+fn first_url(body: &Value) -> Option<String> {
+    body.get("url")
+        .and_then(Value::as_array)
+        .and_then(|urls| urls.iter().find_map(Value::as_str))
+        .or_else(|| body.get("url").and_then(Value::as_str))
+        .or_else(|| body.pointer("/data/url").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_owned)
+}
+
+fn decode_base64_text(value: &str) -> Option<String> {
+    BASE64
+        .decode(value)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
+fn kugou_quality(value: Option<&str>) -> &'static str {
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "higher" | "320" => "320",
+        "lossless" | "flac" => "flac",
+        "hires" | "hi_res" | "high" => "high",
+        _ => "128",
+    }
 }
