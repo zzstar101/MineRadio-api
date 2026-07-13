@@ -119,6 +119,14 @@ pub fn build(state: AppState) -> Router {
             get(provider_playlist_detail).options(preflight),
         )
         .route(
+            "/providers/{pid}/albums",
+            get(provider_albums).options(preflight),
+        )
+        .route(
+            "/providers/{pid}/albums/{id}",
+            get(provider_album_detail).options(preflight),
+        )
+        .route(
             "/providers/{pid}/login-status",
             get(provider_login_status).options(preflight),
         )
@@ -708,6 +716,29 @@ async fn provider_playlist_detail(
     }
 }
 
+async fn provider_albums(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
+    let Some(provider) = state.providers.get(&pid) else {
+        return unavailable_provider(&pid);
+    };
+    match provider.album_list().await {
+        Ok(result) => ok(result),
+        Err(err) => provider_error_response(err),
+    }
+}
+
+async fn provider_album_detail(
+    State(state): State<AppState>,
+    Path((pid, id)): Path<(String, String)>,
+) -> Response {
+    let Some(provider) = state.providers.get(&pid) else {
+        return unavailable_provider(&pid);
+    };
+    match provider.album_detail(&id).await {
+        Ok(result) => ok(result),
+        Err(err) => provider_error_response(err),
+    }
+}
+
 async fn provider_login_status(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
     let Some(provider) = state.providers.get(&pid) else {
         return unavailable_provider(&pid);
@@ -927,9 +958,10 @@ fn provider_error_response(err: ProviderError) -> Response {
     let status = match err.code {
         ProviderErrorCode::LoginRequired => StatusCode::UNAUTHORIZED,
         ProviderErrorCode::NotImplemented => StatusCode::NOT_IMPLEMENTED,
-        ProviderErrorCode::InvalidResponse | ProviderErrorCode::NoResult | ProviderErrorCode::NoUrl | ProviderErrorCode::NoPlaylist => {
-            StatusCode::NOT_FOUND
-        }
+        ProviderErrorCode::InvalidResponse
+        | ProviderErrorCode::NoResult
+        | ProviderErrorCode::NoUrl
+        | ProviderErrorCode::NoPlaylist => StatusCode::NOT_FOUND,
         ProviderErrorCode::Unavailable
         | ProviderErrorCode::CopyrightUnavailable
         | ProviderErrorCode::PaidRequired
