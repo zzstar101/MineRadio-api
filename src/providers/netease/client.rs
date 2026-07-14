@@ -8,6 +8,7 @@ use reqwest::{
     Client, Response,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
@@ -18,6 +19,8 @@ use crate::{
     services::auth_session,
     utils::{encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
+
+use super::model::{NeteaseAlbumDetailResp, NeteaseAlbumListResp};
 
 const API_DOMAIN: &str = "https://interface.music.163.com";
 const DOMAIN: &str = "https://music.163.com";
@@ -163,24 +166,28 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn album_list(&self) -> ProviderResult<Value> {
-        self.request_weapi(
+    pub(super) async fn album_list(&self) -> ProviderResult<NeteaseAlbumListResp> {
+        let cookie = self.current_cookie().await;
+        self.get_model(
             "/api/album/sublist",
             json!({
                 "limit": 1000,
                 "offset": 0,
                 "total": true
             }),
-            self.current_cookie().await.as_deref(),
+            cookie.as_deref(),
+            "album_list",
         )
         .await
     }
 
-    pub async fn album_detail(&self, id: &str) -> ProviderResult<Value> {
-        self.request_weapi(
+    pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<NeteaseAlbumDetailResp> {
+        let cookie = self.current_cookie().await;
+        self.get_model(
             &format!("/api/v1/album/{id}"),
             json!({}),
-            self.current_cookie().await.as_deref(),
+            cookie.as_deref(),
+            "album_detail",
         )
         .await
     }
@@ -462,6 +469,25 @@ impl NeteaseClient {
             .request_weapi_response(uri, payload, cookie)
             .await?
             .body)
+    }
+
+    async fn get_model<T: DeserializeOwned>(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let body = self.request_weapi(uri, payload, cookie).await?;
+        let raw_message = body.to_string();
+        serde_json::from_value(body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "netease".to_owned(),
+            message: format!("decode netease {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(raw_message),
+        })
     }
 
     async fn request_weapi_response(

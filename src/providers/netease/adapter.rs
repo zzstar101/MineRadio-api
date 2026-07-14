@@ -10,9 +10,9 @@ use crate::{
     },
     services::auth_session,
     types::{
-        LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId,
-        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, TrackQualityOption,
+        AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
 };
 
@@ -443,6 +443,15 @@ impl ProviderAdapter for NeteaseAdapter {
             });
         };
         Ok(map_hana_playlist_to_detail(playlist, Some(id)))
+    }
+
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
+        ensure_logged_in(self.client.current_cookie().await)?;
+        Ok(self.client.album_list().await?.standardize())
+    }
+
+    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+        Ok(self.client.album_detail(id).await?.standardize())
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
