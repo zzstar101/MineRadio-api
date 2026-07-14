@@ -163,6 +163,28 @@ impl NeteaseClient {
         .await
     }
 
+    pub async fn album_list(&self) -> ProviderResult<Value> {
+        self.request_weapi(
+            "/api/album/sublist",
+            json!({
+                "limit": 1000,
+                "offset": 0,
+                "total": true
+            }),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    pub async fn album_detail(&self, id: &str) -> ProviderResult<Value> {
+        self.request_weapi(
+            &format!("/api/v1/album/{id}"),
+            json!({}),
+            self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
     pub async fn dj_hot(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/djradio/hot/v1",

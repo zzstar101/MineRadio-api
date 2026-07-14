@@ -198,15 +198,15 @@ impl ProviderAdapter for QqAdapter {
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         let cookie = self.client.current_cookie().await;
-        let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
+        let Some(_) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
             return Ok(Vec::new());
         };
-        let user_id = qq_user_id_from_cookie(&cookie);
-        let Some(user_id) = user_id else {
+        let euin = self.client.euin().await;
+        let Some(euin) = euin else {
             return Ok(Vec::new());
         };
-        let created = self.client.user_songlists(&user_id).await.ok();
-        let collected = self.client.user_collect_songlists(&user_id).await.ok();
+        let created = self.client.user_songlists(&euin).await.ok();
+        let collected = self.client.user_collect_songlists(&euin).await.ok();
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
 
@@ -309,8 +309,8 @@ impl ProviderAdapter for QqAdapter {
                 ..Default::default()
             });
         };
-        let user_id = qq_user_id_from_cookie(&cookie);
-        let Some(user_id) = user_id else {
+        let euin = self.client.euin().await;
+        let Some(euin) = euin else {
             return Ok(ProviderLoginStatus {
                 provider: "qq".to_owned(),
                 logged_in: true,
@@ -321,29 +321,21 @@ impl ProviderAdapter for QqAdapter {
             });
         };
 
-        let vip_info = self
-            .client
-            .vip_info_with_cookie(&user_id, &cookie)
-            .await
-            .ok();
-        match self
-            .client
-            .login_status_with_cookie(&user_id, &cookie)
-            .await
-        {
+        let vip_info = self.client.vip_info_with_cookie(&euin, &cookie).await.ok();
+        match self.client.login_status_with_cookie(&euin, &cookie).await {
             Ok(body) => Ok(map_qq_login_status(
                 Some(&body),
                 vip_info.as_ref(),
-                Some(&user_id),
+                Some(&euin),
             )),
             Err(_) => {
                 if let Some(vip_info) = vip_info.as_ref() {
-                    Ok(map_qq_login_status(None, Some(vip_info), Some(&user_id)))
+                    Ok(map_qq_login_status(None, Some(vip_info), Some(&euin)))
                 } else {
                     Ok(ProviderLoginStatus {
                         provider: "qq".to_owned(),
                         logged_in: true,
-                        user_id: Some(user_id),
+                        user_id: Some(euin),
                         ..Default::default()
                     })
                 }
@@ -709,36 +701,6 @@ fn qq_login_avatar_url(
     })
     .map(str::to_owned)
     .filter(|value| !value.is_empty())
-}
-
-fn qq_user_id_from_cookie(cookie: &str) -> Option<String> {
-    //待审查微信uin形状
-    let map = cookie
-        .split(';')
-        .filter_map(|segment| {
-            let (name, value) = segment.trim().split_once('=')?;
-            Some((name.trim().to_owned(), value.trim().to_owned()))
-        })
-        .collect::<std::collections::HashMap<_, _>>();
-    let login_type = map
-        .get("login_type")
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or_default();
-    let raw = if login_type == 2 {
-        map.get("wxuin")
-            .or_else(|| map.get("uin"))
-            .or_else(|| map.get("p_uin"))
-    } else {
-        map.get("uin")
-            .or_else(|| map.get("qqmusic_uin"))
-            .or_else(|| map.get("wxuin"))
-            .or_else(|| map.get("p_uin"))
-    }?;
-    let digits = raw
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty()).then_some(digits)
 }
 
 const QQ_VIP_LEVEL_NAMES: [&str; 11] = [
