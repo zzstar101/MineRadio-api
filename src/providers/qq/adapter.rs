@@ -362,7 +362,7 @@ impl ProviderAdapter for QqAdapter {
         playlist_id: &str,
         track_id: &str,
     ) -> ProviderResult<PlaylistAddSongAck> {
-        ensure_cookie(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         let body = self
             .client
             .add_song_to_playlist(playlist_id, track_id)
@@ -405,25 +405,6 @@ impl ProviderAdapter for QqAdapter {
             raw_message: Some(body.to_string()),
         })
     }
-}
-
-fn ensure_cookie(cookie: Option<String>) -> ProviderResult<()> {
-    if cookie
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err(ProviderError {
-            code: ProviderErrorCode::LoginRequired,
-            provider: "qq".to_owned(),
-            message: "qq login required".to_owned(),
-            retryable: true,
-            action: Some("login".to_owned()),
-            raw_message: None,
-        });
-    }
-    Ok(())
 }
 
 fn normalize_request_quality(requested: &str) -> String {

@@ -53,6 +53,27 @@ impl NeteaseClient {
         auth_session::get_provider_cookie("netease").await
     }
 
+    pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
+        if self
+            .current_cookie()
+            .await
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(ProviderError {
+                code: ProviderErrorCode::LoginRequired,
+                provider: "netease".to_owned(),
+                message: "netease login required".to_owned(),
+                retryable: true,
+                action: Some("login".to_owned()),
+                raw_message: None,
+            });
+        }
+        Ok(())
+    }
+
     pub async fn cloudsearch(&self, keyword: &str, limit: u32) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/cloudsearch/pc",

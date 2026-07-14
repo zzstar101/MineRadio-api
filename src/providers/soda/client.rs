@@ -42,6 +42,27 @@ impl SodaClient {
         auth_session::get_provider_cookie("soda").await
     }
 
+    pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
+        if self
+            .current_cookie()
+            .await
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(ProviderError {
+                code: ProviderErrorCode::LoginRequired,
+                provider: "soda".to_owned(),
+                message: "soda login required".to_owned(),
+                retryable: true,
+                action: Some("login".to_owned()),
+                raw_message: None,
+            });
+        }
+        Ok(())
+    }
+
     pub(super) async fn search(&self, keyword: &str) -> ProviderResult<SodaSearchResp> {
         let mut url = reqwest::Url::parse(SEARCH_URL).map_err(internal_error)?;
         url.query_pairs_mut().append_pair("q", keyword);

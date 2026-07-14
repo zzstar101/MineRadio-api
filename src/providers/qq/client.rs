@@ -44,6 +44,27 @@ impl QqClient {
         auth_session::get_provider_cookie("qq").await
     }
 
+    pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
+        if self
+            .current_cookie()
+            .await
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(ProviderError {
+                code: ProviderErrorCode::LoginRequired,
+                provider: "qq".to_owned(),
+                message: "qq login required".to_owned(),
+                retryable: true,
+                action: Some("login".to_owned()),
+                raw_message: None,
+            });
+        }
+        Ok(())
+    }
+
     pub async fn euin(&self) -> Option<String> {
         if let Some(euin) = self.euin.read().await.clone() {
             return Some(euin);

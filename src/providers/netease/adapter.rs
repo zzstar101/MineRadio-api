@@ -407,7 +407,7 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        ensure_logged_in(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         let status_body = self.client.login_status().await?;
         let profile = status_body.get("profile");
         let uid = profile
@@ -446,7 +446,7 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
-        ensure_logged_in(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         Ok(self.client.album_list().await?.standardize())
     }
 
@@ -465,7 +465,7 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
-        ensure_logged_in(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         let body = self.client.like(id, liked).await?;
         Ok(SongLikeAck {
             provider: "netease".to_owned(),
@@ -476,7 +476,7 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
-        ensure_logged_in(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         let clean_ids = ids
             .iter()
             .filter(|id| !id.is_empty())
@@ -546,7 +546,7 @@ impl ProviderAdapter for NeteaseAdapter {
         track_id: &str,
     ) -> ProviderResult<PlaylistAddSongAck> {
         //未测试
-        ensure_logged_in(self.client.current_cookie().await)?;
+        self.client.ensure_login().await?;
         let primary = self.client.playlist_tracks(playlist_id, track_id).await?;
         let final_response = if is_successful(&primary) {
             primary
@@ -573,25 +573,6 @@ impl ProviderAdapter for NeteaseAdapter {
             code: Some(response_code(&final_response)),
         })
     }
-}
-
-fn ensure_logged_in(cookie: Option<String>) -> ProviderResult<()> {
-    if cookie
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err(ProviderError {
-            code: ProviderErrorCode::LoginRequired,
-            provider: "netease".to_owned(),
-            message: "netease login required".to_owned(),
-            retryable: true,
-            action: Some("login".to_owned()),
-            raw_message: None,
-        });
-    }
-    Ok(())
 }
 
 fn pick_song_url_datum<'a>(body: &'a Value, track: &Track) -> Option<&'a Value> {

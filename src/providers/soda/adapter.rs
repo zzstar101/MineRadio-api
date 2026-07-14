@@ -113,7 +113,7 @@ impl ProviderAdapter for SodaAdapter {
         track: &Track,
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
-        ensure_cookie_for_action(self.client.current_cookie().await, "song-url")?;
+        self.client.ensure_login().await?;
         let requested = opts
             .and_then(|value| value.quality)
             .unwrap_or_else(|| "exhigh".to_owned());
@@ -335,7 +335,7 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
-        ensure_cookie_for_action(self.client.current_cookie().await, "like-song")?;
+        self.client.ensure_login().await?;
         let clean_id = id.trim();
         let (body, status) = self.client.collection_media(clean_id, liked).await?;
         let ok_key = if liked {
@@ -364,7 +364,7 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
-        ensure_cookie_for_action(self.client.current_cookie().await, "like-check")?;
+        self.client.ensure_login().await?;
         let clean_ids = ids
             .iter()
             .map(|id| id.trim().to_owned())
@@ -387,29 +387,6 @@ impl ProviderAdapter for SodaAdapter {
             }
         }
         Ok(song_like_check_ack("soda", &clean_ids, &liked_ids))
-    }
-}
-
-fn ensure_cookie_for_action(cookie: Option<String>, action: &str) -> ProviderResult<()> {
-    if cookie
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err(login_required(action));
-    }
-    Ok(())
-}
-
-fn login_required(action: &str) -> ProviderError {
-    ProviderError {
-        code: ProviderErrorCode::LoginRequired,
-        provider: "soda".to_owned(),
-        message: format!("soda {action} requires login"),
-        retryable: true,
-        action: Some("login".to_owned()),
-        raw_message: None,
     }
 }
 
