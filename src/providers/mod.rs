@@ -6,6 +6,7 @@ pub mod registry;
 pub mod soda;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 
 use crate::types::{
     AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
@@ -14,6 +15,36 @@ use crate::types::{
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
+
+#[derive(Clone, Debug)]
+pub struct ProviderRawResponse {
+    pub status: u16,
+    pub cookies: Vec<String>,
+    pub body: Bytes,
+}
+
+impl ProviderRawResponse {
+    pub async fn new(response: reqwest::Response) -> Result<Self, reqwest::Error> {
+        let status = response.status().as_u16();
+        let cookies = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|header| header.to_str().ok())
+            .filter_map(|header| header.split(';').next())
+            .map(str::trim)
+            .filter(|cookie| !cookie.is_empty() && cookie.contains('='))
+            .map(ToOwned::to_owned)
+            .collect();
+        let body = response.bytes().await?;
+
+        Ok(Self {
+            status,
+            cookies,
+            body,
+        })
+    }
+}
 
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
@@ -54,14 +85,14 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn album_list(&self) -> ProviderResult<AlbumSummary> {
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",
         ))
     }
 
-    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, _id: &str) -> ProviderResult<AlbumDetail> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",
