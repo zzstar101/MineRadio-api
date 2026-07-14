@@ -522,7 +522,7 @@ impl NeteaseClient {
         let mut body = payload.as_object().cloned().unwrap_or_default();
         body.insert("csrf_token".to_owned(), Value::String(csrf));
         let encrypted = encrypt_weapi(&Value::Object(body), Some(&generate_weapi_secret_key()))
-            .map_err(|err| internal_error(err, "encrypt weapi payload"))?;
+            .map_err(|err| internal_error(format!("encrypt weapi payload: {err}")))?;
 
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(UA_WEAPI_PC));
@@ -565,7 +565,7 @@ impl NeteaseClient {
             ),
         );
         let encrypted = encrypt_eapi(uri, crate::utils::EapiBody::Json(&Value::Object(body)))
-            .map_err(|err| internal_error(err, "encrypt eapi payload"))?;
+            .map_err(|err| internal_error(format!("encrypt eapi payload: {err}")))?;
 
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(UA_API_IPHONE));
@@ -793,7 +793,7 @@ fn header_cookie_string(header: &HashMap<String, String>) -> String {
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
-    HeaderValue::from_str(value).map_err(|err| internal_error(err.to_string(), "build header"))
+    HeaderValue::from_str(value).map_err(|err| internal_error(format!("build header: {err}")))
 }
 
 fn unique_seed() -> String {
@@ -807,25 +807,25 @@ fn unix_ms() -> u128 {
         .unwrap_or_default()
 }
 
-fn internal_error(message: String, context: &str) -> ProviderError {
+fn internal_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Internal,
         provider: "netease".to_owned(),
-        message: format!("{context}: {message}"),
+        message: err.to_string(),
         retryable: false,
         action: None,
-        raw_message: Some(message),
+        raw_message: None,
     }
 }
 
-fn unavailable_error(message: String) -> ProviderError {
+fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
         provider: "netease".to_owned(),
-        message: message.clone(),
+        message: err.to_string(),
         retryable: true,
         action: None,
-        raw_message: Some(message),
+        raw_message: None,
     }
 }
 

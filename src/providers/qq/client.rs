@@ -91,18 +91,18 @@ impl QqClient {
 
     #[allow(dead_code)]
     pub fn get_sign(&self, data: &str) -> ProviderResult<String> {
-        let runtime = Runtime::new().map_err(internal)?;
-        let context = JsContext::full(&runtime).map_err(internal)?;
+        let runtime = Runtime::new().map_err(internal_error)?;
+        let context = JsContext::full(&runtime).map_err(internal_error)?;
         context.with(|context| {
             context
                 .eval::<(), _>(qq_sign_source())
                 .catch(&context)
-                .map_err(internal)?;
+                .map_err(internal_error)?;
             let get_sign = context
                 .globals()
                 .get::<_, Function>("get_sign")
-                .map_err(internal)?;
-            get_sign.call((data,)).catch(&context).map_err(internal)
+                .map_err(internal_error)?;
+            get_sign.call((data,)).catch(&context).map_err(internal_error)
         })
     }
 
@@ -129,12 +129,12 @@ impl QqClient {
             .send()
             .await
             .context("send qq search request")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         let body = response
             .bytes()
             .await
             .context("read qq search response")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
 
         serde_json::from_slice(&body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
@@ -405,7 +405,7 @@ impl QqClient {
         playlist_id: &str,
         limit: u32,
     ) -> ProviderResult<Value> {
-        let disstid = playlist_id.trim().parse::<u64>().map_err(internal)?;
+        let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
         let song_num = limit.clamp(1, 500);
         self.post_json(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
@@ -528,12 +528,12 @@ impl QqClient {
             .send()
             .await
             .context("send qq upstream request")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         let text = response
             .text()
             .await
             .context("read qq upstream response")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         parse_json_like(&text)
     }
 
@@ -563,12 +563,12 @@ impl QqClient {
             .send()
             .await
             .context("send qq upstream post request")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         let text = response
             .text()
             .await
             .context("read qq upstream post response")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         parse_json_like(&text)
     }
 
@@ -592,15 +592,15 @@ impl QqClient {
             .send()
             .await
             .context("send qq upstream post request")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
 
         let text = response
             .text()
             .await
             .context("read qq upstream post response")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
 
-        serde_json::from_str(&text).map_err(internal)
+        serde_json::from_str(&text).map_err(internal_error)
     }
 
     async fn get_model<T: DeserializeOwned>(
@@ -622,13 +622,13 @@ impl QqClient {
             .send()
             .await
             .context("send qq upstream post request")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         let status = response.status();
         let raw = response
             .bytes()
             .await
             .context("read qq upstream response")
-            .map_err(unavailable)?;
+            .map_err(unavailable_error)?;
         if !status.is_success() {
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
@@ -686,7 +686,7 @@ fn parse_json_like(text: &str) -> ProviderResult<Value> {
         .trim_start_matches("MusicJsonCallback(")
         .trim_start_matches("jsonCallback(")
         .trim_end_matches(')');
-    serde_json::from_str(cleaned).map_err(internal)
+    serde_json::from_str(cleaned).map_err(internal_error)
 }
 
 fn value_to_form(value: Value) -> String {
@@ -798,10 +798,10 @@ fn decode_qq_lyric_payload(body: &mut Value) {
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
-    HeaderValue::from_str(value).map_err(internal)
+    HeaderValue::from_str(value).map_err(internal_error)
 }
 
-fn internal(err: impl std::fmt::Display) -> ProviderError {
+fn internal_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Internal,
         provider: "qq".to_owned(),
@@ -812,7 +812,7 @@ fn internal(err: impl std::fmt::Display) -> ProviderError {
     }
 }
 
-fn unavailable(err: impl std::fmt::Display) -> ProviderError {
+fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
         provider: "qq".to_owned(),
