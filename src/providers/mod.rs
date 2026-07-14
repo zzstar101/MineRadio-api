@@ -54,14 +54,14 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn album_list(&self) -> ProviderResult<AlbumSummary> {
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",
         ))
     }
 
-    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, _id: &str) -> ProviderResult<AlbumDetail> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",
