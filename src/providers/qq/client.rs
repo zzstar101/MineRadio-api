@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Context;
 use base64::Engine;
@@ -8,6 +8,7 @@ use reqwest::{
 };
 use rquickjs::{CatchResultExt, Context as JsContext, Function, Runtime};
 use serde_json::{Value, json};
+use tokio::sync::RwLock;
 
 use crate::{
     providers::{
@@ -26,17 +27,43 @@ const QQ_SIGN_MODULE: &str = include_str!("assets/module.js");
 #[derive(Clone, Default)]
 pub struct QqClient {
     http: Client,
+    euin: Arc<RwLock<Option<String>>>,
 }
 
 impl QqClient {
     pub fn new() -> Self {
         Self {
             http: Client::new(),
+            euin: Arc::new(RwLock::new(None)),
         }
     }
 
     pub async fn current_cookie(&self) -> Option<String> {
         auth_session::get_provider_cookie("qq").await
+    }
+
+    pub async fn euin(&self) -> Option<String> {
+        if let Some(euin) = self.euin.read().await.clone() {
+            return Some(euin);
+        }
+
+        let cookie = self.current_cookie().await?;
+        let euin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
+        self.set_euin(euin.clone()).await;
+        Some(euin)
+    }
+
+    async fn set_euin(&self, euin: String) {
+        let euin = euin.trim().to_owned();
+        if !euin.is_empty() {
+            *self.euin.write().await = Some(euin);
+        }
+    }
+
+    async fn set_euin_from_login_status(&self, body: &Value) {
+        if let Some(euin) = qq_login_status_euin(body) {
+            self.set_euin(euin).await;
+        }
     }
 
     #[allow(dead_code)]
@@ -128,7 +155,7 @@ impl QqClient {
     ) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
-        let uin = qq_user_id_from_cookie_map(&cookie_map).unwrap_or_else(|| "0".to_owned());
+        let uin = self.euin().await.unwrap_or_else(|| "0".to_owned());
         let auth = qq_playback_key_from_cookie_map(&cookie_map);
         self.post_form(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
@@ -185,11 +212,7 @@ impl QqClient {
 
     async fn lyric_internal(&self, song_mid: &str, referer: Option<&str>) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
-        let login_uin = cookie
-            .as_deref()
-            .map(|cookie| parse_cookie(cookie))
-            .and_then(|cookie| qq_user_id_from_cookie_map(&cookie))
-            .unwrap_or_else(|| "0".to_owned());
+        let login_uin = self.euin().await.unwrap_or_else(|| "0".to_owned());
         let url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
         let mut body = self
             .get_json(
@@ -221,17 +244,20 @@ impl QqClient {
         user_id: &str,
         cookie: &str,
     ) -> ProviderResult<Value> {
-        self.get_json(
-            "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
-            &[
-                ("cid", "205360838".to_owned()),
-                ("userid", user_id.to_owned()),
-                ("reqfrom", "1".to_owned()),
-            ],
-            None,
-            Some(cookie),
-        )
-        .await
+        let body = self
+            .get_json(
+                "http://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg",
+                &[
+                    ("cid", "205360838".to_owned()),
+                    ("userid", user_id.to_owned()),
+                    ("reqfrom", "1".to_owned()),
+                ],
+                None,
+                Some(cookie),
+            )
+            .await?;
+        self.set_euin_from_login_status(&body).await;
+        Ok(body)
     }
 
     pub async fn vip_info_with_cookie(&self, user_id: &str, cookie: &str) -> ProviderResult<Value> {
@@ -357,6 +383,57 @@ impl QqClient {
             }),
             Some("https://y.qq.com/"),
             self.current_cookie().await.as_deref(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn album_list(&self) -> ProviderResult<Value> {
+        let euin = self.euin().await.unwrap_or_default();
+        self.post_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &json!({
+                "req_0": {
+                    "method": "CgiGetAlbumFavInfo",
+                    "module": "music.musicasset.AlbumFavRead",
+                    "param": {
+                        "euin": euin,
+                        "offset": 0,
+                        "size": 48
+                    }
+                }
+            }),
+            Some("https://y.qq.com/"),
+            self.current_cookie().await.as_deref(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn album_detail(&self, mid: &str) -> ProviderResult<Value> {
+        self.post_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+           &json!({
+                    "req_0": {
+                        "module": "music.musichallAlbum.AlbumSongList",
+                        "method": "GetAlbumSongList",
+                        "param": {
+                        "albumMid": mid,
+                            "begin": 0,
+                            "num": 1000,
+                            "order": 2
+                        }
+                    },
+                    "req_1": {
+                        "module": "music.musichallAlbum.AlbumInfoServer",
+                        "method": "GetAlbumDetail",
+                        "param": {
+                            "albumMid": mid
+                        }
+                    }
+                }),
+       Some("https://y.qq.com/"),
+        self.current_cookie().await.as_deref(),
             None,
         )
         .await
@@ -564,6 +641,20 @@ fn qq_user_id_from_cookie_map(
     (!digits.is_empty()).then_some(digits)
 }
 
+fn qq_login_status_euin(body: &Value) -> Option<String> {
+    let euin = body
+        .get("data")
+        .and_then(|data| data.get("creator"))
+        .and_then(|creator| creator.get("encrypt_uin"))
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+        .map(|value| value.trim().to_owned())?;
+    (!euin.is_empty()).then_some(euin)
+}
+
 fn qq_playback_key_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> String {
     [
         "qm_keyst",
@@ -654,7 +745,31 @@ fn qq_sign_source() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::QqClient;
+    use serde_json::json;
+
+    use super::{QqClient, parse_cookie, qq_user_id_from_cookie_map};
+
+    #[test]
+    fn cookie_user_id_is_normalized() {
+        let cookie = parse_cookie("uin=o0012345; login_type=1");
+
+        assert_eq!(
+            qq_user_id_from_cookie_map(&cookie).as_deref(),
+            Some("0012345")
+        );
+    }
+
+    #[tokio::test]
+    async fn login_status_caches_encrypt_uin() {
+        let client = QqClient::new();
+        client
+            .set_euin_from_login_status(&json!({
+                "data": { "creator": { "encrypt_uin": "12345" } }
+            }))
+            .await;
+
+        assert_eq!(client.euin().await.as_deref(), Some("12345"));
+    }
 
     #[test]
     fn get_sign_executes_the_bundled_javascript() {
