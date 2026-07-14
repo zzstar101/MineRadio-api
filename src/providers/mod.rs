@@ -15,7 +15,6 @@ use crate::types::{
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
 
-
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn id(&self) -> ProviderId;

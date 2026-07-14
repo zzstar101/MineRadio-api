@@ -206,25 +206,33 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
-        self.client.album_list().await?.standardize().ok_or(ProviderError {
-            code: ProviderErrorCode::NoResult,
-            provider: "soda".to_owned(),
-            message: format!("album list no result"),
-            retryable: false,
-            action: Some("standardize album list resp".to_owned()),
-            raw_message: None,
-        })
+        self.client
+            .album_list()
+            .await?
+            .standardize()
+            .ok_or(ProviderError {
+                code: ProviderErrorCode::NoResult,
+                provider: "soda".to_owned(),
+                message: format!("album list no result"),
+                retryable: false,
+                action: Some("standardize album list resp".to_owned()),
+                raw_message: None,
+            })
     }
 
     async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
-        self.client.album_detail(id).await?.standardize().ok_or(ProviderError {
-            code: ProviderErrorCode::NoResult,
-            provider: "soda".to_owned(),
-            message: format!("album list no result"),
-            retryable: false,
-            action: Some("standardize album list resp".to_owned()),
-            raw_message: None,
-        })
+        self.client
+            .album_detail(id)
+            .await?
+            .standardize()
+            .ok_or(ProviderError {
+                code: ProviderErrorCode::NoResult,
+                provider: "soda".to_owned(),
+                message: format!("album list no result"),
+                retryable: false,
+                action: Some("standardize album list resp".to_owned()),
+                raw_message: None,
+            })
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {

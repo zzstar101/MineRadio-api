@@ -214,7 +214,6 @@ struct BitRate {
     quality: String,
 }
 
-
 #[derive(Deserialize)]
 struct LabelInfo {
     only_vip_playable: Option<bool>,

@@ -6,7 +6,10 @@ use reqwest::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::providers::{ProviderResult, error::{ProviderError, ProviderErrorCode}};
+use crate::providers::{
+    ProviderResult,
+    error::{ProviderError, ProviderErrorCode},
+};
 use crate::services::auth_session;
 
 use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaSearchResp};
