@@ -7,6 +7,7 @@ use reqwest::{
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
 };
 use rquickjs::{CatchResultExt, Context as JsContext, Function, Runtime};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
@@ -14,7 +15,7 @@ use crate::{
     providers::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
-        qq::model::QQSearchResp,
+        qq::model::{QqAlbumDetailResp, QqAlbumFavoritesResp, QqSearchResp},
     },
     services::auth_session,
 };
@@ -84,7 +85,7 @@ impl QqClient {
         })
     }
 
-    pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QQSearchResp> {
+    pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QqSearchResp> {
         let url = "https://shc.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
         let query = [
             ("format", "json".to_owned()),
@@ -410,53 +411,57 @@ impl QqClient {
         .await
     }
 
-    pub async fn album_list(&self) -> ProviderResult<Value> {
+    pub(super) async fn album_list(&self) -> ProviderResult<QqAlbumFavoritesResp> {
         let euin = self.euin().await.unwrap_or_default();
-        self.post_json(
-            "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            &json!({
-                "req_0": {
-                    "method": "CgiGetAlbumFavInfo",
-                    "module": "music.musicasset.AlbumFavRead",
-                    "param": {
-                        "euin": euin,
-                        "offset": 0,
-                        "size": 48
-                    }
+        let body = json!({
+            "req_0": {
+                "method": "CgiGetAlbumFavInfo",
+                "module": "music.musicasset.AlbumFavRead",
+                "param": {
+                    "euin": euin,
+                    "offset": 0,
+                    "size": 48
                 }
-            }),
+            }
+        });
+        let cookie = self.current_cookie().await;
+        self.get_model(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            &body,
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
+            cookie.as_deref(),
             None,
+            "album_list",
         )
         .await
     }
 
-    pub async fn album_detail(&self, mid: &str) -> ProviderResult<Value> {
-        self.post_json(
+    pub(super) async fn album_detail(&self, mid: &str) -> ProviderResult<QqAlbumDetailResp> {
+        let body = json!({
+            "req_0": {
+                "module": "music.musichallAlbum.AlbumSongList",
+                "method": "GetAlbumSongList",
+                "param": {
+                    "albumMid": mid,
+                    "begin": 0,
+                    "num": 1000,
+                    "order": 2
+                }
+            },
+            "req_1": {
+                "module": "music.musichallAlbum.AlbumInfoServer",
+                "method": "GetAlbumDetail",
+                "param": { "albumMid": mid }
+            }
+        });
+        let cookie = self.current_cookie().await;
+        self.get_model(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
-           &json!({
-                    "req_0": {
-                        "module": "music.musichallAlbum.AlbumSongList",
-                        "method": "GetAlbumSongList",
-                        "param": {
-                        "albumMid": mid,
-                            "begin": 0,
-                            "num": 1000,
-                            "order": 2
-                        }
-                    },
-                    "req_1": {
-                        "module": "music.musichallAlbum.AlbumInfoServer",
-                        "method": "GetAlbumDetail",
-                        "param": {
-                            "albumMid": mid
-                        }
-                    }
-                }),
-       Some("https://y.qq.com/"),
-        self.current_cookie().await.as_deref(),
+            &body,
+            Some("https://y.qq.com/"),
+            cookie.as_deref(),
             None,
+            "album_detail",
         )
         .await
     }
@@ -575,6 +580,52 @@ impl QqClient {
             .map_err(unavailable)?;
 
         serde_json::from_str(&text).map_err(internal)
+    }
+
+    async fn get_model<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        body: &Value,
+        referer: Option<&str>,
+        cookie: Option<&str>,
+        content_type: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let headers = build_headers(referer, cookie, true)?;
+        let mut request = self.http.post(url).headers(headers);
+        if let Some(content_type) = content_type {
+            request = request.header(CONTENT_TYPE, content_type);
+        }
+        let response = request
+            .json(body)
+            .send()
+            .await
+            .context("send qq upstream post request")
+            .map_err(unavailable)?;
+        let status = response.status();
+        let raw = response
+            .bytes()
+            .await
+            .context("read qq upstream response")
+            .map_err(unavailable)?;
+        if !status.is_success() {
+            return Err(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                provider: "qq".to_owned(),
+                message: format!("qq {action} upstream returned HTTP {}", status.as_u16()),
+                retryable: status.is_server_error(),
+                action: Some(action.to_owned()),
+                raw_message: Some(String::from_utf8_lossy(&raw).into_owned()),
+            });
+        }
+        serde_json::from_slice(&raw).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "qq".to_owned(),
+            message: format!("decode qq {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&raw).into_owned()),
+        })
     }
 }
 

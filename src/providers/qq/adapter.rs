@@ -10,9 +10,9 @@ use crate::{
     },
     services::auth_session,
     types::{
-        LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId,
-        ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
-        TrackQualityOption,
+        AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
+        TrackQualityAvailability, TrackQualityOption,
     },
 };
 
@@ -295,6 +295,14 @@ impl ProviderAdapter for QqAdapter {
         };
 
         Ok(map_qq_playlist_to_detail(Some(first), Some(id)))
+    }
+
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
+        Ok(self.client.album_list().await?.standardize())
+    }
+
+    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+        Ok(self.client.album_detail(id).await?.standardize())
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -1292,7 +1300,6 @@ mod tests {
         qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction, read_playlist_list,
     };
     use crate::{providers::error::ProviderErrorCode, types::PlaylistSummary};
-
 
     #[test]
     fn read_playlist_list_supports_multiple_shapes() {
