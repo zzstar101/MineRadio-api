@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
+use futures::future::join_all;
+
 use crate::{
     providers::{
         ProviderAdapter,
@@ -131,17 +133,22 @@ impl CrossSourceResolver {
         let mut ranked = Vec::new();
         let mut first_error: Option<anyhow::Error> = None;
 
-        for (provider_index, provider_id) in provider_order.iter().enumerate() {
-            let Some(adapter) = self.provider(provider_id) else {
-                continue;
-            };
-            match adapter
-                .search(
-                    &query.keyword,
-                    merged_provider_limit(provider_id, query.limit),
-                )
-                .await
-            {
+        let searches =
+            provider_order
+                .iter()
+                .enumerate()
+                .filter_map(|(provider_index, provider_id)| {
+                    let adapter = self.provider(provider_id)?;
+                    let keyword = query.keyword.clone();
+                    let limit = merged_provider_limit(provider_id, query.limit);
+                    Some(async move {
+                        let result = adapter.search(&keyword, limit).await;
+                        (provider_index, result)
+                    })
+                });
+
+        for (provider_index, result) in join_all(searches).await {
+            match result {
                 Ok(tracks) => {
                     ranked.extend(tracks.into_iter().enumerate().map(|(source_index, track)| {
                         RankedTrack {
@@ -536,7 +543,11 @@ mod tests {
         },
     };
     use async_trait::async_trait;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+    use tokio::{sync::Barrier, time::timeout};
 
     type Calls = Arc<Mutex<Vec<String>>>;
 
@@ -546,6 +557,7 @@ mod tests {
         calls: Calls,
         search_result: Vec<Track>,
         search_error: Option<ProviderError>,
+        search_barrier: Option<Arc<Barrier>>,
         song_url_result: Option<SongUrlResult>,
         song_url_error: Option<ProviderError>,
     }
@@ -557,6 +569,7 @@ mod tests {
                 calls,
                 search_result: Vec::new(),
                 search_error: None,
+                search_barrier: None,
                 song_url_result: None,
                 song_url_error: None,
             }
@@ -569,6 +582,11 @@ mod tests {
 
         fn with_search_error(mut self, code: ProviderErrorCode, message: &str) -> Self {
             self.search_error = Some(provider_error(&self.id, code, message, false));
+            self
+        }
+
+        fn with_search_barrier(mut self, search_barrier: Arc<Barrier>) -> Self {
+            self.search_barrier = Some(search_barrier);
             self
         }
 
@@ -618,6 +636,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("{}:search:{keyword}:{limit}", self.id));
+            if let Some(search_barrier) = &self.search_barrier {
+                search_barrier.wait().await;
+            }
             if let Some(err) = &self.search_error {
                 return Err(err.clone());
             }
@@ -798,6 +819,37 @@ mod tests {
             .map(|track| format!("{}:{}", track.provider, track.id))
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["qq:q-1", "netease:n-1", "qq:same"]);
+    }
+
+    #[tokio::test]
+    async fn resolve_search_without_provider_starts_all_provider_searches_concurrently() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let search_barrier = Arc::new(Barrier::new(2));
+        let resolver = resolver(
+            vec![
+                MockProvider::new("netease", Arc::clone(&calls))
+                    .with_search(vec![track("netease", "n-1", "夜航", &["星野"])])
+                    .with_search_barrier(Arc::clone(&search_barrier)),
+                MockProvider::new("qq", Arc::clone(&calls))
+                    .with_search(vec![track("qq", "q-1", "夜航", &["星野"])])
+                    .with_search_barrier(search_barrier),
+            ],
+            vec!["netease", "qq"],
+        );
+
+        let result = timeout(
+            Duration::from_secs(1),
+            resolver.resolve_search(ResolveSearchQuery {
+                keyword: "夜航".to_owned(),
+                provider: None,
+                limit: 2,
+            }),
+        )
+        .await
+        .expect("concurrent searches should reach the barrier")
+        .unwrap();
+
+        assert_eq!(result.len(), 2);
     }
 
     #[tokio::test]
