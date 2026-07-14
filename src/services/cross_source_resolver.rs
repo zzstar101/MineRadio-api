@@ -1,6 +1,12 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+    time::Instant,
+};
 
 use futures::future::join_all;
+use regex::Regex;
 
 use crate::{
     providers::{
@@ -12,6 +18,31 @@ use crate::{
 };
 
 pub type ProviderMap = HashMap<ProviderId, Arc<dyn ProviderAdapter>>;
+
+static BRACKETED_TEXT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[(（\[【].*?[)）\]】]").expect("valid bracket regex"));
+static SEARCH_SEPARATOR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"[\s·、，。!！?？“”‘’|\-_/]+"#).expect("valid separator regex"));
+static DERIVATIVE_QUERY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(live|现场|翻唱|cover|伴奏|instrumental|remix|dj|片段|demo|女声|男声|karaoke)")
+        .expect("valid derivative query regex")
+});
+static JAY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"周杰伦|周杰倫|jay\s*chou").expect("valid jay regex"));
+static JAY_CASE_INSENSITIVE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)周杰伦|周杰倫|jay\s*chou").expect("valid jay regex"));
+static LIVE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(live|现场)").expect("valid live regex"));
+static QQ_SEARCH_INTENT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^|\s)qq($|\s)|qq音乐|qq音樂|周杰伦|周杰倫|jay\s*chou|jay")
+        .expect("valid qq search intent regex")
+});
+static DERIVATIVE_RESULT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(翻唱|cover|伴奏|instrumental|remix|片段|demo|女声|男声|karaoke|完整版\s*cover|抖音版|dj版|合唱版|改编版|赵露思版|超燃|硬曲|剪辑|二创|tribute|made\s*famous\s*by)",
+    )
+    .expect("valid derivative result regex")
+});
 
 #[derive(Default)]
 pub struct CrossSourceResolverDeps {
@@ -132,6 +163,7 @@ impl CrossSourceResolver {
         let provider_order = self.provider_order();
         let mut ranked = Vec::new();
         let mut first_error: Option<anyhow::Error> = None;
+        let request_started = Instant::now();
 
         let searches =
             provider_order
@@ -147,7 +179,12 @@ impl CrossSourceResolver {
                     })
                 });
 
-        for (provider_index, result) in join_all(searches).await {
+        let search_results = join_all(searches).await;
+        let request_elapsed_ms = request_started.elapsed().as_millis();
+        eprintln!("[cross-search] request_elapsed_ms={request_elapsed_ms}");
+
+        let scoring_started = Instant::now();
+        for (provider_index, result) in search_results {
             match result {
                 Ok(tracks) => {
                     ranked.extend(tracks.into_iter().enumerate().map(|(source_index, track)| {
@@ -187,6 +224,11 @@ impl CrossSourceResolver {
             .take(merged_result_limit(query.limit) as usize)
             .map(|entry| entry.track)
             .collect::<Vec<_>>();
+        eprintln!(
+            "[cross-search] scoring_elapsed_ms={} total_elapsed_ms={}",
+            scoring_started.elapsed().as_millis(),
+            request_started.elapsed().as_millis(),
+        );
         if !merged.is_empty() {
             return Ok(merged);
         }
@@ -274,11 +316,8 @@ fn build_switch_keyword(track: &Track) -> String {
 
 fn normalize_search_text(value: &str) -> String {
     let lower = value.to_lowercase();
-    let without_brackets = regex::Regex::new(r"[锛?銆怽\[].*?[锛?銆慭\]]")
-        .unwrap()
-        .replace_all(&lower, "");
-    regex::Regex::new(r#"[\s路銉?锛屻€?!锛?锛?"鈥溾€濃€樷€檤\-_/]+"#)
-        .unwrap()
+    let without_brackets = BRACKETED_TEXT_RE.replace_all(&lower, "");
+    SEARCH_SEPARATOR_RE
         .replace_all(&without_brackets, "")
         .to_string()
 }
@@ -295,11 +334,7 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
         track.album
     )
     .to_lowercase();
-    let asks_derivative = regex::Regex::new(
-        r"(?i)(live|鐜板満|缈诲敱|cover|浼村|instrumental|remix|dj|鐗囨|demo|濂冲０|鐢峰０|karaoke)",
-    )
-    .unwrap()
-    .is_match(keyword);
+    let asks_derivative = DERIVATIVE_QUERY_RE.is_match(keyword);
     let derivative = search_looks_like_derivative(&raw);
     let artist_mentioned = search_mentions_known_artist(keyword, &track.artists.join(" "));
     let original_artists = canonical_original_artists_for_search(keyword, track);
@@ -344,11 +379,7 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
     if artist_mentioned && !title.is_empty() && q.contains(&title) {
         score += 34.0;
     }
-    if regex::Regex::new(r"(?i)鍛ㄦ澃浼鍛ㄦ澃鍊珅jay\s*chou")
-        .unwrap()
-        .is_match(keyword)
-        && !artist_mentioned
-    {
+    if JAY_CASE_INSENSITIVE_RE.is_match(keyword) && !artist_mentioned {
         score -= 28.0;
     }
     if !album.is_empty() && (album.contains(&q) || q.contains(&album)) {
@@ -371,10 +402,7 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
         if derivative {
             score -= if artist_mentioned { 76.0 } else { 96.0 };
         }
-        if regex::Regex::new(r"(?i)(live|鐜板満)")
-            .unwrap()
-            .is_match(&raw)
-        {
+        if LIVE_RE.is_match(&raw) {
             score -= if artist_mentioned { 28.0 } else { 42.0 };
         }
         if !original_artists.is_empty()
@@ -413,9 +441,7 @@ fn merged_result_limit(requested_limit: u32) -> u32 {
 }
 
 fn search_intent_prefers_qq(keyword: &str) -> bool {
-    regex::Regex::new(r"(?i)(^|\s)qq($|\s)|qq闊充箰|qq闊虫▊|鍛ㄦ澃浼鍛ㄦ澃鍊珅jay\s*chou|jay")
-        .unwrap()
-        .is_match(&keyword.to_lowercase())
+    QQ_SEARCH_INTENT_RE.is_match(&keyword.to_lowercase())
 }
 
 fn search_mentions_known_artist(keyword: &str, artist: &str) -> bool {
@@ -424,8 +450,7 @@ fn search_mentions_known_artist(keyword: &str, artist: &str) -> bool {
     if raw_artist.is_empty() {
         return false;
     }
-    let jay = regex::Regex::new(r"鍛ㄦ澃浼鍛ㄦ澃鍊珅jay\s*chou").unwrap();
-    if jay.is_match(&raw_q) && jay.is_match(&raw_artist) {
+    if JAY_RE.is_match(&raw_q) && JAY_RE.is_match(&raw_artist) {
         return true;
     }
     let q = normalize_search_text(keyword);
@@ -434,11 +459,7 @@ fn search_mentions_known_artist(keyword: &str, artist: &str) -> bool {
 }
 
 fn search_looks_like_derivative(text: &str) -> bool {
-    regex::Regex::new(
-        r"(?i)(缈诲敱|cover|浼村|instrumental|remix|鐗囨|demo|濂冲０|鐢峰０|karaoke|瀹屾暣鐗圽s*cover|鎶栭煶鐗坾dj鐗坾鍚堝敱鐗坾鏀圭紪鐗坾璧甸湶鎬濈増|瓒呯噧|纭洸|鍓緫|浜屽垱|tribute|made\s*famous\s*by)",
-    )
-    .unwrap()
-    .is_match(text)
+    DERIVATIVE_RESULT_RE.is_match(text)
 }
 
 fn canonical_original_artists_for_search(keyword: &str, track: &Track) -> Vec<String> {
@@ -446,7 +467,7 @@ fn canonical_original_artists_for_search(keyword: &str, track: &Track) -> Vec<St
     let title = normalize_search_text(&track.title);
     let joined = format!("{q} {title}");
     let rules = [
-        (vec!["鏃ヨ惤澶ч亾"], vec!["姊佸崥"]),
+        (vec!["日落大道"], vec!["梁博"]),
         (
             vec!["beautyandabeat", "beauty and a beat"],
             vec!["justin bieber", "nicki minaj"],
