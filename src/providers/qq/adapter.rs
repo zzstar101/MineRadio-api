@@ -49,17 +49,12 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
-        let list = match self.client.search(keyword, limit).await {
-            Ok(body) => {
-                let list = read_search_list(&body);
-                if list.is_empty() {
-                    self.client.smartbox_search(keyword, limit).await?
-                } else {
-                    list
-                }
-            }
-            Err(_) => self.client.smartbox_search(keyword, limit).await?,
-        };
+        let tracks = self.client.search(keyword, limit).await?.standardize();
+        if !tracks.is_empty() {
+            return Ok(tracks);
+        }
+
+        let list = self.client.smartbox_search(keyword, limit).await?;
         Ok(list.iter().map(map_qq_song_to_track).collect())
     }
 

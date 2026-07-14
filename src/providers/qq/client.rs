@@ -13,6 +13,7 @@ use crate::{
     providers::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
+        qq::model::QQSearchResp,
     },
     services::auth_session,
 };
@@ -56,23 +57,44 @@ impl QqClient {
         })
     }
 
-    pub async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Value> {
-        let url = "http://c.y.qq.com/soso/fcgi-bin/client_search_cp";
-        self.get_json(
-            url,
-            &[
-                ("format", "json".to_owned()),
-                ("n", limit.to_string()),
-                ("p", "1".to_owned()),
-                ("w", keyword.to_owned()),
-                ("cr", "1".to_owned()),
-                ("g_tk", "5381".to_owned()),
-                ("t", "0".to_owned()),
-            ],
-            Some("https://y.qq.com"),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
+    pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QQSearchResp> {
+        let url = "https://shc.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
+        let query = [
+            ("format", "json".to_owned()),
+            ("n", limit.to_string()),
+            ("p", "1".to_owned()),
+            ("w", keyword.to_owned()),
+            ("cr", "1".to_owned()),
+            ("g_tk", "5381".to_owned()),
+            ("t", "0".to_owned()),
+        ];
+        let response = self
+            .http
+            .get(url)
+            .query(&query)
+            .headers(build_headers(
+                Some("https://y.qq.com"),
+                self.current_cookie().await.as_deref(),
+                false,
+            )?)
+            .send()
+            .await
+            .context("send qq search request")
+            .map_err(unavailable)?;
+        let body = response
+            .bytes()
+            .await
+            .context("read qq search response")
+            .map_err(unavailable)?;
+
+        serde_json::from_slice(&body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "qq".to_owned(),
+            message: format!("decode qq search response: {err}"),
+            retryable: false,
+            action: Some("search".to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
+        })
     }
 
     pub async fn smartbox_search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Value>> {
