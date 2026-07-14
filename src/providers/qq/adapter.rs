@@ -436,18 +436,6 @@ fn normalize_request_quality(requested: &str) -> String {
     }
 }
 
-fn read_search_list(body: &Value) -> Vec<Value> {
-    body.get("data")
-        .and_then(|value| value.get("song"))
-        .and_then(|value| value.get("list"))
-        .or_else(|| body.get("data").and_then(|value| value.get("list")))
-        .or_else(|| body.get("song").and_then(|value| value.get("list")))
-        .or_else(|| body.get("list"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn read_playlist_list(body: &Value) -> Vec<&Value> {
     body.get("list")
         .and_then(Value::as_array)
@@ -1340,23 +1328,9 @@ mod tests {
     use super::{
         is_favorite_playlist, is_qzone_background_playlist, map_qq_login_status,
         qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction, read_playlist_list,
-        read_search_list,
     };
     use crate::{providers::error::ProviderErrorCode, types::PlaylistSummary};
 
-    #[test]
-    fn read_search_list_prefers_nested_song_list() {
-        let body = json!({
-            "data": {
-                "song": {
-                    "list": [{ "mid": "abc" }]
-                }
-            }
-        });
-        let list = read_search_list(&body);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["mid"], "abc");
-    }
 
     #[test]
     fn read_playlist_list_supports_multiple_shapes() {
