@@ -3,13 +3,13 @@ use reqwest::{
     Client,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue},
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::providers::{
-    ProviderResult,
-    error::{ProviderError, ProviderErrorCode},
-};
+use crate::providers::{ProviderResult, error::{ProviderError, ProviderErrorCode}};
 use crate::services::auth_session;
+
+use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaSearchResp};
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
 const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=track&queue_type=&aid=386088&iid=27960026095955";
@@ -39,11 +39,15 @@ impl SodaClient {
         auth_session::get_provider_cookie("soda").await
     }
 
-    pub async fn search(&self, keyword: &str) -> ProviderResult<Value> {
+    pub(super) async fn search(&self, keyword: &str) -> ProviderResult<SodaSearchResp> {
         let mut url = reqwest::Url::parse(SEARCH_URL).map_err(internal_error)?;
         url.query_pairs_mut().append_pair("q", keyword);
-        self.get_json(url.to_string(), self.current_cookie().await.as_deref())
-            .await
+        self.get_model(
+            url.to_string(),
+            self.current_cookie().await.as_deref(),
+            "search",
+        )
+        .await
     }
 
     pub async fn song_url(&self, track_id: &str) -> ProviderResult<Value> {
@@ -103,17 +107,22 @@ impl SodaClient {
         Ok(first)
     }
 
-    pub async fn album_list(&self) -> ProviderResult<Value> {
-        self.get_json(
+    pub(super) async fn album_list(&self) -> ProviderResult<SodaAlbumListResp> {
+        self.get_model(
             ALBUM_LIST_URL.to_owned(),
             self.current_cookie().await.as_deref(),
+            "album_list",
         )
         .await
     }
 
-    pub async fn album_detail(&self, id: &str) -> ProviderResult<Value> {
-        self.get_json(ALBUM_DETAIL_URL.replace("AID", id), None)
-            .await
+    pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<SodaAlbumDetailResp> {
+        self.get_model(
+            ALBUM_DETAIL_URL.replace("AID", id),
+            self.current_cookie().await.as_deref(),
+            "album_detail",
+        )
+        .await
     }
 
     pub async fn login_status(&self) -> ProviderResult<Value> {
@@ -204,6 +213,50 @@ impl SodaClient {
             .await
             .context("parse soda upstream response")
             .map_err(unavailable_error)
+    }
+
+    async fn get_model<T: DeserializeOwned>(
+        &self,
+        url: String,
+        cookie: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let mut headers = HeaderMap::new();
+        if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
+            headers.insert(COOKIE, header_value(cookie)?);
+        }
+        let response = self
+            .http
+            .get(url)
+            .headers(headers)
+            .send()
+            .await
+            .context("send soda upstream request")
+            .map_err(unavailable_error)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                provider: "soda".to_owned(),
+                message: format!("soda upstream http {}", status.as_u16()),
+                retryable: false,
+                action: None,
+                raw_message: None,
+            });
+        }
+        let body = response
+            .bytes()
+            .await
+            .context("read soda upstream response")
+            .map_err(unavailable_error)?;
+        serde_json::from_slice(&body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "soda".to_owned(),
+            message: format!("decode soda {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
+        })
     }
 }
 

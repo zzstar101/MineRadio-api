@@ -10,8 +10,8 @@ use crate::{
     },
     services::auth_session,
     types::{
-        LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
-        SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
+        AlbumDetail, AlbumSummary, LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId,
+        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
         TrackQualityAvailability, TrackQualityOption,
     },
 };
@@ -19,8 +19,7 @@ use crate::{
 use super::{
     client::SodaClient,
     map::{
-        map_soda_lyric_to_payload, map_soda_playlist_detail_to_detail,
-        map_soda_playlist_to_summary, map_soda_song_to_track,
+        map_soda_lyric_to_payload, map_soda_playlist_detail_to_detail, map_soda_playlist_to_summary,
     },
 };
 
@@ -91,32 +90,22 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
-        let body = self.client.search(keyword).await?;
-        let tracks = body
-            .get("result_groups")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .flat_map(|group| {
-                group
-                    .get("data")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
+        self.client
+            .search(keyword)
+            .await?
+            .standardize()
+            .map(|mut v| {
+                v.truncate(limit as usize);
+                v
             })
-            .filter_map(|item| {
-                let meta = item.get("meta")?;
-                if meta.get("item_type").and_then(Value::as_str) != Some("track") {
-                    return None;
-                }
-                item.get("entity")
-                    .and_then(|entity| entity.get("track"))
-                    .cloned()
+            .ok_or(ProviderError {
+                code: ProviderErrorCode::NoResult,
+                provider: "soda".to_owned(),
+                message: format!("search no result"),
+                retryable: false,
+                action: Some("standardize search resp".to_owned()),
+                raw_message: None,
             })
-            .take(limit as usize)
-            .map(|item| map_soda_song_to_track(&item))
-            .collect();
-        Ok(tracks)
     }
 
     async fn song_url(
@@ -214,6 +203,28 @@ impl ProviderAdapter for SodaAdapter {
     async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
         let body = self.client.playlist_detail(id).await?;
         Ok(map_soda_playlist_detail_to_detail(Some(&body), Some(id)))
+    }
+
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
+        self.client.album_list().await?.standardize().ok_or(ProviderError {
+            code: ProviderErrorCode::NoResult,
+            provider: "soda".to_owned(),
+            message: format!("album list no result"),
+            retryable: false,
+            action: Some("standardize album list resp".to_owned()),
+            raw_message: None,
+        })
+    }
+
+    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+        self.client.album_detail(id).await?.standardize().ok_or(ProviderError {
+            code: ProviderErrorCode::NoResult,
+            provider: "soda".to_owned(),
+            message: format!("album list no result"),
+            retryable: false,
+            action: Some("standardize album list resp".to_owned()),
+            raw_message: None,
+        })
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
