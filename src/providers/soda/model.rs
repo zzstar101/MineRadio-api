@@ -141,11 +141,9 @@ pub(super) struct SodaTrack {
     artists: Vec<Artist>,
     duration: u64,
     name: String,
-    state: TrackState,
+    //state: TrackState,
     label_info: LabelInfo,
     bit_rates: Vec<BitRate>,
-    vocal: i64,
-    playable_range: PlayableRange,
 }
 
 impl SodaTrack {
@@ -178,11 +176,8 @@ impl SodaTrack {
 
 #[derive(Deserialize)]
 struct TrackAlbum {
-    id: String,
     name: String,
     url_cover: SodaUrl,
-    #[serde(default)]
-    count_tracks: u32,
 }
 
 #[derive(Deserialize)]
@@ -216,37 +211,19 @@ struct Artist {
 
 #[derive(Deserialize)]
 struct BitRate {
-    br: i64,
-    size: i64,
     quality: String,
 }
 
-#[derive(Deserialize)]
-struct PlayableRange {
-    duration: i64,
-    start: i64,
-}
 
 #[derive(Deserialize)]
 struct LabelInfo {
-    only_vip_download: Option<bool>,
     only_vip_playable: Option<bool>,
-    quality_only_vip_can_download: Vec<String>,
-    quality_only_vip_can_play: Vec<String>,
 }
 
-#[derive(Deserialize)]
-struct Preview {
-    duration: i64,
-    start: Option<i64>,
-    vid: String,
-    bit_rates: Vec<BitRate>,
-}
-
-#[derive(Deserialize)]
+/*#[derive(Deserialize)]
 struct TrackState {
     is_collected: Option<bool>,
-}
+}*/
 
 #[derive(Deserialize)]
 struct AlbumState {
