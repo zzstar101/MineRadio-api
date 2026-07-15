@@ -71,9 +71,13 @@ impl QqClient {
         }
 
         let cookie = self.current_cookie().await?;
-        let euin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
-        self.set_euin(euin.clone()).await;
-        Some(euin)
+        let uin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
+
+        let _ = self.login_status_with_cookie(&uin, &cookie).await;
+        if let Some(euin) = self.euin.read().await.clone() {
+            return Some(euin);
+        }
+        None
     }
 
     async fn set_euin(&self, euin: String) {
