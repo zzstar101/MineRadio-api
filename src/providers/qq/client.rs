@@ -15,7 +15,7 @@ use crate::{
     providers::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
-        qq::model::{QqAlbumDetailResp, QqAlbumFavoritesResp, QqSearchResp},
+        qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqSearchResp},
     },
     services::auth_session,
 };
@@ -102,7 +102,10 @@ impl QqClient {
                 .globals()
                 .get::<_, Function>("get_sign")
                 .map_err(internal_error)?;
-            get_sign.call((data,)).catch(&context).map_err(internal_error)
+            get_sign
+                .call((data,))
+                .catch(&context)
+                .map_err(internal_error)
         })
     }
 
@@ -432,7 +435,7 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn album_list(&self) -> ProviderResult<QqAlbumFavoritesResp> {
+    pub(super) async fn album_list(&self) -> ProviderResult<QqAlbumListResp> {
         let euin = self.euin().await.unwrap_or_default();
         let body = json!({
             "req_0": {

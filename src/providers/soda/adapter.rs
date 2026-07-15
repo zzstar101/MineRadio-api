@@ -90,22 +90,9 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
-        self.client
-            .search(keyword)
-            .await?
-            .standardize()
-            .map(|mut v| {
-                v.truncate(limit as usize);
-                v
-            })
-            .ok_or(ProviderError {
-                code: ProviderErrorCode::NoResult,
-                provider: "soda".to_owned(),
-                message: format!("search no result"),
-                retryable: false,
-                action: Some("standardize search resp".to_owned()),
-                raw_message: None,
-            })
+        let mut t = self.client.search(keyword).await?.standardize();
+        t.truncate(limit as usize);
+        Ok(t)
     }
 
     async fn song_url(
@@ -206,33 +193,11 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
-        self.client
-            .album_list()
-            .await?
-            .standardize()
-            .ok_or(ProviderError {
-                code: ProviderErrorCode::NoResult,
-                provider: "soda".to_owned(),
-                message: format!("album list no result"),
-                retryable: false,
-                action: Some("standardize album list resp".to_owned()),
-                raw_message: None,
-            })
+        Ok(self.client.album_list().await?.standardize())
     }
 
     async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
-        self.client
-            .album_detail(id)
-            .await?
-            .standardize()
-            .ok_or(ProviderError {
-                code: ProviderErrorCode::NoResult,
-                provider: "soda".to_owned(),
-                message: format!("album list no result"),
-                retryable: false,
-                action: Some("standardize album list resp".to_owned()),
-                raw_message: None,
-            })
+        Ok(self.client.album_detail(id).await?.standardize())
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {

@@ -191,14 +191,14 @@ struct QqAlbumDetailArtists {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct QqAlbumFavoritesResp {
+pub(super) struct QqAlbumListResp {
     #[serde(rename = "req_0")]
-    favorites: QqAlbumFavoritesResponse,
+    list: QqAlbumListResponse,
 }
 
-impl QqAlbumFavoritesResp {
+impl QqAlbumListResp {
     pub(super) fn standardize(self) -> Vec<AlbumSummary> {
-        self.favorites
+        self.list
             .data
             .albums
             .into_iter()
@@ -219,12 +219,12 @@ impl QqAlbumFavoritesResp {
 }
 
 #[derive(Debug, Deserialize)]
-struct QqAlbumFavoritesResponse {
-    data: QqAlbumFavoritesData,
+struct QqAlbumListResponse {
+    data: QqAlbumListData,
 }
 
 #[derive(Debug, Deserialize)]
-struct QqAlbumFavoritesData {
+struct QqAlbumListData {
     //number: i64,
     //hasmore: i64,
     #[serde(rename = "v_list")]

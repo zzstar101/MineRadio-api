@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::types::{AlbumDetail, AlbumSummary, Track};
 
@@ -13,17 +13,20 @@ pub(super) struct NeteaseAlbumListResp {
 
 impl NeteaseAlbumListResp {
     pub(super) fn standardize(self) -> Vec<AlbumSummary> {
-        self
-        .data
-        .into_iter()
-        .map(|a| {
-            AlbumSummary { provider: "netease".to_owned(),
-            id: a.id.to_string(), name: a.name, cover_url: a.pic_url, track_count: a.size, track_ids: vec![], subscribed: Some(true) }
-        })
-        .collect()
+        self.data
+            .into_iter()
+            .map(|a| AlbumSummary {
+                provider: "netease".to_owned(),
+                id: a.id.to_string(),
+                name: a.name,
+                cover_url: a.pic_url,
+                track_count: a.size,
+                track_ids: vec![],
+                subscribed: Some(true),
+            })
+            .collect()
     }
 }
-
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,28 +39,38 @@ impl NeteaseAlbumDetailResp {
     pub(super) fn standardize(self) -> AlbumDetail {
         let a = self.album;
         let mut track_ids = Vec::new();
-        let tracks :Vec<Track> = self
-        .songs
-        .into_iter()
-        .map(|t| {
-            track_ids.push(t.id.to_string());
-            Track {
-                id: t.id.to_string(),
-                provider: "netease".to_owned(),
-                source_id: t.id.to_string(),
-                media_mid: None,
-                title: t.name,
-                artists: t.ar.into_iter().map(|a| a.name).collect(),
-                album: a.name.clone(),
-                cover_url: a.pic_url.clone(),
-                quality_hints: vec!["standard".to_owned()],
-                duration_ms: t.dt,
-                playable_state: get_playable(t.fee),
-                artwork_url: None,
-            }
-        })
-        .collect();
-        AlbumDetail { provider: "netease".to_owned(), id: a.id.to_string(), name: a.name, singer: a.artists.into_iter().map(|a| a.name).collect(), cover_url: a.pic_url, track_count: a.size, track_ids, subscribed: Some(false), tracks }
+        let tracks: Vec<Track> = self
+            .songs
+            .into_iter()
+            .map(|t| {
+                track_ids.push(t.id.to_string());
+                Track {
+                    id: t.id.to_string(),
+                    provider: "netease".to_owned(),
+                    source_id: t.id.to_string(),
+                    media_mid: None,
+                    title: t.name,
+                    artists: t.ar.into_iter().map(|a| a.name).collect(),
+                    album: a.name.clone(),
+                    cover_url: a.pic_url.clone(),
+                    quality_hints: vec!["standard".to_owned()],
+                    duration_ms: t.dt,
+                    playable_state: get_playable(t.fee),
+                    artwork_url: None,
+                }
+            })
+            .collect();
+        AlbumDetail {
+            provider: "netease".to_owned(),
+            id: a.id.to_string(),
+            name: a.name,
+            singer: a.artists.into_iter().map(|a| a.name).collect(),
+            cover_url: a.pic_url,
+            track_count: a.size,
+            track_ids,
+            subscribed: Some(false),
+            tracks,
+        }
     }
 }
 
@@ -67,12 +80,10 @@ fn get_playable(fee: u8) -> String {
         1 => "VIP 歌曲",
         4 => "购买专辑",
         8 => "非会员可免费播放低音质，会员可播放高音质及下载",
-        _ => "unknown"
-    }.to_string()
+        _ => "unknown",
+    }
+    .to_string()
 }
-
-
-
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -124,7 +135,6 @@ pub struct FreeTrialPrivilege {
     free_limit_tag_type: Option<serde_json::Value>,
 }*/
 
-
 //reuseable
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +153,5 @@ struct Artist {
     img1_v1_id: f64,
     pic_url: String,
     id: i64,*/
-
     name: String,
 }
