@@ -603,13 +603,12 @@ These are the first routes worth checking in Rust because their TypeScript shape
 ## Suggested Rust Verification Order
 
 1. [ ] Global envelope and error shape
-2. [x] `/providers/{pid}/login-status`
-3. [ ] `/providers/{pid}/session-cookie`
-4. [ ] `/providers/{pid}/logout`
-5. [ ] `/providers/{pid}/qualities`
-6. [ ] `/providers/{pid}/lyric`
-7. [ ] `/discover/home`
-8. [ ] `/weather/radio`
-9. [ ] `/podcast/*`
-10. [ ] `/shared-playlist/import`
-11. [ ] Remaining search / playlist / mutation routes
+2. [ ] `/providers/{pid}/session-cookie`
+3. [ ] `/providers/{pid}/logout`
+4. [ ] `/providers/{pid}/qualities`
+5. [ ] `/providers/{pid}/lyric`
+6. [ ] `/discover/home`
+7. [ ] `/weather/radio`
+8. [ ] `/podcast/*`
+9. [ ] `/shared-playlist/import`
+10. [ ] Remaining search / playlist / mutation routes

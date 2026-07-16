@@ -1,4 +1,4 @@
-# Provider TS Audit
+# Remaining Provider TS Compatibility Gaps
 
 Source of truth:
 - TS root: `D:\project\Rust\Mineradio-Tauri\sidecars\api\src\providers`
@@ -10,27 +10,6 @@ Rule for this audit:
 - Fixes must follow TS provider `client`, `adapter`, and `map` behavior first, then adapt to Rust style.
 
 ## 1. Netease
-
-TS files:
-- `netease/hana-client.ts`
-- `netease/netease-adapter.ts`
-- `netease/map.ts`
-
-Rust files:
-- `netease/client.rs`
-- `netease/adapter.rs`
-- `netease/map.rs`
-
-Confirmed matches:
-- `normalizeProviderImageUrl` matches in `map.ts:29` and `map.rs:6`.
-- `mapPlayable` logic is materially aligned in `map.ts:36` and `map.rs:17`.
-- `mapHanaSongToTrack` basic field sources are aligned in `map.ts:54` and `map.rs:45`.
-- `loginStatus` now matches the TS VIP merge behavior.
-  - TS: `netease-adapter.ts:321`, `netease-adapter.ts:222`, `hana-client.ts:58`
-  - Rust: `adapter.rs`, `client.rs`
-  - Rust now calls the TS-equivalent `vipInfo` merge helper and returns `vipType`, `vipLevel`, `isVip`, `isSvip`, `vipLabel`, `vipIcon`, `vipIconUrl`, `vipTier`, `vipLevelName`.
-
-Confirmed mismatches:
 - `[ ]` Lyric line structure is not aligned.
   - TS: `map.ts:128`, `map.ts:182`
   - Rust: `map.rs:142`, `map.rs:197`
@@ -71,27 +50,6 @@ Confirmed mismatches:
   - Rust returns reduced variants only.
 
 ## 2. QQ
-
-TS files:
-- `qq/qq-client.ts`
-- `qq/qq-adapter.ts`
-- `qq/map.ts`
-
-Rust files:
-- `qq/client.rs`
-- `qq/adapter.rs`
-- `qq/map.rs`
-
-Confirmed matches:
-- `normalizeProviderImageUrl` matches in `map.ts:61` and `map.rs` top helper usage.
-- `mapQqSongToTrack` uses the same primary field sources for `id`, `mediaMid`, `album`, derived cover URL, and duration in `map.ts:68` and `map.rs:17`.
-- QQ playlist-detail fallback to the official playlist endpoint exists on both sides.
-- `loginStatus` now matches the TS candidate-merge and VIP badge behavior.
-  - TS: `qq-adapter.ts:424`, `qq-adapter.ts:464`, `qq-adapter.ts:549`, `qq-adapter.ts:1064`
-  - Rust: `adapter.rs`
-  - Rust now merges login/VIP/icon/base-info payloads and returns the TS VIP fields, including official badge icon fallback.
-
-Confirmed mismatches:
 - `[ ]` Default search path is different.
   - TS: `qq-adapter.ts:835` onward
   - Rust: `adapter.rs:50`
@@ -134,30 +92,6 @@ Confirmed mismatches:
   - Rust returns only `{ playlist_id, track_id }`.
 
 ## 3. Soda
-
-TS files:
-- `soda/soda-client.ts`
-- `soda/soda-adapter.ts`
-- `soda/map.ts`
-
-Rust files:
-- `soda/client.rs`
-- `soda/adapter.rs`
-- `soda/map.rs`
-
-Confirmed matches:
-- Client URL construction and playlist pagination are aligned between `soda-client.ts:116` and `client.rs:41`.
-- `readSodaSearchList`, `readSodaPlaylistList`, and playlist page merge behavior are materially aligned.
-- Soda login avatar now matches TS:
-  - TS: `soda-adapter.ts:263`
-  - Rust: `adapter.rs:409`
-  - Both now read `my_info.medium_avatar_url -> urls[0] || uri -> normalizeProviderImageUrl`.
-- Soda `loginStatus` now matches the TS VIP field behavior.
-  - TS: `soda-adapter.ts:270`
-  - Rust: `adapter.rs`
-  - Rust now returns `vipType`, `vipLevel`, `isVip`, `isSvip`, `vipLabel`, `vipLevelName`, and omits those fields when `loggedIn` is `false`.
-
-Confirmed mismatches:
 - `[ ]` Lyric line structure is not aligned.
   - TS: `map.ts:156`, `map.ts:244`
   - Rust: `map.rs:126`, `map.rs:172`
@@ -204,7 +138,6 @@ These are not guesses. They follow directly from the provider TS outputs above.
 1. `[ ]` Expand shared Rust types to the TS route contract.
 2. `[ ]` Fix all three provider `map` lyric payloads and line parsers.
 3. `[ ]` Fix all three provider playlist summary/detail mappers.
-4. `[x]` Fix provider login-status outputs: Netease, QQ, Soda.
-5. `[ ]` Fix provider song-url outputs: Netease, QQ, Soda.
-6. `[ ]` Fix provider qualities outputs: Netease, QQ, Soda.
-7. `[ ]` Fix mutation ack outputs where the TS providers already define them.
+4. `[ ]` Fix provider song-url outputs: Netease, QQ, Soda.
+5. `[ ]` Fix provider qualities outputs: Netease, QQ, Soda.
+6. `[ ]` Fix mutation ack outputs where the TS providers already define them.
