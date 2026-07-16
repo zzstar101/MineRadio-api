@@ -58,16 +58,6 @@ const SODA_PLAYBACK_QUALITY_OPTIONS: [SodaPlaybackQualityOption; 5] = [
     },
 ];
 
-#[derive(Clone, Debug)]
-struct SodaPlayInfoEntry {
-    key: String,
-    level: Option<String>,
-    quality: String,
-    play_url: String,
-    play_auth: String,
-    filename: Option<String>,
-}
-
 #[derive(Clone, Default)]
 pub struct SodaAdapter {
     client: Arc<SodaClient>,
@@ -101,52 +91,11 @@ impl ProviderAdapter for SodaAdapter {
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
         self.client.ensure_login().await?;
-        let requested = opts
-            .and_then(|value| value.quality)
-            .unwrap_or_else(|| "exhigh".to_owned());
-        let detail = self.client.song_url(&track.source_id).await?;
-        let info_url = detail
-            .get("track_player")
-            .and_then(|player| player.get("url_player_info"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        if info_url.is_empty() {
-            return Err(unavailable(format!(
-                "soda track {} missing url_player_info",
-                track.source_id
-            )));
-        }
-
-        let info_body = self.client.read_json_url(&info_url).await?;
-        let play_info_entries = read_soda_play_info_entries(&info_body);
-        let play_info = pick_soda_play_info_entry(&play_info_entries, Some(&requested))
-            .ok_or_else(|| {
-                unavailable(format!("soda track {} missing play info", track.source_id))
-            })?;
-        let mapped_quality = play_info.level.clone();
-        let quality = mapped_quality
-            .as_deref()
-            .map(|level| soda_quality_label(level, &play_info.quality))
-            .unwrap_or_else(|| play_info.quality.clone());
-
-        Ok(SongUrlResult {
-            url: Some(format!(
-                "/providers/soda/audio-proxy?url={}&playAuth={}",
-                urlencoding::encode(&play_info.play_url),
-                urlencoding::encode(&play_info.play_auth)
-            )),
-            proxied: true,
-            provider: Some("soda".to_owned()),
-            trial: Some(false),
-            playable: Some(true),
-            level: mapped_quality,
-            quality: Some(quality),
-            filename: play_info.filename.clone(),
-            expires_at: None,
-            ..Default::default()
-        })
+        self.client
+            .song_url(&track.source_id)
+            .await?
+            .standardize(opts.unwrap_or_default())
+            .ok_or_else(|| unavailable(format!("soda track {} missing play info", track.source_id)))
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
@@ -465,65 +414,6 @@ fn read_soda_quality_list(value: Option<&Value>) -> std::collections::HashSet<St
         .collect()
 }
 
-fn read_soda_play_info_entries(body: &Value) -> Vec<SodaPlayInfoEntry> {
-    let mut seen = std::collections::HashSet::new();
-    body.get("Result")
-        .and_then(|value| value.get("Data"))
-        .and_then(|value| value.get("PlayInfoList"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|play_info| {
-            let play_url = read_string(
-                play_info
-                    .get("MainPlayUrl")
-                    .or_else(|| play_info.get("BackupPlayUrl")),
-            );
-            let play_auth = read_string(play_info.get("PlayAuth"));
-            if play_url.is_empty() || play_auth.is_empty() {
-                return None;
-            }
-            let raw_quality = read_string(play_info.get("Quality"));
-            let level = map_soda_playback_quality(&raw_quality).map(str::to_owned);
-            let key = level
-                .clone()
-                .unwrap_or_else(|| raw_quality.trim().to_lowercase());
-            if key.is_empty() || !seen.insert(key.clone()) {
-                return None;
-            }
-            Some(SodaPlayInfoEntry {
-                key,
-                level,
-                quality: raw_quality,
-                play_url,
-                play_auth,
-                filename: play_info
-                    .get("FileID")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            })
-        })
-        .collect()
-}
-
-fn pick_soda_play_info_entry<'a>(
-    entries: &'a [SodaPlayInfoEntry],
-    requested: Option<&str>,
-) -> Option<&'a SodaPlayInfoEntry> {
-    if let Some(requested) = requested
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_lowercase)
-    {
-        if let Some(entry) = entries.iter().find(|entry| entry.key == requested) {
-            return Some(entry);
-        }
-    }
-    entries.first()
-}
-
 fn map_soda_playback_quality(raw: &str) -> Option<&'static str> {
     let text = raw.trim().to_lowercase();
     for option in SODA_PLAYBACK_QUALITY_OPTIONS {
@@ -671,62 +561,6 @@ fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> 
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn soda_play_info_keeps_unmapped_raw_quality() {
-        let body = json!({
-            "Result": {
-                "Data": {
-                    "PlayInfoList": [
-                        {
-                            "Quality": "m4a",
-                            "PlayAuth": "play-auth-1",
-                            "MainPlayUrl": "https://cdn.example.com/main.m4a",
-                            "FileID": "file-1"
-                        }
-                    ]
-                }
-            }
-        });
-
-        let entries = read_soda_play_info_entries(&body);
-        let entry = pick_soda_play_info_entry(&entries, Some("exhigh")).unwrap();
-
-        assert_eq!(entry.level, None);
-        assert_eq!(entry.quality, "m4a");
-        assert_eq!(entry.filename.as_deref(), Some("file-1"));
-    }
-
-    #[test]
-    fn soda_play_info_requested_quality_falls_back_to_first_entry() {
-        let body = json!({
-            "Result": {
-                "Data": {
-                    "PlayInfoList": [
-                        {
-                            "Quality": "standard",
-                            "PlayAuth": "play-auth-low",
-                            "MainPlayUrl": "https://cdn.example.com/low.m4a",
-                            "FileID": "low-file"
-                        },
-                        {
-                            "Quality": "exhigh",
-                            "PlayAuth": "play-auth-high",
-                            "BackupPlayUrl": "https://cdn.example.com/high.m4a",
-                            "FileID": "high-file"
-                        }
-                    ]
-                }
-            }
-        });
-
-        let entries = read_soda_play_info_entries(&body);
-        let entry = pick_soda_play_info_entry(&entries, Some("jymaster")).unwrap();
-
-        assert_eq!(entry.level.as_deref(), Some("standard"));
-        assert_eq!(entry.quality, "standard");
-        assert_eq!(entry.filename.as_deref(), Some("low-file"));
-    }
 
     #[test]
     fn soda_track_qualities_match_ts_shape() {

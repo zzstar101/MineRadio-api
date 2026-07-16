@@ -12,7 +12,7 @@ use crate::providers::{
 };
 use crate::services::auth_session;
 
-use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaSearchResp};
+use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaSearchResp, SodaSongUrlResp};
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
 const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=track&queue_type=&aid=386088&iid=27960026095955";
@@ -74,8 +74,25 @@ impl SodaClient {
         .await
     }
 
-    pub async fn song_url(&self, track_id: &str) -> ProviderResult<Value> {
-        self.track_detail(track_id).await
+    pub(super) async fn song_url(&self, track_id: &str) -> ProviderResult<SodaSongUrlResp> {
+        let detail = self.track_detail(track_id).await?;
+        let info_url = detail
+            .get("track_player")
+            .and_then(|player| player.get("url_player_info"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if info_url.is_empty() {
+            return Err(unavailable_error(format!(
+                "soda track {track_id} missing url_player_info"
+            )));
+        }
+        self.get_model(
+            info_url.to_owned(),
+            self.current_cookie().await.as_deref(),
+            "song_url",
+        )
+        .await
     }
 
     pub async fn lyric(&self, track_id: &str) -> ProviderResult<Value> {
@@ -201,11 +218,6 @@ impl SodaClient {
             self.current_cookie().await.as_deref(),
         )
         .await
-    }
-
-    pub async fn read_json_url(&self, url: &str) -> ProviderResult<Value> {
-        self.get_json(url.to_owned(), self.current_cookie().await.as_deref())
-            .await
     }
 
     async fn get_json(&self, url: String, cookie: Option<&str>) -> ProviderResult<Value> {

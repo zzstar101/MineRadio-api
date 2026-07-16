@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, Track};
+use crate::types::{AlbumDetail, AlbumSummary, SongUrlOptions, SongUrlResult, Track};
 
 #[derive(Deserialize)]
 pub(super) struct SodaSearchResp {
@@ -211,4 +211,125 @@ struct State {
 #[derive(Deserialize)]
 struct Artist {
     name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(super) struct SodaSongUrlResp {
+    result: SodaSongUrlResult,
+}
+
+impl SodaSongUrlResp {
+    pub fn standardize(self, opt: SongUrlOptions) -> Option<SongUrlResult> {
+        let target = opt.quality.unwrap_or(String::new());
+        let (a, b) = match target.as_str() {
+            "jymaster" => ("spatial", "录音室音质"),
+            "hires" => ("hi_res", "超清全景声"),
+            "lossless" => ("highest", "无损音质"),
+            "exhigh" => ("higher", "极高音质"),
+            "standard" | _ => ("medium", "标准音质"),
+        };
+
+        let list = self.result.data;
+        let play_info = list
+            .play_info_list
+            .iter()
+            .find(|item| item.quality == a)
+            .or_else(|| list.play_info_list.first())?;
+        let play_url = (!play_info.main_play_url.is_empty())
+            .then_some(play_info.main_play_url.as_str())
+            .or_else(|| {
+                (!play_info.backup_play_url.is_empty())
+                    .then_some(play_info.backup_play_url.as_str())
+            })?;
+
+        Some(SongUrlResult {
+            url: Some(format!(
+                "/providers/soda/audio-proxy?url={}&playAuth={}",
+                urlencoding::encode(play_url),
+                urlencoding::encode(&play_info.play_auth)
+            )),
+            proxied: true,
+            provider: Some("soda".to_owned()),
+            trial: None,
+            playable: Some(true),
+            level: Some(play_info.quality.clone()),
+            quality: Some(b.to_owned()),
+            br: Some(play_info.bitrate),
+            expires_at: Some(play_info.url_expire.to_string()),
+            ..Default::default()
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct SodaSongUrlResult {
+    data: SodaSongUrlData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct SodaSongUrlData {
+    play_info_list: Vec<SodaSongUrlList>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct SodaSongUrlList {
+    bitrate: u32,
+
+    quality: String,
+
+    play_auth: String,
+
+    main_play_url: String,
+
+    backup_play_url: String,
+
+    url_expire: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn song_url_standardize_uses_requested_quality_and_backup_url() {
+        let response = serde_json::from_value::<SodaSongUrlResp>(json!({
+            "Result": {
+                "Data": {
+                    "PlayInfoList": [
+                        {
+                            "Bitrate": 320000,
+                            "Quality": "higher",
+                            "PlayAuth": "auth",
+                            "MainPlayUrl": "",
+                            "BackupPlayUrl": "https://cdn.example.com/song.m4a",
+                            "UrlExpire": 123
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        let result = response
+            .standardize(SongUrlOptions {
+                quality: Some("exhigh".to_owned()),
+            })
+            .unwrap();
+
+        assert_eq!(result.level.as_deref(), Some("higher"));
+        assert_eq!(result.br, Some(320000));
+        assert_eq!(result.expires_at.as_deref(), Some("123"));
+        assert!(
+            result
+                .url
+                .as_deref()
+                .is_some_and(|url| url.contains("https%3A%2F%2Fcdn.example.com%2Fsong.m4a"))
+        );
+    }
 }
