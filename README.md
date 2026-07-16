@@ -2,22 +2,37 @@
 
 Mineradio-tauri 的 Rust sidecar HTTP API。它在本机启动一个 `axum` 服务，为桌面端提供音乐 provider、二维码登录、播放与图片代理、播客、天气电台和分享歌单导入能力。
 
+---
+
+> [!IMPORTANT]
+> 本项目仅供学习、研究和技术交流使用，旨在提供 API 的调用封装与相关技术实现示例。
+>
+> 本项目不提供、存储、托管或分发任何音乐内容，也不授予任何平台内容、账号、数据或版权的使用权。使用者应自行遵守所在地区的法律法规以及相关平台的服务条款，并尊重音乐版权，支持正版内容。
+>
+> 严禁将本项目用于绕过付费、会员、地区或其他访问限制，或用于批量下载、未经授权的获取、复制、传播、再分发及其他侵犯版权或平台权益的行为。
+>
+> 未经项目作者明确授权，禁止将本项目及其衍生作品用于任何形式的商业用途，包括但不限于付费分发、商业软件集成、商业服务、销售或其他以盈利为目的的使用。
+>
+> 使用者应自行承担使用本项目所产生的一切风险与责任。项目作者不对因使用、修改、分发或无法使用本项目而造成的任何直接或间接损失承担责任。
+
+---
+
 ## 快速开始
 
 要求：Rust stable（项目使用 Rust 2024 edition）。
 
 ```powershell
-cd D:\project\Rust\MineRadio-api
-$env:MINERADIO_SIDECAR_PORT = "18080"
-cargo run
+git clone https://github.com/zzstar101/MineRadio-api.git
+cd .\MineRadio-api\
+.\run-dev.ps1
 ```
-
+该脚本会将 Provider Cookie 会话保存到 `%APPDATA%\MineRadio-Tauri\provider-sessions.json`，将日志写入 `%APPDATA%\MineRadio-Tauri\mineradio-sidecar.jsonl`，并使用端口 `11451`。
 服务默认仅监听 `127.0.0.1`。未设置 `MINERADIO_SIDECAR_PORT` 时使用端口 `0`，由操作系统分配可用端口；启动日志会打印实际地址。
 
 验证服务：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:18080/health
+Invoke-RestMethod http://127.0.0.1:11451/health
 ```
 
 示例响应：
@@ -104,7 +119,7 @@ GET  /providers/{pid}/playlists
 可通过二维码登录：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:18080/providers/qq/login-qr-key
+Invoke-RestMethod http://127.0.0.1:11451/providers/qq/login-qr-key
 ```
 
 或者直接写入已有 Cookie：
@@ -112,7 +127,7 @@ Invoke-RestMethod http://127.0.0.1:18080/providers/qq/login-qr-key
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://127.0.0.1:18080/providers/qq/session-cookie `
+  -Uri http://127.0.0.1:11451/providers/qq/session-cookie `
   -ContentType 'application/json' `
   -Body '{"cookie":"name=value; token=value"}'
 ```
@@ -120,7 +135,7 @@ Invoke-RestMethod `
 清除本地 Cookie：
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:18080/providers/qq/session-cookie/clear
+Invoke-RestMethod -Method Post http://127.0.0.1:11451/providers/qq/session-cookie/clear
 ```
 
 该接口只清除本地保存的登录态；如需请求上游平台登出，请调用 `POST /providers/{pid}/logout`。
