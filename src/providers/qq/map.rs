@@ -190,7 +190,7 @@ pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playlis
                     .collect()
             })
             .unwrap_or_default(),
-        subscribed: Some(false),
+        collected: Some(false),
     }
 }
 
@@ -281,7 +281,7 @@ pub fn map_qq_playlist_to_detail_official(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        subscribed: Some(false),
+        collected: Some(false),
         track_count: Some(dirinfo.get("songnum").and_then(Value::as_u64).unwrap_or(0) as u32),
         track_ids: track_ids,
         tracks,
@@ -305,7 +305,7 @@ pub fn map_qq_playlist_to_detail(raw: Option<&Value>, id_hint: Option<&str>) -> 
         cover_url: summary.cover_url,
         track_count: summary.track_count,
         track_ids: summary.track_ids,
-        subscribed: summary.subscribed,
+        collected: summary.collected,
         tracks,
     }
 }

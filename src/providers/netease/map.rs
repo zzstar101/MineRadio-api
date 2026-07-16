@@ -186,7 +186,7 @@ pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
         ),
         track_count,
         track_ids,
-        subscribed: Some(raw.get("subscribed").and_then(Value::as_bool) == Some(true)),
+        collected: Some(raw.get("collected").and_then(Value::as_bool) == Some(true)),
     }
 }
 
@@ -207,7 +207,7 @@ pub fn map_hana_playlist_to_detail(raw: &Value, id_hint: Option<&str>) -> Playli
         cover_url: summary.cover_url,
         track_count: summary.track_count,
         track_ids: summary.track_ids,
-        subscribed: summary.subscribed,
+        collected: summary.collected,
         tracks,
     }
 }
@@ -262,9 +262,9 @@ mod tests {
     }
 
     #[test]
-    fn playlist_summary_defaults_subscribed_to_false() {
+    fn playlist_summary_defaults_collected_to_false() {
         let summary = map_hana_playlist_to_summary(&json!({ "id": 1 }), None);
 
-        assert_eq!(summary.subscribed, Some(false));
+        assert_eq!(summary.collected, Some(false));
     }
 }

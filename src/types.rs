@@ -190,7 +190,7 @@ pub struct PlaylistSummary {
     #[serde(default)]
     pub track_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subscribed: Option<bool>,
+    pub collected: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -207,7 +207,7 @@ pub struct PlaylistDetail {
     #[serde(default)]
     pub track_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subscribed: Option<bool>,
+    pub collected: Option<bool>,
     #[serde(default)]
     pub tracks: Vec<Track>,
 }
@@ -219,6 +219,7 @@ pub struct AlbumSummary {
     pub provider: ProviderId,
     pub id: String,
     pub name: String,
+    pub artists: Vec<String>,
     #[serde(default)]
     pub cover_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,7 +227,7 @@ pub struct AlbumSummary {
     #[serde(default)]
     pub track_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subscribed: Option<bool>,
+    pub collected: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -236,7 +237,7 @@ pub struct AlbumDetail {
     pub provider: ProviderId,
     pub id: String,
     pub name: String,
-    pub singer: Vec<String>,
+    pub artists: Vec<String>,
     #[serde(default)]
     pub cover_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -244,7 +245,7 @@ pub struct AlbumDetail {
     #[serde(default)]
     pub track_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subscribed: Option<bool>,
+    pub collected: Option<bool>,
     #[serde(default)]
     pub tracks: Vec<Track>,
 }

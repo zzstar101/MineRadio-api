@@ -143,7 +143,7 @@ pub async fn import_shared_playlist(
             "name": detail.name,
             "trackCount": track_count,
             "trackIds": track_ids,
-            "subscribed": false,
+            "collected": false,
             "sourceUrl": candidate.source_url
         },
         "tracks": tracks,
@@ -194,7 +194,7 @@ async fn import_kugou_playlist(candidate: &SharedPlaylistCandidate) -> anyhow::R
             "coverUrl": payload.cover,
             "trackCount": payload.track_count,
             "trackIds": tracks.iter().map(|track| track["id"].clone()).collect::<Vec<_>>(),
-            "subscribed": false,
+            "collected": false,
             "sourceUrl": source
         },
         "tracks": tracks,
@@ -295,7 +295,7 @@ async fn import_apple_music_playlist(candidate: &SharedPlaylistCandidate) -> any
             "coverUrl": cover,
             "trackCount": total,
             "trackIds": tracks.iter().map(|track| track["id"].clone()).collect::<Vec<_>>(),
-            "subscribed": false,
+            "collected": false,
             "sourceUrl": if fetched.url.is_empty() { target } else { fetched.url }
         },
         "tracks": tracks,
@@ -1677,7 +1677,7 @@ mod tests {
                 cover_url: String::new(),
                 track_count: None,
                 track_ids: Vec::new(),
-                subscribed: Some(false),
+                collected: Some(false),
                 tracks: vec![track(&self.provider)],
             })
         }

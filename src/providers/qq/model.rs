@@ -104,19 +104,19 @@ impl QqAlbumDetailResp {
             })
             .collect();
         let info = self.info.data;
-        let (album, singer) = (info.basic_info, info.singer);
+        let (album, artists) = (info.basic_info, info.singer);
         AlbumDetail {
             provider: "qq".to_owned(),
             id: album.album_mid.clone(),
             name: album.album_name,
-            singer: singer.singer_list.into_iter().map(|s| s.name).collect(),
+            artists: artists.singer_list.into_iter().map(|s| s.name).collect(),
             cover_url: format!(
                 "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
                 album.album_mid
             ),
             track_count: Some(song_list.total_num as u32),
             track_ids,
-            subscribed: None,
+            collected: None,
             tracks,
         }
     }
@@ -206,13 +206,14 @@ impl QqAlbumListResp {
                 provider: "qq".to_owned(),
                 id: s.mid.clone(),
                 name: s.name,
+                artists: s.singer.into_iter().map(|a| a.name).collect(),
                 cover_url: format!(
                     "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
                     s.mid
                 ),
                 track_count: s.songnum,
                 track_ids: vec![],
-                subscribed: Some(true),
+                collected: Some(true),
             })
             .collect()
     }
@@ -239,10 +240,13 @@ struct Album {
     mid: String,
     name: String,
     songnum: Option<u32>,
+    #[serde(rename = "v_singer")]
+    singer: Vec<Singer>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Singer {
+    //id: String,
     //mid: String,
     name: String,
 }

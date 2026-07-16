@@ -154,7 +154,7 @@ pub fn map_soda_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
             .and_then(Value::as_u64)
             .and_then(|value| u32::try_from(value).ok()),
         track_ids: Vec::new(),
-        subscribed: Some(raw.get("is_private").and_then(Value::as_bool) == Some(false)),
+        collected: Some(raw.get("is_private").and_then(Value::as_bool) == Some(false)),
     }
 }
 
@@ -185,7 +185,7 @@ pub fn map_soda_playlist_detail_to_detail(
         cover_url: summary.cover_url,
         track_count: summary.track_count,
         track_ids: summary.track_ids,
-        subscribed: summary.subscribed,
+        collected: summary.collected,
         tracks,
     }
 }
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn soda_playlist_detail_skips_null_tracks_and_defaults_subscribed_false() {
+    fn soda_playlist_detail_skips_null_tracks_and_defaults_collected_false() {
         let detail = map_soda_playlist_detail_to_detail(
             Some(&json!({
                 "playlist": {
@@ -275,7 +275,7 @@ mod tests {
             Some("pl-1"),
         );
 
-        assert_eq!(detail.subscribed, Some(false));
+        assert_eq!(detail.collected, Some(false));
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].id, "t-1");
     }

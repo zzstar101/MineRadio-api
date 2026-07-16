@@ -231,7 +231,7 @@ impl ProviderAdapter for QqAdapter {
                                                 as u32,
                                         ),
                                         track_ids: vec![],
-                                        subscribed: Some(true),
+                                        collected: Some(true),
                                     });
                                 }
                             }
@@ -1305,7 +1305,7 @@ mod tests {
             name: "我喜欢".to_owned(),
             track_count: None,
             track_ids: Vec::new(),
-            subscribed: Some(false),
+            collected: Some(false),
         };
         let ordinary = PlaylistSummary {
             provider: "qq".to_owned(),
@@ -1314,7 +1314,7 @@ mod tests {
             name: "收藏歌单".to_owned(),
             track_count: None,
             track_ids: Vec::new(),
-            subscribed: Some(false),
+            collected: Some(false),
         };
         let qzone_raw = json!({ "hostname": "Qzone" });
 

@@ -47,7 +47,7 @@ pub(super) struct SodaAlbumDetailResp {
 
 impl SodaAlbumDetailResp {
     pub fn standardize(self) -> AlbumDetail {
-        let singer = self
+        let artists = self
             .album_info
             .artists
             .iter()
@@ -67,11 +67,11 @@ impl SodaAlbumDetailResp {
             provider: album.provider,
             id: album.id,
             name: album.name,
-            singer,
+            artists,
             cover_url: album.cover_url,
             track_count: album.track_count,
             track_ids,
-            subscribed: album.subscribed,
+            collected: album.collected,
             tracks,
         }
     }
@@ -112,11 +112,12 @@ impl SodaAlbumListInfo {
         AlbumSummary {
             provider: "soda".to_owned(),
             id,
+            artists: self.artists.into_iter().map(|a| a.name).collect(),
             name: self.name,
             cover_url: self.url_cover.standardize(),
             track_count: Some(self.count_tracks),
             track_ids: Vec::new(),
-            subscribed: self.state.is_collected,
+            collected: self.state.is_collected,
         }
     }
 }

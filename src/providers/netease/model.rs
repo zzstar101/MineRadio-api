@@ -19,10 +19,11 @@ impl NeteaseAlbumListResp {
                 provider: "netease".to_owned(),
                 id: a.id.to_string(),
                 name: a.name,
+                artists: a.artists.into_iter().map(|a| a.name).collect(),
                 cover_url: a.pic_url,
                 track_count: a.size,
                 track_ids: vec![],
-                subscribed: Some(true),
+                collected: Some(true),
             })
             .collect()
     }
@@ -64,11 +65,11 @@ impl NeteaseAlbumDetailResp {
             provider: "netease".to_owned(),
             id: a.id.to_string(),
             name: a.name,
-            singer: a.artists.into_iter().map(|a| a.name).collect(),
+            artists: a.artists.into_iter().map(|a| a.name).collect(),
             cover_url: a.pic_url,
             track_count: a.size,
             track_ids,
-            subscribed: Some(false),
+            collected: None,
             tracks,
         }
     }

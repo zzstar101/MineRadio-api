@@ -452,7 +452,7 @@ fn map_discover_playlist(raw: &Value) -> Value {
                 .or_else(|| playlist.get("programCount"))
         ),
         "trackIds": [],
-        "subscribed": playlist.get("subscribed").and_then(Value::as_bool).unwrap_or(false)
+        "collected": playlist.get("collected").and_then(Value::as_bool).unwrap_or(false)
     })
 }
 
@@ -937,7 +937,7 @@ mod tests {
                     cover_url: String::new(),
                     track_count: Some(0),
                     track_ids: Vec::new(),
-                    subscribed: Some(false),
+                    collected: Some(false),
                 }],
                 search_tracks: vec![make_track("soda", "track-1", "search fallback")],
                 ..Default::default()
