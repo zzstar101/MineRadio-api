@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::Track;
+use crate::types::{PlayableState, Track};
 
 pub fn map_kugou_song_to_track(raw: &Value) -> Track {
     let hash = first_string(raw, &["FileHash", "hash", "Hash"]);
@@ -24,7 +24,7 @@ pub fn map_kugou_song_to_track(raw: &Value) -> Track {
             "higher".to_owned(),
             "lossless".to_owned(),
         ],
-        playable_state: "unknown".to_owned(),
+        playable_state: PlayableState::Unknown,
         duration_ms: raw
             .get("Duration")
             .or_else(|| raw.get("duration"))

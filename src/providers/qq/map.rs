@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::{
     parsers::{lrc, qq},
-    types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
+    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track},
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {
@@ -82,7 +82,7 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
         ]),
         cover_url,
         quality_hints: vec!["standard".to_owned()],
-        playable_state: "unknown".to_owned(),
+        playable_state: PlayableState::Unknown,
         duration_ms: raw
             .get("interval")
             .and_then(Value::as_u64)
@@ -255,7 +255,7 @@ pub fn map_qq_playlist_to_detail_official(
                 "http://y.gtimg.cn/music/photo_new/T002R500x500M000{album_mid}.jpg?n=1"
             ),
             quality_hints: vec!["standard".to_owned()],
-            playable_state: "unknown".to_owned(),
+            playable_state: PlayableState::Unknown,
             duration_ms: song
                 .get("interval")
                 .and_then(Value::as_u64)

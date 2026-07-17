@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{AlbumDetail, AlbumSummary, Track};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,15 +75,14 @@ impl NeteaseAlbumDetailResp {
     }
 }
 
-fn get_playable(fee: u8) -> String {
+fn get_playable(fee: u8) -> PlayableState {
     match fee {
-        0 => "免费或无版权",
-        1 => "VIP 歌曲",
-        4 => "购买专辑",
-        8 => "非会员可免费播放低音质，会员可播放高音质及下载",
-        _ => "unknown",
+        0 => PlayableState::CopyrightUnavailable,
+        1 => PlayableState::VipRequired,
+        4 => PlayableState::PaidRequired,
+        8 => PlayableState::TrialOnly,
+        _ => PlayableState::Unknown,
     }
-    .to_string()
 }
 
 #[derive(Serialize, Deserialize)]

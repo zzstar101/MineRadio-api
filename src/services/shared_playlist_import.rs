@@ -1604,9 +1604,9 @@ mod tests {
     use crate::{
         providers,
         types::{
-            LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
-            SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-            TrackQualityAvailability,
+            LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
+            ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
+            Track, TrackQualityAvailability,
         },
     };
     use async_trait::async_trait;
@@ -1622,7 +1622,7 @@ mod tests {
             album: String::new(),
             cover_url: String::new(),
             quality_hints: Vec::new(),
-            playable_state: "unknown".to_owned(),
+            playable_state: PlayableState::Unknown,
             duration_ms: None,
             artwork_url: None,
         }

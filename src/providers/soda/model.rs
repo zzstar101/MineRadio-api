@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlaylistDetail, PlaylistSummary, SongUrlOptions, SongUrlResult,
-    Track, TrackQualityAvailability, TrackQualityOption,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, SongUrlOptions,
+    SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
 };
 
 #[derive(Deserialize)]
@@ -438,11 +438,10 @@ impl SodaTrack {
                 .map(|bit_rate| bit_rate.quality)
                 .collect(),
             playable_state: if self.label_info.only_vip_playable.unwrap_or(false) {
-                "仅VIP"
+                PlayableState::VipRequired
             } else {
-                "可播放"
-            }
-            .to_owned(),
+                PlayableState::Playable
+            },
             duration_ms: Some(self.duration),
             artwork_url: None,
         }
@@ -459,7 +458,7 @@ impl SodaTrack {
                     "highest" => ("lossless", "无损音质"),
                     "higher" => ("exhigh", "极高音质"),
                     "medium" => ("standard", "标准音质"),
-                    _ => return None
+                    _ => return None,
                 };
                 let (level, label) = (level.to_string(), label.to_string());
                 let br = b.br;
@@ -470,9 +469,9 @@ impl SodaTrack {
                     label,
                     detail: Some(
                         if self.label_info.only_vip_playable.unwrap_or(false) {
-                            "仅VIP"
+                            "vip_required"
                         } else {
-                            "可播放"
+                            "playable"
                         }
                         .to_owned(),
                     ),

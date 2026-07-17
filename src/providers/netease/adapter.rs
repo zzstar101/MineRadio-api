@@ -10,7 +10,7 @@ use crate::{
     },
     services::auth_session,
     types::{
-        AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
+        AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
@@ -186,7 +186,7 @@ impl ProviderAdapter for NeteaseAdapter {
             .is_some_and(|cookie| !cookie.trim().is_empty());
         let mut trial_fallback = None;
         let mut received_datum = false;
-        let mut last_state = "unknown".to_owned();
+        let mut last_state = PlayableState::Unknown;
         let mut last_error = None;
 
         for quality in QUALITY_CANDIDATES.iter().skip(start_index) {
@@ -215,8 +215,8 @@ impl ProviderAdapter for NeteaseAdapter {
             let code = datum.get("code").and_then(Value::as_i64);
             let free_trial_info = datum.get("freeTrialInfo").filter(|value| !value.is_null());
             let state = map_playable(fee, code, free_trial_info, has_cookie, url);
-            last_state = state.clone();
-            if state != "playable" || url.filter(|value| !value.is_empty()).is_none() {
+            last_state = state;
+            if state != PlayableState::Playable || url.filter(|value| !value.is_empty()).is_none() {
                 continue;
             }
             let trial = free_trial_info.is_some();
@@ -297,7 +297,7 @@ impl ProviderAdapter for NeteaseAdapter {
                 raw_message: None,
             });
         }
-        Err(state_error(&last_state, &track.source_id))
+        Err(state_error(last_state, &track.source_id))
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
@@ -335,7 +335,7 @@ impl ProviderAdapter for NeteaseAdapter {
                 has_cookie,
                 url,
             );
-            if state != "playable" || url.filter(|value| !value.is_empty()).is_none() {
+            if state != PlayableState::Playable || url.filter(|value| !value.is_empty()).is_none() {
                 continue;
             }
             let actual_level = netease_actual_level(datum, &quality);
@@ -701,21 +701,21 @@ fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> 
     }
 }
 
-fn state_error(state: &str, id: &str) -> ProviderError {
+fn state_error(state: PlayableState, id: &str) -> ProviderError {
     let code = match state {
-        "login_required" => ProviderErrorCode::LoginRequired,
-        "vip_required" => ProviderErrorCode::VipRequired,
-        "paid_required" => ProviderErrorCode::PaidRequired,
-        "trial_only" => ProviderErrorCode::TrialOnly,
-        "copyright_unavailable" => ProviderErrorCode::CopyrightUnavailable,
+        PlayableState::LoginRequired => ProviderErrorCode::LoginRequired,
+        PlayableState::VipRequired => ProviderErrorCode::VipRequired,
+        PlayableState::PaidRequired => ProviderErrorCode::PaidRequired,
+        PlayableState::TrialOnly => ProviderErrorCode::TrialOnly,
+        PlayableState::CopyrightUnavailable => ProviderErrorCode::CopyrightUnavailable,
         _ => ProviderErrorCode::Unavailable,
     };
     ProviderError {
         code,
         provider: "netease".to_owned(),
         message: format!("netease song-url {id} state {state}"),
-        retryable: state == "login_required",
-        action: (state == "login_required").then(|| "login".to_owned()),
+        retryable: state == PlayableState::LoginRequired,
+        action: (state == PlayableState::LoginRequired).then(|| "login".to_owned()),
         raw_message: None,
     }
 }

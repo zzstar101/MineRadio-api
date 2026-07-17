@@ -14,7 +14,7 @@ use crate::{
         error::{ProviderError, ProviderErrorCode},
         registry::PROVIDER_IDS,
     },
-    types::{ProviderId, SongUrlOptions, SongUrlResult, Track},
+    types::{PlayableState, ProviderId, SongUrlOptions, SongUrlResult, Track},
 };
 
 pub type ProviderMap = HashMap<ProviderId, Arc<dyn ProviderAdapter>>;
@@ -392,9 +392,9 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
             4.0
         };
     }
-    if track.playable_state != "playable"
-        && track.playable_state != "unknown"
-        && track.playable_state != "trial_only"
+    if track.playable_state != PlayableState::Playable
+        && track.playable_state != PlayableState::Unknown
+        && track.playable_state != PlayableState::TrialOnly
     {
         score -= 12.0;
     }
@@ -526,7 +526,7 @@ fn search_looks_like_same_title_cover(
     self_titled_single
         || search_looks_like_derivative(raw)
         || source_index > 0
-        || track.playable_state == "unavailable"
+        || track.playable_state == PlayableState::Unavailable
 }
 
 fn no_result_error(provider: ProviderId, message: &str) -> anyhow::Error {
@@ -753,7 +753,7 @@ mod tests {
             album: String::new(),
             cover_url: String::new(),
             quality_hints: Vec::new(),
-            playable_state: "playable".to_owned(),
+            playable_state: PlayableState::Playable,
             duration_ms: None,
             artwork_url: None,
         }

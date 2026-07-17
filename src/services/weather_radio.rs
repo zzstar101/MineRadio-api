@@ -850,6 +850,7 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PlayableState;
 
     fn track(id: &str, title: &str) -> Track {
         Track {
@@ -862,7 +863,7 @@ mod tests {
             album: String::new(),
             cover_url: String::new(),
             quality_hints: vec!["standard".to_owned()],
-            playable_state: "playable".to_owned(),
+            playable_state: PlayableState::Playable,
             duration_ms: Some(180_000),
             artwork_url: None,
         }

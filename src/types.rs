@@ -4,6 +4,58 @@ use std::collections::HashMap;
 
 pub type ProviderId = String;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayableState {
+    #[default]
+    Unknown,
+    Playable,
+    LoginRequired,
+    VipRequired,
+    PaidRequired,
+    CopyrightUnavailable,
+    TrialOnly,
+    Unavailable,
+}
+
+impl PlayableState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Playable => "playable",
+            Self::LoginRequired => "login_required",
+            Self::VipRequired => "vip_required",
+            Self::PaidRequired => "paid_required",
+            Self::CopyrightUnavailable => "copyright_unavailable",
+            Self::TrialOnly => "trial_only",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+impl std::fmt::Display for PlayableState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlayableState;
+
+    #[test]
+    fn playable_state_uses_frontend_contract_strings() {
+        assert_eq!(
+            serde_json::to_string(&PlayableState::VipRequired).unwrap(),
+            "\"vip_required\""
+        );
+        assert_eq!(
+            serde_json::from_str::<PlayableState>("\"trial_only\"").unwrap(),
+            PlayableState::TrialOnly
+        );
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
@@ -20,16 +72,12 @@ pub struct Track {
     pub cover_url: String,
     #[serde(default)]
     pub quality_hints: Vec<String>,
-    #[serde(default = "default_playable_state")]
-    pub playable_state: String,
+    #[serde(default)]
+    pub playable_state: PlayableState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artwork_url: Option<String>,
-}
-
-fn default_playable_state() -> String {
-    "unknown".to_owned()
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]

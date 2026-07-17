@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, Track};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct QqSearchResp {
@@ -49,7 +49,7 @@ impl QqSearchResp {
                     l.albummid
                 ),
                 quality_hints: vec!["standard".to_owned()],
-                playable_state: "unknown".to_owned(),
+                playable_state: PlayableState::Unknown,
                 duration_ms: Some(l.interval as u64 * 1000),
                 artwork_url: None,
             })
@@ -90,14 +90,11 @@ impl QqAlbumDetailResp {
                     album: l.album.name,
                     cover_url: cover_url.clone(),
                     quality_hints: vec!["standard".to_owned()],
-                    playable_state: {
-                        if l.pay.pay_play == 1 {
-                            "付费可播放"
-                        } else {
-                            "可播放"
-                        }
-                    }
-                    .to_string(),
+                    playable_state: if l.pay.pay_play == 1 {
+                        PlayableState::PaidRequired
+                    } else {
+                        PlayableState::Playable
+                    },
                     duration_ms: Some(l.interval as u64 * 1000),
                     artwork_url: None,
                 }

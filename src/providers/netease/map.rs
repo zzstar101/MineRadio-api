@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::{
     parsers::{lrc, netease},
-    types::{LyricLine, LyricPayload, PlaylistDetail, PlaylistSummary, Track},
+    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track},
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {
@@ -25,25 +25,25 @@ pub fn map_playable(
     free_trial_info: Option<&Value>,
     has_cookie: bool,
     url: Option<&str>,
-) -> String {
+) -> PlayableState {
     if code == Some(200) && url.filter(|value| !value.is_empty()).is_some() {
-        return "playable".to_owned();
+        return PlayableState::Playable;
     }
     if code == Some(401) {
-        return "login_required".to_owned();
+        return PlayableState::LoginRequired;
     }
     match fee.unwrap_or_default() {
         1 => {
             if has_cookie && url.filter(|value| !value.is_empty()).is_some() {
-                "playable".to_owned()
+                PlayableState::Playable
             } else {
-                "vip_required".to_owned()
+                PlayableState::VipRequired
             }
         }
-        4 => "paid_required".to_owned(),
-        8 if free_trial_info.is_some() => "trial_only".to_owned(),
-        _ if url.filter(|value| !value.is_empty()).is_some() => "playable".to_owned(),
-        _ => "unknown".to_owned(),
+        4 => PlayableState::PaidRequired,
+        8 if free_trial_info.is_some() => PlayableState::TrialOnly,
+        _ if url.filter(|value| !value.is_empty()).is_some() => PlayableState::Playable,
+        _ => PlayableState::Unknown,
     }
 }
 
@@ -84,12 +84,11 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
         ),
         quality_hints: vec!["standard".to_owned()],
         playable_state: match fee.unwrap_or_default() {
-            1 => "vip_required",
-            4 => "paid_required",
-            8 => "trial_only",
-            _ => "unknown",
-        }
-        .to_owned(),
+            1 => PlayableState::VipRequired,
+            4 => PlayableState::PaidRequired,
+            8 => PlayableState::TrialOnly,
+            _ => PlayableState::Unknown,
+        },
         duration_ms: raw.get("dt").and_then(Value::as_u64),
         artwork_url: None,
     }
