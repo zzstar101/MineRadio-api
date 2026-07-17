@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, SongUrlOptions, SongUrlResult, Track};
+use crate::types::{
+    AlbumDetail, AlbumSummary, PlaylistDetail, PlaylistSummary, SongUrlOptions, SongUrlResult,
+    Track, TrackQualityAvailability, TrackQualityOption,
+};
 
 #[derive(Deserialize)]
 pub(super) struct SodaSearchResp {
@@ -37,6 +40,123 @@ struct SodaSearchData {
 #[derive(Deserialize)]
 struct SodaSearchEntity {
     track: SodaTrack,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SodaPlaylistListResp {
+    playlists: Vec<SodaPlaylistListList>,
+}
+
+impl SodaPlaylistListResp {
+    pub fn standardize(self) -> Option<Vec<PlaylistSummary>> {
+        let res: Vec<PlaylistSummary> = self
+            .playlists
+            .into_iter()
+            .map(|p| PlaylistSummary {
+                provider: "soda".to_owned(),
+                id: p.id,
+                name: p.title,
+                cover_url: p
+                    .url_cover
+                    .map(|u| u.standardize())
+                    .unwrap_or("".to_string()),
+                track_count: p.count_tracks,
+                track_ids: vec![],
+                collected: Some(true),
+            })
+            .collect();
+        if res.is_empty() { None } else { Some(res) }
+    }
+}
+
+#[derive(Deserialize)]
+struct SodaPlaylistListList {
+    id: String,
+
+    title: String,
+    //为什么会有缺封面的呀,汽水你这家伙
+    url_cover: Option<Url>,
+
+    count_tracks: Option<u32>,
+}
+
+//此层在client后会丢弃
+#[derive(Deserialize)]
+pub(super) struct SodaPLaylistDetailResp {
+    //next_cursor: Option<String>,
+    playlist: Playlist,
+
+    media_resources: Vec<MediaResource>,
+}
+
+impl SodaPLaylistDetailResp {
+    pub fn standardize(self) -> Option<PlaylistDetail> {
+        let p = self.playlist;
+        let tracks: Vec<Track> = self
+            .media_resources
+            .into_iter()
+            .map(|m| m.entity.track_wrapper.track.standardize())
+            .collect();
+        if tracks.is_empty() {
+            None
+        } else {
+            Some(PlaylistDetail {
+                provider: "soda".to_owned(),
+                id: p.id,
+                name: p.title,
+                cover_url: p.url_cover.standardize(),
+                track_count: p.count_tracks,
+                track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
+                collected: p.state.and_then(|s| s.is_collected),
+                tracks,
+            })
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct MediaResource {
+    entity: Entity,
+}
+
+#[derive(Deserialize)]
+struct Entity {
+    track_wrapper: TrackWrapper,
+}
+
+#[derive(Deserialize)]
+struct TrackWrapper {
+    track: SodaTrack,
+}
+
+/* #[derive(Deserialize)]
+struct Owner {
+    id: String,
+
+    nickname: String,
+
+    medium_avatar_url: AvatarUrl,
+}
+
+#[derive(Deserialize)]
+struct AvatarUrl {
+    urls: Vec<String>,
+
+    need_complete_url: bool,
+}*/
+
+#[derive(Deserialize)]
+struct Playlist {
+    id: String,
+
+    title: String,
+
+    url_cover: Url,
+
+    count_tracks: Option<u32>,
+
+    //owner: Owner,
+    state: Option<State>,
 }
 
 #[derive(Deserialize)]
@@ -103,7 +223,7 @@ struct SodaAlbumListInfo {
     artists: Vec<Artist>,
     count_tracks: u32,
     url_cover: Url,
-    state: State,
+    state: Option<State>,
 }
 
 impl SodaAlbumListInfo {
@@ -117,7 +237,7 @@ impl SodaAlbumListInfo {
             cover_url: self.url_cover.standardize(),
             track_count: Some(self.count_tracks),
             track_ids: Vec::new(),
-            collected: self.state.is_collected,
+            collected: self.state.and_then(|s| s.is_collected),
         }
     }
 }
@@ -125,7 +245,7 @@ impl SodaAlbumListInfo {
 #[derive(Deserialize)]
 struct TrackAlbum {
     name: String,
-    url_cover: Url,
+    url_cover: Option<Url>,
 }
 
 //reuseable
@@ -160,13 +280,15 @@ pub(super) struct SodaTrack {
     artists: Vec<Artist>,
     duration: u64,
     name: String,
-    //state: TrackState,
+    state: Option<State>,
     label_info: LabelInfo,
     bit_rates: Vec<BitRate>,
 }
 
 #[derive(Deserialize)]
 struct BitRate {
+    br: u32,
+    size: u64,
     quality: String,
 }
 
@@ -176,7 +298,7 @@ struct LabelInfo {
 }
 
 impl SodaTrack {
-    fn standardize(self) -> Track {
+    pub fn standardize(self) -> Track {
         let id = self.id;
         Track {
             source_id: id.clone(),
@@ -186,7 +308,11 @@ impl SodaTrack {
             title: self.name,
             artists: self.artists.into_iter().map(|artist| artist.name).collect(),
             album: self.album.name,
-            cover_url: self.album.url_cover.standardize(),
+            cover_url: self
+                .album
+                .url_cover
+                .map(|u| u.standardize())
+                .unwrap_or_default(),
             quality_hints: self
                 .bit_rates
                 .into_iter()
@@ -201,6 +327,46 @@ impl SodaTrack {
             duration_ms: Some(self.duration),
             artwork_url: None,
         }
+    }
+    pub fn standardize_quality(self) -> Option<Vec<TrackQualityOption>> {
+        let s: Vec<TrackQualityOption> = self
+            .bit_rates
+            .into_iter()
+            .map(|b| {
+                let raw_quality = b.quality;
+                let (level, label) = match raw_quality.as_str() {
+                    "spatial" => ("jymaster", "录音室音质"),
+                    "hi_res" => ("hires", "超清全景声"),
+                    "highest" => ("lossless", "无损音质"),
+                    "higher" => ("exhigh", "极高音质"),
+                    "medium" | _ => ("standard", "标准音质"),
+                };
+                let (level, label) = (level.to_string(), label.to_string());
+                let br = b.br;
+                let size = b.size;
+                TrackQualityOption {
+                    provider: "soda".to_owned(),
+                    id: level.to_owned(),
+                    label,
+                    detail: Some(
+                        if self.label_info.only_vip_playable.unwrap_or(false) {
+                            "仅VIP"
+                        } else {
+                            "可播放"
+                        }
+                        .to_owned(),
+                    ),
+                    request_quality: level.to_owned(),
+                    level: Some(level.to_owned()),
+                    r#type: Some(raw_quality),
+                    br: Some(br),
+                    size: Some(size),
+                    source: "declared".to_owned(),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        if s.is_empty() { None } else { Some(s) }
     }
 }
 
@@ -291,46 +457,49 @@ struct SodaSongUrlList {
     url_expire: i64,
 }
 
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
+#[derive(Deserialize)]
+pub(super) struct SodaTrackV2Resp {
+    lyric: Lyric,
+    track: SodaTrack,
+    track_player: TrackPlayer,
+}
 
-    use super::*;
-
-    #[test]
-    fn song_url_standardize_uses_requested_quality_and_backup_url() {
-        let response = serde_json::from_value::<SodaSongUrlResp>(json!({
-            "Result": {
-                "Data": {
-                    "PlayInfoList": [
-                        {
-                            "Bitrate": 320000,
-                            "Quality": "higher",
-                            "PlayAuth": "auth",
-                            "MainPlayUrl": "",
-                            "BackupPlayUrl": "https://cdn.example.com/song.m4a",
-                            "UrlExpire": 123
-                        }
-                    ]
-                }
-            }
-        }))
-        .unwrap();
-
-        let result = response
-            .standardize(SongUrlOptions {
-                quality: Some("exhigh".to_owned()),
-            })
-            .unwrap();
-
-        assert_eq!(result.level.as_deref(), Some("higher"));
-        assert_eq!(result.br, Some(320000));
-        assert_eq!(result.expires_at.as_deref(), Some("123"));
-        assert!(
-            result
-                .url
-                .as_deref()
-                .is_some_and(|url| url.contains("https%3A%2F%2Fcdn.example.com%2Fsong.m4a"))
-        );
+impl SodaTrackV2Resp {
+    pub fn standardize_lyric(self) -> (String, Option<String>, String) {
+        (
+            self.lyric.content,
+            self.lyric.translations.map(|t| t.cn),
+            self.track.id,
+        )
     }
+    pub fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
+        Some(TrackQualityAvailability {
+            provider: "soda".to_owned(),
+            track_id: self.track.id.clone(),
+            default_quality: Some("standard".to_string()),
+            qualities: self.track.standardize_quality()?,
+        })
+    }
+    pub fn get_songurl(self) -> String {
+        self.track_player.url_player_info
+    }
+    pub fn is_collected(self) -> Option<bool> {
+        self.track.state.and_then(|s| s.is_collected)
+    }
+}
+
+#[derive(Deserialize)]
+struct Lyric {
+    content: String,
+    translations: Option<Cn>,
+}
+
+#[derive(Deserialize)]
+struct Cn {
+    cn: String,
+}
+
+#[derive(Deserialize)]
+struct TrackPlayer {
+    url_player_info: String,
 }

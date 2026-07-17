@@ -3,6 +3,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use super::client::SodaClient;
+use crate::parsers2::{
+    MemchrParsers,
+    lrc::{LrcParser, UniversalLrcParser},
+    soda_music::SodaParser,
+};
 use crate::{
     providers::{
         ProviderAdapter, ProviderResult,
@@ -12,51 +18,9 @@ use crate::{
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId,
         ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, TrackQualityOption,
+        TrackQualityAvailability,
     },
 };
-
-use super::{
-    client::SodaClient,
-    map::{
-        map_soda_lyric_to_payload, map_soda_playlist_detail_to_detail, map_soda_playlist_to_summary,
-    },
-};
-
-#[derive(Clone, Copy)]
-struct SodaPlaybackQualityOption {
-    level: &'static str,
-    soda_level: &'static str,
-    aliases: &'static [&'static str],
-}
-
-const SODA_PLAYBACK_QUALITY_OPTIONS: [SodaPlaybackQualityOption; 5] = [
-    SodaPlaybackQualityOption {
-        level: "jymaster",
-        soda_level: "spatial",
-        aliases: &["spatial"],
-    },
-    SodaPlaybackQualityOption {
-        level: "hires",
-        soda_level: "hi_res",
-        aliases: &["hi_res", "hi-res", "surround"],
-    },
-    SodaPlaybackQualityOption {
-        level: "lossless",
-        soda_level: "highest",
-        aliases: &["highest", "lossless"],
-    },
-    SodaPlaybackQualityOption {
-        level: "exhigh",
-        soda_level: "higher",
-        aliases: &["higher", "exhigh"],
-    },
-    SodaPlaybackQualityOption {
-        level: "standard",
-        soda_level: "medium",
-        aliases: &["medium", "standard"],
-    },
-];
 
 #[derive(Clone, Default)]
 pub struct SodaAdapter {
@@ -99,46 +63,82 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
-        let detail = self.client.track_detail(&track.source_id).await?;
-        Ok(build_track_quality_availability(&track.source_id, &detail))
+        self.client
+            .track_detail(&track.source_id)
+            .await?
+            .standardize_track_qualities()
+            .ok_or_else(|| no_result("track_qualities"))
     }
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
-        let body = self.client.lyric(&track.source_id).await?;
-        let lyric = body.get("lyric");
-        let base = lyric
-            .and_then(|value| value.get("content"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let trans = lyric
-            .and_then(|value| value.get("translations"))
-            .and_then(Value::as_object)
-            .and_then(|value| value.get("cn"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        Ok(map_soda_lyric_to_payload(&track.source_id, base, trans))
+        let (lyrics, trans, track_id) = self
+            .client
+            .lyric(&track.source_id)
+            .await?
+            .standardize_lyric();
+        let trans = trans
+            .and_then(|t| UniversalLrcParser.parse(t).ok())
+            .map(|t| {
+                t.into_iter()
+                    .map(|line| (line.time_ms, line.text))
+                    .collect::<std::collections::HashMap<_, _>>()
+            });
+
+        let (lines, has_translation) = {
+            let base_lines = match SodaParser.parse(lyrics.clone()) {
+                Ok(l) => l,
+                Err(e) => match UniversalLrcParser.parse(lyrics) {
+                    Ok(l) => l,
+                    Err(e2) => return Err(invalid_response(e + " " + &e2)),
+                },
+            };
+            match trans {
+                Some(trans) => (
+                    base_lines
+                        .into_iter()
+                        .map(|mut line| {
+                            line.translation = trans
+                                .get(&line.time_ms)
+                                .cloned()
+                                .filter(|value| !value.is_empty());
+                            line
+                        })
+                        .collect::<Vec<_>>(),
+                    true,
+                ),
+                None => (base_lines, false),
+            }
+        };
+        let is_word_by_word = lines.iter().any(|line| {
+            line.words
+                .as_ref()
+                .map(|words| !words.is_empty())
+                .unwrap_or(false)
+        });
+        Ok(LyricPayload {
+            provider: "soda".to_owned(),
+            track_id,
+            lines,
+            has_translation,
+            is_word_by_word,
+        })
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        let Some(cookie) = self.client.current_cookie().await else {
-            return Ok(Vec::new());
-        };
-        if cookie.trim().is_empty() {
-            return Ok(Vec::new());
-        }
-        let body = self.client.playlist_list().await?;
-        Ok(body
-            .get("playlists")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .map(|item| map_soda_playlist_to_summary(item, None))
-            .collect())
+        self.client.ensure_login().await?;
+        self.client
+            .playlist_list()
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("playlist_list"))
     }
 
     async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
-        let body = self.client.playlist_detail(id).await?;
-        Ok(map_soda_playlist_detail_to_detail(Some(&body), Some(id)))
+        self.client
+            .playlist_detail(id)
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("playlist_detail"))
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -290,13 +290,7 @@ impl ProviderAdapter for SodaAdapter {
                 self.client.track_detail(id).await.map_err(|err| {
                     unavailable(format!("soda like-check failed: {}", err.message))
                 })?;
-            if body
-                .get("track")
-                .and_then(|track| track.get("state"))
-                .and_then(|state| state.get("is_collected"))
-                .and_then(Value::as_bool)
-                == Some(true)
-            {
+            if body.is_collected() == Some(true) {
                 liked_ids.push(id.clone());
             }
         }
@@ -315,155 +309,25 @@ fn unavailable(message: String) -> ProviderError {
     }
 }
 
-fn build_track_quality_availability(track_id: &str, detail: &Value) -> TrackQualityAvailability {
-    let soda_track = detail.get("track").filter(|value| value.is_object());
-    let label_info = soda_track
-        .and_then(|track| track.get("label_info"))
-        .filter(|value| value.is_object());
-    let mut seen = std::collections::HashSet::new();
-    let mut qualities = soda_track
-        .and_then(|track| track.get("bit_rates"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|bit_rate| soda_quality_option_from_bit_rate(bit_rate, label_info))
-        .filter(|option| seen.insert(option.id.clone()))
-        .collect::<Vec<_>>();
-
-    qualities
-        .sort_by_key(|option| soda_quality_rank(option.level.as_deref().unwrap_or(&option.id)));
-
-    TrackQualityAvailability {
+fn no_result(action: &str) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::NoResult,
         provider: "soda".to_owned(),
-        track_id: track_id.to_owned(),
-        default_quality: qualities
-            .iter()
-            .find(|quality| quality.request_quality == "exhigh")
-            .map(|quality| quality.request_quality.clone())
-            .or_else(|| {
-                qualities
-                    .first()
-                    .map(|quality| quality.request_quality.clone())
-            }),
-        qualities,
+        message: format!("{} no result", action),
+        retryable: false,
+        action: Some(action.to_string()),
+        raw_message: None,
     }
 }
 
-fn soda_quality_option_from_bit_rate(
-    bit_rate: &Value,
-    label_info: Option<&Value>,
-) -> Option<TrackQualityOption> {
-    let raw_quality = read_string(bit_rate.get("quality"));
-    if raw_quality.is_empty() || raw_quality.eq_ignore_ascii_case("lossless") {
-        return None;
-    }
-    let level = map_soda_playback_quality(&raw_quality)?;
-    let br = read_number_u32(bit_rate.get("br"));
-    let size = read_number_u64(bit_rate.get("size"));
-    Some(TrackQualityOption {
+fn invalid_response(message: String) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::InvalidResponse,
         provider: "soda".to_owned(),
-        id: level.to_owned(),
-        label: soda_quality_label(level, &raw_quality),
-        detail: Some(soda_quality_detail(&raw_quality, label_info)),
-        request_quality: level.to_owned(),
-        level: Some(level.to_owned()),
-        r#type: Some(raw_quality),
-        br: (br > 0).then_some(br),
-        size: (size > 0).then_some(size),
-        source: "declared".to_owned(),
-        ..Default::default()
-    })
-}
-
-fn soda_quality_detail(raw_quality: &str, label_info: Option<&Value>) -> String {
-    let quality = raw_quality.trim().to_lowercase();
-    let vip_play_qualities =
-        read_soda_quality_list(label_info.and_then(|value| value.get("quality_only_vip_can_play")));
-    let vip_download_qualities = read_soda_quality_list(
-        label_info.and_then(|value| value.get("quality_only_vip_can_download")),
-    );
-    let vip_playable = label_info
-        .and_then(|value| value.get("only_vip_playable"))
-        .and_then(Value::as_bool)
-        == Some(true)
-        || vip_play_qualities.contains(&quality);
-    let vip_download = label_info
-        .and_then(|value| value.get("only_vip_download"))
-        .and_then(Value::as_bool)
-        == Some(true)
-        || vip_download_qualities.contains(&quality);
-    let mut parts = vec![if vip_playable {
-        "仅 VIP 可播放".to_owned()
-    } else {
-        "可播放".to_owned()
-    }];
-    if vip_download {
-        parts.push("仅VIP可下载".to_owned());
-    }
-    parts.join(" · ")
-}
-
-fn read_soda_quality_list(value: Option<&Value>) -> std::collections::HashSet<String> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(|item| item.trim().to_lowercase())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
-fn map_soda_playback_quality(raw: &str) -> Option<&'static str> {
-    let text = raw.trim().to_lowercase();
-    for option in SODA_PLAYBACK_QUALITY_OPTIONS {
-        let soda_level = option.soda_level.to_lowercase();
-        if text == soda_level || text.contains(&soda_level) {
-            return Some(option.level);
-        }
-        if option.aliases.iter().any(|alias| {
-            let alias = alias.to_lowercase();
-            text == alias || text.contains(&alias)
-        }) {
-            return Some(option.level);
-        }
-    }
-    if text.contains("master") || text.contains("jymaster") {
-        return Some("jymaster");
-    }
-    if text.contains("320") || text.contains("exhigh") {
-        return Some("exhigh");
-    }
-    if text.contains("hires") || text.contains("hi-res") {
-        return Some("hires");
-    }
-    if text.contains("flac") || text.contains("lossless") || text.contains("sq") {
-        return Some("lossless");
-    }
-    if text.contains("high") {
-        return Some("exhigh");
-    }
-    if text.contains("128") || text.contains("standard") || text.contains("normal") {
-        return Some("standard");
-    }
-    None
-}
-
-fn soda_quality_rank(level: &str) -> usize {
-    SODA_PLAYBACK_QUALITY_OPTIONS
-        .iter()
-        .position(|option| option.level == level)
-        .unwrap_or(SODA_PLAYBACK_QUALITY_OPTIONS.len())
-}
-
-fn soda_quality_label(mapped: &str, raw: &str) -> String {
-    match mapped {
-        "jymaster" => "录音室音质".to_owned(),
-        "hires" => "超清全景声".to_owned(),
-        "lossless" => "无损音质".to_owned(),
-        "exhigh" => "极高音质".to_owned(),
-        "standard" => "标准音质".to_owned(),
-        _ => raw.to_owned(),
+        message,
+        retryable: false,
+        action: None,
+        raw_message: None,
     }
 }
 
@@ -513,35 +377,6 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-fn read_string(value: Option<&Value>) -> String {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn read_number_u32(value: Option<&Value>) -> u32 {
-    value
-        .and_then(|value| match value {
-            Value::Number(value) => value.as_u64(),
-            Value::String(value) => value.trim().parse::<u64>().ok(),
-            _ => None,
-        })
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or_default()
-}
-
-fn read_number_u64(value: Option<&Value>) -> u64 {
-    value
-        .and_then(|value| match value {
-            Value::Number(value) => value.as_u64(),
-            Value::String(value) => value.trim().parse::<u64>().ok(),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
 fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> SongLikeCheckAck {
     let liked_set = liked_ids
         .iter()
@@ -554,88 +389,5 @@ fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> 
             .iter()
             .map(|id| (id.clone(), liked_set.contains(id)))
             .collect(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn soda_track_qualities_match_ts_shape() {
-        let detail = json!({
-            "track": {
-                "label_info": {
-                    "only_vip_download": false,
-                    "only_vip_playable": false,
-                    "quality_only_vip_can_download": ["spatial"],
-                    "quality_only_vip_can_play": ["highest"]
-                },
-                "bit_rates": [
-                    { "br": 132163, "size": 5965060, "quality": "higher" },
-                    { "br": 324197, "size": 14631348, "quality": "spatial" },
-                    { "br": 0, "size": 0, "quality": "lossless" },
-                    { "br": 980000, "size": 44100000, "quality": "highest" }
-                ]
-            }
-        });
-
-        let result = build_track_quality_availability("soda-1", &detail);
-
-        assert_eq!(result.provider, "soda");
-        assert_eq!(result.track_id, "soda-1");
-        assert_eq!(result.default_quality.as_deref(), Some("exhigh"));
-        assert_eq!(
-            result
-                .qualities
-                .iter()
-                .map(|quality| quality.request_quality.as_str())
-                .collect::<Vec<_>>(),
-            vec!["jymaster", "lossless", "exhigh"]
-        );
-        assert_eq!(
-            result
-                .qualities
-                .iter()
-                .map(|quality| quality.r#type.as_deref().unwrap_or_default())
-                .collect::<Vec<_>>(),
-            vec!["spatial", "highest", "higher"]
-        );
-
-        let exhigh = result
-            .qualities
-            .iter()
-            .find(|quality| quality.request_quality == "exhigh")
-            .unwrap();
-        assert_eq!(exhigh.br, Some(132163));
-        assert_eq!(exhigh.size, Some(5965060));
-        assert!(exhigh.detail.as_deref().unwrap_or_default().contains("VIP") == false);
-
-        let jymaster = result
-            .qualities
-            .iter()
-            .find(|quality| quality.request_quality == "jymaster")
-            .unwrap();
-        assert!(
-            jymaster
-                .detail
-                .as_deref()
-                .unwrap_or_default()
-                .contains("VIP")
-        );
-
-        let lossless = result
-            .qualities
-            .iter()
-            .find(|quality| quality.request_quality == "lossless")
-            .unwrap();
-        assert!(
-            lossless
-                .detail
-                .as_deref()
-                .unwrap_or_default()
-                .contains("VIP")
-        );
     }
 }
