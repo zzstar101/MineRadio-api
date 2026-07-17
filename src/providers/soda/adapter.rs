@@ -76,6 +76,7 @@ impl ProviderAdapter for SodaAdapter {
             .lyric(&track.source_id)
             .await?
             .standardize_lyric();
+        let lyrics = lyrics.ok_or_else(|| no_result("lyric"))?;
         let trans = trans
             .and_then(|t| UniversalLrcParser.parse(t).ok())
             .map(|t| {

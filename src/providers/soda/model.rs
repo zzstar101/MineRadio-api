@@ -336,7 +336,7 @@ pub(super) struct SodaTrackV2Resp {
 }
 
 impl SodaTrackV2Resp {
-    pub fn standardize_lyric(self) -> (String, Option<String>, String) {
+    pub fn standardize_lyric(self) -> (Option<String>, Option<String>, String) {
         (
             self.lyric.content,
             self.lyric.translations.map(|t| t.cn),
@@ -361,7 +361,7 @@ impl SodaTrackV2Resp {
 
 #[derive(Deserialize)]
 struct Lyric {
-    content: String,
+    content: Option<String>,
     translations: Option<Cn>,
 }
 
