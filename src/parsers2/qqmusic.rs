@@ -73,14 +73,15 @@ impl MemchrParsers for QQMusicParser {
             };
             cpos += rp + 1;
             let dc = text_raw.encode_utf16().count();
+            let word_c0 = c0 + char_count;
             char_count += dc;
             line.push_str(&text_raw);
             result.push(LyricWord {
                 time_ms,
                 duration_ms,
                 text: Some(text_raw),
-                c0,
-                c1: c0 + dc,
+                c0: word_c0,
+                c1: word_c0 + dc,
             });
         }
 

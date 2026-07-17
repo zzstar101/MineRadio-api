@@ -38,6 +38,7 @@ pub trait MemchrParsers {
         let mut result: Vec<LyricWord> = Vec::new();
         let mut line = String::new();
         let mut char_count = 0usize;
+        let mut c0 = c0;
         while cpos < clen {
             // 找 '<'
             let Some(la) = memchr(left_delimiter, &cbytes[cpos..]) else {
@@ -89,14 +90,16 @@ pub trait MemchrParsers {
             let text_raw = content[cpos..text_end].to_string();
             cpos = text_end;
             let dc = text_raw.encode_utf16().count();
+            let word_c0 = c0;
+            c0 += dc;
             char_count += dc;
             line.push_str(&text_raw);
             result.push(LyricWord {
                 time_ms,
                 duration_ms,
                 text: Some(text_raw),
-                c0,
-                c1: c0 + dc,
+                c0: word_c0,
+                c1: c0,
             });
         }
 
@@ -159,5 +162,31 @@ pub trait MemchrParsers {
         }
 
         Ok(lineinfo)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemchrParsers;
+
+    struct TestParser;
+
+    impl MemchrParsers for TestParser {}
+
+    #[test]
+    fn word_character_ranges_continue_across_lines() {
+        let lines = TestParser
+            .parse("[0,100]<0,50>你<50,50>好[100,100]<0,50>A<50,50>😀".to_string())
+            .unwrap();
+
+        let ranges: Vec<(usize, usize)> = lines
+            .iter()
+            .flat_map(|line| line.words.as_ref().unwrap())
+            .map(|word| (word.c0, word.c1))
+            .collect();
+
+        assert_eq!(ranges, vec![(0, 1), (1, 2), (2, 3), (3, 5)]);
+        assert_eq!(lines[0].char_count, Some(2));
+        assert_eq!(lines[1].char_count, Some(3));
     }
 }
