@@ -451,19 +451,20 @@ impl SodaTrack {
         let s: Vec<TrackQualityOption> = self
             .bit_rates
             .into_iter()
-            .map(|b| {
+            .filter_map(|b| {
                 let raw_quality = b.quality;
                 let (level, label) = match raw_quality.as_str() {
                     "spatial" => ("jymaster", "录音室音质"),
                     "hi_res" => ("hires", "超清全景声"),
                     "highest" => ("lossless", "无损音质"),
                     "higher" => ("exhigh", "极高音质"),
-                    "medium" | _ => ("standard", "标准音质"),
+                    "medium" => ("standard", "标准音质"),
+                    _ => return None
                 };
                 let (level, label) = (level.to_string(), label.to_string());
                 let br = b.br;
                 let size = b.size;
-                TrackQualityOption {
+                Some(TrackQualityOption {
                     provider: "soda".to_owned(),
                     id: level.to_owned(),
                     label,
@@ -482,7 +483,7 @@ impl SodaTrack {
                     size: Some(size),
                     source: "declared".to_owned(),
                     ..Default::default()
-                }
+                })
             })
             .collect();
         if s.is_empty() { None } else { Some(s) }
