@@ -74,6 +74,10 @@ impl QqAlbumDetailResp {
             song_list.album_mid
         );
         let mut track_ids = Vec::new();
+
+        let info = self.info.data;
+        let (album, artists) = (info.basic_info, info.singer);
+
         let tracks: Vec<Track> = song_list
             .song_list
             .into_iter()
@@ -87,7 +91,7 @@ impl QqAlbumDetailResp {
                     media_mid: Some(l.mid),
                     title: l.title,
                     artists: l.singer.into_iter().map(|s| s.name).collect(),
-                    album: l.album.name,
+                    album: album.album_name.clone(),
                     cover_url: cover_url.clone(),
                     quality_hints: vec!["standard".to_owned()],
                     playable_state: if l.pay.pay_play == 1 {
@@ -100,8 +104,7 @@ impl QqAlbumDetailResp {
                 }
             })
             .collect();
-        let info = self.info.data;
-        let (album, artists) = (info.basic_info, info.singer);
+        
         AlbumDetail {
             provider: "qq".to_owned(),
             id: album.album_mid.clone(),
@@ -148,8 +151,6 @@ struct QqAlbumDetailTrack {
     title: String,
 
     singer: Vec<Singer>,
-
-    album: Album,
 
     interval: i64,
 
@@ -237,7 +238,7 @@ struct Album {
     mid: String,
     name: String,
     songnum: Option<u32>,
-    #[serde(rename = "v_singer")]
+    #[serde(alias = "v_singer")]
     singer: Vec<Singer>,
 }
 
