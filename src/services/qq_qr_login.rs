@@ -393,14 +393,14 @@ fn extract_query_param(location: &str, name: &str) -> Option<String> {
 }
 
 fn default_guid() -> String {
-    use rand::Rng;
+    use rand::RngExt;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
         .chars()
         .map(|part| match part {
-            'x' => format!("{:x}", rng.gen_range(0..16)),
-            'y' => format!("{:x}", (rng.gen_range(0..16) & 3) | 8),
+            'x' => format!("{:x}", rng.random_range(0..16)),
+            'y' => format!("{:x}", (rng.random_range(0..16) & 3) | 8),
             other => other.to_string(),
         })
         .collect::<String>()

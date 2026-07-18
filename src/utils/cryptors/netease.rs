@@ -7,7 +7,7 @@ use std::io::Read;
 use anyhow::{Context, anyhow};
 use flate2::read::GzDecoder;
 use md5::{Digest, Md5};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -57,9 +57,10 @@ pub fn encrypt_weapi_rsa(plaintext: &str, public_key: Option<&str>) -> Result<St
 }
 
 pub fn generate_weapi_secret_key() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
+
     (0..16)
-        .map(|_| BASE62[rng.gen_range(0..=61)] as char)
+        .map(|_| BASE62[rng.random_range(0..=61)] as char)
         .collect()
 }
 
