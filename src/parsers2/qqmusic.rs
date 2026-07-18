@@ -1,11 +1,8 @@
-use crate::parsers2::{MemchrParsers, lrc::*};
+use crate::parsers2::MemchrParsers;
 use crate::types::LyricLine;
 use crate::types::LyricWord;
 use crate::utils::cryptors::decrypt_qrc;
 use memchr::memchr;
-///QQ音乐LRC歌词解析器
-pub struct QQMusicLrcParser;
-impl LrcParser for QQMusicLrcParser {}
 ///QQ音乐逐字歌词解析器
 pub struct QQMusicParser;
 impl QQMusicParser {
