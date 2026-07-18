@@ -37,6 +37,13 @@ pub fn hash33(s: &str) -> u64 {
 }
 
 
+pub fn gtk_from_pskey(input: &str) -> u64 {
+    input.bytes().fold(HASH33_INIT, |hash, byte| {
+        hash.wrapping_add(hash << 5).wrapping_add(byte as u64)
+    }) & HASH33_MASK
+}
+
+
 pub fn get_search_id() -> String {
     let mut rng = rand::rng();
     let e = rng.random_range(1_u64..=20);

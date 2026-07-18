@@ -8,7 +8,7 @@ use reqwest::{
 };
 
 use crate::{
-    providers::qq::sign::{gtk_from_pskey, hash33},
+    utils::cryptors::qq::{gtk_from_pskey, hash33},
     services::auth_session::set_runtime_provider_cookie,
     types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
 };
@@ -282,7 +282,7 @@ fn cookie_header(cookies: &CookieMap) -> String {
     cookies.values().cloned().collect::<Vec<_>>().join("; ")
 }
 
-fn encode_key(qrsig: &str, ptqrtoken: u32) -> String {
+fn encode_key(qrsig: &str, ptqrtoken: u64) -> String {
     format!("{}|{}", urlencoding::encode(qrsig), ptqrtoken)
 }
 
@@ -328,7 +328,7 @@ fn normalize_poll_message(result: &QqPtuiResult, text: &str) -> String {
     }
 }
 
-fn build_authorize_form(gtk: u32) -> Vec<(&'static str, String)> {
+fn build_authorize_form(gtk: u64) -> Vec<(&'static str, String)> {
     vec![
         ("response_type", "code".to_owned()),
         ("client_id", "100497308".to_owned()),
@@ -346,7 +346,7 @@ fn build_authorize_form(gtk: u32) -> Vec<(&'static str, String)> {
     ]
 }
 
-fn build_musicu_body(gtk: u32, code: &str) -> String {
+fn build_musicu_body(gtk: u64, code: &str) -> String {
     serde_json::json!({
         "comm": { "g_tk": gtk, "platform": "yqq", "ct": 24, "cv": 0 },
         "req": {

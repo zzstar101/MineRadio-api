@@ -16,8 +16,7 @@ use crate::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqSearchResp},
-    },
-    services::auth_session,
+    }, services::auth_session, utils::cryptors::qq::sign,
 };
 
 const UA: &str = "Mozilla/5.0";
@@ -91,23 +90,8 @@ impl QqClient {
     }
 
     #[allow(dead_code)]
-    pub fn get_sign(&self, data: &str) -> ProviderResult<String> {
-        let runtime = Runtime::new().map_err(internal_error)?;
-        let context = JsContext::full(&runtime).map_err(internal_error)?;
-        context.with(|context| {
-            context
-                .eval::<(), _>(qq_sign_source())
-                .catch(&context)
-                .map_err(internal_error)?;
-            let get_sign = context
-                .globals()
-                .get::<_, Function>("get_sign")
-                .map_err(internal_error)?;
-            get_sign
-                .call((data,))
-                .catch(&context)
-                .map_err(internal_error)
-        })
+    pub fn get_sign(&self, payload: &str) -> ProviderResult<String> {
+        Ok(sign(payload))
     }
 
     pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QqSearchResp> {
