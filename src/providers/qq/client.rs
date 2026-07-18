@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use anyhow::Context;
 use base64::Engine;
@@ -21,10 +21,7 @@ use crate::{
 };
 
 const UA: &str = "Mozilla/5.0";
-#[allow(dead_code)]
-const QQ_SIGN_LOADER: &str = include_str!("assets/loader.js");
-#[allow(dead_code)]
-const QQ_SIGN_MODULE: &str = include_str!("assets/module.js");
+
 
 #[derive(Clone, Default)]
 pub struct QqClient {
@@ -830,19 +827,7 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     }
 }
 
-#[allow(dead_code)]
-fn qq_sign_source() -> &'static str {
-    static SOURCE: OnceLock<String> = OnceLock::new();
 
-    SOURCE
-        .get_or_init(|| {
-            let loader = QQ_SIGN_LOADER.replacen("require('./module')", QQ_SIGN_MODULE, 1);
-            format!(
-                "var global = globalThis; var window = globalThis; var location = {{}}; var document = {{}}; var navigator = {{}}; var console = {{ log: function() {{}} }}; var data; var origin_rsult; var result;\n{loader}"
-            )
-        })
-        .as_str()
-}
 
 #[cfg(test)]
 mod tests {

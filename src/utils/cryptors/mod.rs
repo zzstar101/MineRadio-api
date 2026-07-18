@@ -5,6 +5,7 @@
 pub mod crypto;
 pub mod krc;
 pub mod netease;
+pub mod qq;
 pub mod qrc;
 
 #[allow(unused_imports)]
