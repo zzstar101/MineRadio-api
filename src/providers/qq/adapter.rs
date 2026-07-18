@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use serde_json::Value;
-
 use crate::{
+    parsers2::{
+        lrc::{LrcParser, UniversalLrcParser},
+        qqmusic::QQMusicParser,
+    },
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
@@ -14,12 +15,15 @@ use crate::{
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
         TrackQualityAvailability, TrackQualityOption,
     },
+    utils::decrypt_qrc,
 };
+use async_trait::async_trait;
+use serde_json::Value;
 
 use super::{
     client::QqClient,
     map::{
-        map_qq_lyric_to_payload, map_qq_playlist_to_detail, map_qq_playlist_to_detail_official,
+        map_qq_playlist_to_detail, map_qq_playlist_to_detail_official,
         map_qq_playlist_to_summary, map_qq_song_to_track, normalize_provider_image_url,
     },
 };
@@ -162,38 +166,56 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
-        let mut body = self.client.lyric(&track.source_id).await?;
-        let mut source = "qq-musicu";
-        if body
-            .get("lyric")
-            .and_then(Value::as_str)
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true)
-        {
-            if let Ok(legacy) = self.client.legacy_lyric(&track.source_id).await {
-                if legacy
-                    .get("lyric")
-                    .and_then(Value::as_str)
-                    .map(|value| !value.trim().is_empty())
-                    .unwrap_or(false)
-                {
-                    body = legacy;
-                    source = "qq-legacy";
-                }
+        let (lyrics, trans) = self.client.lyric(&track.source_id).await?.standardize();
+        // 温馨提示, 两个都是加了密的
+        // TODO: 由于翻译歌词使用百分秒结构所以hashmap生成的和逐字歌词可能出现不吻合导致无法将对应翻译句子放入正确部分
+        let lyric = lyrics.ok_or_else(|| no_result("lyric"))?;
+        let trans = trans
+            .and_then(|t| decrypt_qrc(&t).ok())
+            .and_then(|t| UniversalLrcParser.parse(t).ok())
+            .map(|t| {
+                t.into_iter()
+                    .map(|line| (line.time_ms, line.text))
+                    .collect::<std::collections::HashMap<_, _>>()
+            });
+        let (lines, has_translation) = {
+            let base_lines = match QQMusicParser.decrypt_and_parse(lyric.clone()) {
+                Ok(l) => l,
+                Err(e) => match UniversalLrcParser.parse(lyric) {
+                    Ok(l) => l,
+                    Err(e2) => return Err(invalid_response(e + " " + &e2)),
+                },
+            };
+            match trans {
+                Some(trans) => (
+                    base_lines
+                        .into_iter()
+                        .map(|mut line| {
+                            line.translation = trans
+                                .get(&line.time_ms)
+                                .cloned()
+                                .filter(|value| !value.is_empty());
+                            line
+                        })
+                        .collect::<Vec<_>>(),
+                    true,
+                ),
+                None => (base_lines, false),
             }
-        }
-
-        Ok(map_qq_lyric_to_payload(
-            &track.source_id,
-            body.get("lyric")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            body.get("trans")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            body.get("qrc").and_then(Value::as_str).unwrap_or_default(),
-            Some(source),
-        ))
+        };
+        let is_word_by_word = lines.iter().any(|line| {
+            line.words
+                .as_ref()
+                .map(|words| !words.is_empty())
+                .unwrap_or(false)
+        });
+        Ok(LyricPayload {
+            provider: "soda".to_owned(),
+            track_id: track.id.clone(),
+            lines,
+            has_translation,
+            is_word_by_word,
+        })
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
@@ -1270,6 +1292,28 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
     status.vip_icon_url = resolved_vip_icon_url;
     status.vip_tier = tier;
     status.vip_level_name = tier_name;
+}
+
+fn no_result(action: &str) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::NoResult,
+        provider: "qq".to_owned(),
+        message: format!("{} no result", action),
+        retryable: false,
+        action: Some(action.to_string()),
+        raw_message: None,
+    }
+}
+
+fn invalid_response(message: String) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::InvalidResponse,
+        provider: "qq".to_owned(),
+        message,
+        retryable: false,
+        action: None,
+        raw_message: None,
+    }
 }
 
 #[cfg(test)]

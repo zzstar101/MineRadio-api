@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use base64::Engine;
 use reqwest::{
     Client,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
 };
-use rquickjs::{CatchResultExt, Context as JsContext, Function, Runtime};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
@@ -15,12 +13,13 @@ use crate::{
     providers::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
-        qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqSearchResp},
-    }, services::auth_session, utils::cryptors::qq::sign,
+        qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqSearchResp},
+    },
+    services::auth_session,
+    utils::cryptors::qq::sign,
 };
 
 const UA: &str = "Mozilla/5.0";
-
 
 #[derive(Clone, Default)]
 pub struct QqClient {
@@ -90,8 +89,9 @@ impl QqClient {
     }
 
     #[allow(dead_code)]
-    pub fn get_sign(&self, payload: &str) -> ProviderResult<String> {
-        Ok(sign(payload))
+    pub fn get_sign(&self, payload: &Value) -> ProviderResult<String> {
+        let payload = serde_json::to_string(payload).map_err(|err| unavailable_error(err))?;
+        Ok(sign(&payload))
     }
 
     pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QqSearchResp> {
@@ -232,43 +232,25 @@ impl QqClient {
         .await
     }
 
-    pub async fn lyric(&self, song_mid: &str) -> ProviderResult<Value> {
-        self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
-            .await
-    }
-
-    pub async fn legacy_lyric(&self, song_mid: &str) -> ProviderResult<Value> {
-        self.lyric_internal(song_mid, Some("https://y.qq.com/portal/player.html"))
-            .await
-    }
-
-    async fn lyric_internal(&self, song_mid: &str, referer: Option<&str>) -> ProviderResult<Value> {
-        let cookie = self.current_cookie().await;
-        let login_uin = self.euin().await.unwrap_or_else(|| "0".to_owned());
-        let url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
-        let mut body = self
-            .get_json(
-                url,
-                &[
-                    ("songmid", song_mid.to_owned()),
-                    ("songtype", "0".to_owned()),
-                    ("format", "json".to_owned()),
-                    ("nobase64", "1".to_owned()),
-                    ("g_tk", "5381".to_owned()),
-                    ("loginUin", login_uin),
-                    ("hostUin", "0".to_owned()),
-                    ("inCharset", "utf8".to_owned()),
-                    ("outCharset", "utf-8".to_owned()),
-                    ("notice", "0".to_owned()),
-                    ("platform", "yqq.json".to_owned()),
-                    ("needNewCode", "0".to_owned()),
-                ],
-                referer,
-                cookie.as_deref(),
-            )
-            .await?;
-        decode_qq_lyric_payload(&mut body);
-        Ok(body)
+    pub async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
+        self.post_json_with_sign(
+            &json!({"req_0": {
+                "method": "GetPlayLyricInfo",
+                "module": "music.musichallSong.PlayLyricInfo",
+                "param": {
+                "crypt": 1,
+                "qrc": 1,
+                "songMID": song_mid,
+                "trans": 1,
+                "type": 0
+                }
+            }
+            }),
+            None,
+            self.current_cookie().await.as_deref(),
+            "lyric",
+        )
+        .await
     }
 
     pub async fn login_status_with_cookie(
@@ -525,6 +507,39 @@ impl QqClient {
         parse_json_like(&text)
     }
 
+    async fn post_json_with_sign<T: DeserializeOwned>(
+        &self,
+        body: &Value,
+        referer: Option<&str>,
+        cookie: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let sign = self.get_sign(body)?;
+        let response = self
+            .http
+            .post("https://u.y.qq.com/cgi-bin/musics.fcg")
+            .query(&[("sign", sign.as_str())])
+            .headers(build_headers(referer, cookie, false)?)
+            .json(&body)
+            .send()
+            .await
+            .context("send qq upstream post request")
+            .map_err(unavailable_error)?;
+        let raw = response
+            .bytes()
+            .await
+            .context("read qq upstream response")
+            .map_err(unavailable_error)?;
+        serde_json::from_slice(&raw).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "qq".to_owned(),
+            message: format!("decode qq {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&raw).into_owned()),
+        })
+    }
+
     async fn post_form(
         &self,
         url: &str,
@@ -764,27 +779,6 @@ fn qq_quality_file(quality: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn decode_qq_lyric_payload(body: &mut Value) {
-    if let Some(root) = body.as_object_mut() {
-        if let Some(lyric) = root.get("lyric").and_then(Value::as_str) {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(lyric) {
-                root.insert(
-                    "lyric".to_owned(),
-                    Value::String(String::from_utf8_lossy(&decoded).to_string()),
-                );
-            }
-        }
-        if let Some(trans) = root.get("trans").and_then(Value::as_str) {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trans) {
-                root.insert(
-                    "trans".to_owned(),
-                    Value::String(String::from_utf8_lossy(&decoded).to_string()),
-                );
-            }
-        }
-    }
-}
-
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(internal_error)
 }
@@ -810,8 +804,6 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
         raw_message: None,
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -843,10 +835,10 @@ mod tests {
 
     #[test]
     fn get_sign_executes_the_bundled_javascript() {
-        let data = r#"{"comm":{"ct":24},"req_1":{"module":"test","method":"test","param":{}}}"#;
+        let data = json!({"comm":{"ct":24},"req_1":{"module":"test","method":"test","param":{}}});
 
         assert_eq!(
-            QqClient::new().get_sign(data).expect("calculate qq sign"),
+            QqClient::new().get_sign(&data).expect("calculate qq sign"),
             "zzcfcaa938yzk1nuourdgrzbse3gvchq0j1vk92298b96"
         );
     }

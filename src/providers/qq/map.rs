@@ -1,8 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    parsers::{lrc, qq},
-    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track},
+    types::{PlayableState, PlaylistDetail, PlaylistSummary, Track},
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {
@@ -91,57 +90,7 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
     }
 }
 
-pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
-    lrc::parse_lrc(text)
-}
 
-pub fn parse_qrc(text: &str) -> Vec<LyricLine> {
-    qq::parse_qrc_text(text)
-}
-
-pub fn map_qq_lyric_to_payload(
-    track_id: &str,
-    lyric: &str,
-    trans: &str,
-    qrc: &str,
-    source: Option<&str>,
-) -> LyricPayload {
-    let mut line_source = source
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let base_lines = {
-        let lrc_lines = parse_lrc(lyric);
-        if lrc_lines.is_empty() && !qrc.trim().is_empty() {
-            line_source = Some("qrc".to_owned());
-            parse_qrc(qrc)
-        } else {
-            lrc_lines
-        }
-    };
-    let translations = parse_lrc(trans)
-        .into_iter()
-        .map(|line| (line.time_ms, line.text))
-        .collect::<std::collections::HashMap<_, _>>();
-    let lines = base_lines
-        .into_iter()
-        .map(|mut line| {
-            if let Some(source) = line_source.as_deref() {
-                line.source = Some(source.to_owned());
-            }
-            line.translation = translations.get(&line.time_ms).cloned();
-            line
-        })
-        .collect::<Vec<_>>();
-
-    LyricPayload {
-        provider: "qq".to_owned(),
-        track_id: track_id.to_owned(),
-        lines,
-        has_translation: !trans.trim().is_empty() && !translations.is_empty(),
-        is_word_by_word: false,
-    }
-}
 
 pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     PlaylistSummary {

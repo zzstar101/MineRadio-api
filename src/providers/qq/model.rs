@@ -58,6 +58,74 @@ impl QqSearchResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct QqLyricResp {
+    req_0: QqLyricReq,
+}
+
+impl QqLyricResp {
+    pub fn standardize(self) -> (Option<String>, Option<String>) {
+        let a = self.req_0.data;
+        (a.lyric, a.trans)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QqLyricReq {
+    data: QqLyricData,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QqLyricData {
+    //crypt: i64,
+    lyric: Option<String>,
+    trans: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct QqAlbumListResp {
+    #[serde(rename = "req_0")]
+    list: QqAlbumListResponse,
+}
+
+impl QqAlbumListResp {
+    pub(super) fn standardize(self) -> Vec<AlbumSummary> {
+        self.list
+            .data
+            .albums
+            .into_iter()
+            .map(|s| AlbumSummary {
+                provider: "qq".to_owned(),
+                id: s.mid.clone(),
+                name: s.name,
+                artists: s.singer.into_iter().map(|a| a.name).collect(),
+                cover_url: format!(
+                    "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                    s.mid
+                ),
+                track_count: s.songnum,
+                track_ids: vec![],
+                collected: Some(true),
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct QqAlbumListResponse {
+    data: QqAlbumListData,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqAlbumListData {
+    //number: i64,
+    //hasmore: i64,
+    #[serde(rename = "v_list")]
+    albums: Vec<Album>,
+    //total: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct QqAlbumDetailResp {
     #[serde(rename = "req_0")]
     song_list: QqAlbumDetailSongListResponse,
@@ -104,7 +172,7 @@ impl QqAlbumDetailResp {
                 }
             })
             .collect();
-        
+
         AlbumDetail {
             provider: "qq".to_owned(),
             id: album.album_mid.clone(),
@@ -186,49 +254,6 @@ struct QqAlbumDetailInfo {
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailArtists {
     singer_list: Vec<Singer>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct QqAlbumListResp {
-    #[serde(rename = "req_0")]
-    list: QqAlbumListResponse,
-}
-
-impl QqAlbumListResp {
-    pub(super) fn standardize(self) -> Vec<AlbumSummary> {
-        self.list
-            .data
-            .albums
-            .into_iter()
-            .map(|s| AlbumSummary {
-                provider: "qq".to_owned(),
-                id: s.mid.clone(),
-                name: s.name,
-                artists: s.singer.into_iter().map(|a| a.name).collect(),
-                cover_url: format!(
-                    "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                    s.mid
-                ),
-                track_count: s.songnum,
-                track_ids: vec![],
-                collected: Some(true),
-            })
-            .collect()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct QqAlbumListResponse {
-    data: QqAlbumListData,
-}
-
-#[derive(Debug, Deserialize)]
-struct QqAlbumListData {
-    //number: i64,
-    //hasmore: i64,
-    #[serde(rename = "v_list")]
-    albums: Vec<Album>,
-    //total: i64,
 }
 
 //Reusable Struct

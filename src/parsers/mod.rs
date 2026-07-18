@@ -1,6 +1,5 @@
 pub mod lrc;
 pub mod netease;
-pub mod qq;
 
 use crate::types::LyricLine;
 
