@@ -4,12 +4,15 @@ use reqwest::{
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue},
 };
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::providers::{
     ProviderResult,
     error::{ProviderError, ProviderErrorCode},
-    soda::model::{SodaPLaylistDetailResp, SodaPlaylistListResp, SodaTrackV2Resp},
+    soda::model::{
+        SodaCollectionResp, SodaLoginStatusResp, SodaPLaylistDetailResp, SodaPlaylistListResp,
+        SodaTrackV2Resp,
+    },
 };
 use crate::services::auth_session;
 
@@ -119,12 +122,13 @@ impl SodaClient {
         playlist_id: &str,
     ) -> ProviderResult<SodaPLaylistDetailResp> {
         let cookie = self.current_cookie().await;
-        self.get_model(
-            playlist_detail_url(playlist_id, 0, 20)?,
-            cookie.as_deref(),
-            "playlist_detail",
-        )
-        .await
+        let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
+        url.query_pairs_mut()
+            .append_pair("playlist_id", playlist_id)
+            .append_pair("cursor", &0.to_string())
+            .append_pair("count", &20.to_string());
+        self.get_model(url.to_string(), cookie.as_deref(), "playlist_detail")
+            .await
     }
 
     pub(super) async fn album_list(&self) -> ProviderResult<SodaAlbumListResp> {
@@ -145,16 +149,20 @@ impl SodaClient {
         .await
     }
 
-    pub async fn login_status(&self) -> ProviderResult<Value> {
-        self.get_json(ME_URL.to_owned(), self.current_cookie().await.as_deref())
-            .await
+    pub(super) async fn login_status(&self) -> ProviderResult<SodaLoginStatusResp> {
+        self.get_model(
+            ME_URL.to_owned(),
+            self.current_cookie().await.as_deref(),
+            "login_status",
+        )
+        .await
     }
 
-    pub async fn collection_media(
+    pub(super) async fn like_song(
         &self,
         track_id: &str,
         liked: bool,
-    ) -> ProviderResult<(Value, u16)> {
+    ) -> ProviderResult<SodaCollectionResp> {
         let url = if liked {
             COLLECTION_MEDIA_URL
         } else {
@@ -182,36 +190,6 @@ impl SodaClient {
             .await
             .context("send soda collection-media request")
             .map_err(unavailable_error)?;
-        let status = response.status().as_u16();
-        let body = response
-            .json::<Value>()
-            .await
-            .context("parse soda collection-media response")
-            .map_err(unavailable_error)?;
-        Ok((body, status))
-    }
-
-    pub async fn logout(&self) -> ProviderResult<Value> {
-        self.get_json(
-            LOGOUT_URL.to_owned(),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
-    async fn get_json(&self, url: String, cookie: Option<&str>) -> ProviderResult<Value> {
-        let mut headers = HeaderMap::new();
-        if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
-            headers.insert(COOKIE, header_value(cookie)?);
-        }
-        let response = self
-            .http
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .context("send soda upstream request")
-            .map_err(unavailable_error)?;
         let status = response.status();
         if !status.is_success() {
             return Err(ProviderError {
@@ -223,11 +201,39 @@ impl SodaClient {
                 raw_message: None,
             });
         }
-        response
-            .json::<Value>()
+        let body = response
+            .bytes()
             .await
-            .context("parse soda upstream response")
-            .map_err(unavailable_error)
+            .context("read soda upstream response")
+            .map_err(unavailable_error)?;
+        serde_json::from_slice(&body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: "soda".to_owned(),
+            message: format!("decode soda like_song response: {err}"),
+            retryable: false,
+            action: Some("like_song".to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
+        })
+    }
+
+    pub async fn logout(&self) -> ProviderResult<()> {
+        let mut headers = HeaderMap::new();
+        if let Some(cookie) = self
+            .current_cookie()
+            .await
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            headers.insert(COOKIE, header_value(cookie)?);
+        }
+        self.http
+            .get(LOGOUT_URL)
+            .headers(headers)
+            .send()
+            .await
+            .context("send soda upstream request")
+            .map_err(unavailable_error)?;
+        Ok(())
     }
 
     async fn get_model<T: DeserializeOwned>(
@@ -273,15 +279,6 @@ impl SodaClient {
             raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
         })
     }
-}
-
-fn playlist_detail_url(playlist_id: &str, cursor: u32, count: u32) -> ProviderResult<String> {
-    let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
-    url.query_pairs_mut()
-        .append_pair("playlist_id", playlist_id)
-        .append_pair("cursor", &cursor.to_string())
-        .append_pair("count", &count.to_string());
-    Ok(url.to_string())
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {

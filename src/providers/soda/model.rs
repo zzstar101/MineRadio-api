@@ -1,9 +1,71 @@
-use serde::Deserialize;
+use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, SongUrlOptions,
-    SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
+    SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
+
+#[derive(Deserialize)]
+pub(super) struct SodaLoginStatusResp {
+    my_info: Option<SodaLoginStatusInfo>,
+}
+
+impl SodaLoginStatusResp {
+    pub fn standardize(self) -> Option<ProviderLoginStatus> {
+        match self.my_info {
+            Some(info) => {
+                let vip_stage = info.vip_stage.unwrap_or_default();
+                let vip_level = match vip_stage.as_str() {
+                    "svip" => Some(VipLevel::Svip),
+                    "vip" => Some(VipLevel::Vip),
+                    "free" => Some(VipLevel::None),
+                    _ => None,
+                };
+                let vip_type = Some(match vip_stage.as_str() {
+                    "svip" => 11,
+                    "vip" => 1,
+                    _ => 0,
+                });
+                Some(ProviderLoginStatus {
+                    provider: "soda".to_owned(),
+                    logged_in: true,
+                    nickname: Some(info.nickname),
+                    user_id: Some(info.id),
+                    avatar_url: info.larger_avatar_url.urls.get(0).map(|u| u.to_string()),
+                    vip_type,
+                    vip_level,
+                    is_vip: Some(info.is_vip),
+                    is_svip: Some("svip" == &vip_stage),
+                    vip_label: (info.is_vip && !vip_stage.is_empty()).then_some(vip_stage.clone()),
+                    vip_level_name: (!vip_stage.is_empty()).then_some(vip_stage),
+                    ..Default::default()
+                })
+            }
+            None => None,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SodaLoginStatusInfo {
+    id: String,
+
+    nickname: String,
+
+    larger_avatar_url: AvatarUrl,
+
+    //medium_avatar_url: AvatarUrl,
+    is_vip: bool,
+
+    vip_stage: Option<String>,
+    //public_name: String,
+}
+
+//这个不能替换成通用Url 这个的urls带鉴权参数
+#[derive(Deserialize)]
+struct AvatarUrl {
+    urls: Vec<String>,
+}
 
 #[derive(Deserialize)]
 pub(super) struct SodaSearchResp {
@@ -136,13 +198,7 @@ struct Owner {
 
     medium_avatar_url: AvatarUrl,
 }
-
-#[derive(Deserialize)]
-struct AvatarUrl {
-    urls: Vec<String>,
-
-    need_complete_url: bool,
-}*/
+*/
 
 #[derive(Deserialize)]
 struct Playlist {
@@ -373,6 +429,39 @@ struct Cn {
 #[derive(Deserialize)]
 struct TrackPlayer {
     url_player_info: String,
+}
+
+#[derive(Deserialize)]
+pub(super) struct SodaCollectionResp {
+    status_code: Option<i64>,
+
+    status_info: Option<StatusInfo>,
+    //收藏成功判定
+    added_to_liked_playlist: Option<bool>,
+
+    collected_media: Option<IgnoredAny>,
+    //移除成功判定
+    deleted_media: Option<IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct StatusInfo {
+    status_msg: Option<String>,
+}
+
+impl SodaCollectionResp {
+    pub fn check(&self) -> bool {
+        (self.added_to_liked_playlist.unwrap_or_default() && self.collected_media.is_some())
+            || self.deleted_media.is_some()
+    }
+    pub fn get_err_message(self) -> (i64, String) {
+        (
+            self.status_code.unwrap_or(0),
+            self.status_info
+                .and_then(|s| s.status_msg)
+                .unwrap_or_default(),
+        )
+    }
 }
 
 //reuseable

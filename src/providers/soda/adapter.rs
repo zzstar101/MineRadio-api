@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::Value;
 
 use super::client::SodaClient;
 use crate::parsers2::{
@@ -151,82 +150,12 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
-        let Some(cookie) = self.client.current_cookie().await else {
-            return Ok(ProviderLoginStatus {
-                provider: "soda".to_owned(),
-                logged_in: false,
-                nickname: None,
-                user_id: None,
-                avatar_url: None,
-                ..Default::default()
-            });
-        };
-        if cookie.trim().is_empty() {
-            return Ok(ProviderLoginStatus {
-                provider: "soda".to_owned(),
-                logged_in: false,
-                nickname: None,
-                user_id: None,
-                avatar_url: None,
-                ..Default::default()
-            });
-        }
-        let body = self.client.login_status().await?;
-        let my_info = body.get("my_info");
-        let logged_in = body.get("status_code").and_then(Value::as_i64) == Some(0)
-            && my_info
-                .and_then(|info| info.get("id"))
-                .map(value_to_string)
-                .filter(|value| !value.is_empty())
-                .is_some();
-        let mut status = ProviderLoginStatus {
-            provider: "soda".to_owned(),
-            logged_in,
-            ..Default::default()
-        };
-        if logged_in {
-            status.nickname = my_info
-                .and_then(|info| info.get("nickname"))
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            status.user_id = my_info
-                .and_then(|info| info.get("id"))
-                .map(value_to_string)
-                .filter(|value| !value.is_empty());
-            status.avatar_url = my_info
-                .map(|info| read_soda_avatar_url(info.get("medium_avatar_url")))
-                .map(|value| normalize_provider_image_url(&value))
-                .filter(|value| !value.is_empty());
-            let vip_stage = my_info
-                .and_then(|info| info.get("vip_stage"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_owned();
-            let is_vip = my_info
-                .and_then(|info| info.get("is_vip"))
-                .and_then(Value::as_bool)
-                == Some(true);
-            let is_svip = is_vip && vip_stage == "svip";
-            let vip_level = if is_vip {
-                if is_svip { "svip" } else { "vip" }
-            } else {
-                "none"
-            };
-
-            status.vip_type = Some(match vip_level {
-                "svip" => 11,
-                "vip" => 1,
-                _ => 0,
-            });
-            status.vip_level = Some(vip_level.to_owned());
-            status.is_vip = Some(is_vip || is_svip);
-            status.is_svip = Some(is_svip);
-            status.vip_label = (is_vip && !vip_stage.is_empty()).then_some(vip_stage.clone());
-            status.vip_level_name = (!vip_stage.is_empty()).then_some(vip_stage);
-        }
-
-        Ok(status)
+        self.client.ensure_login().await?;
+        self.client
+            .login_status()
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("login_status"))
     }
 
     async fn logout(&self) -> ProviderResult<()> {
@@ -252,30 +181,20 @@ impl ProviderAdapter for SodaAdapter {
     async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
         self.client.ensure_login().await?;
         let clean_id = id.trim();
-        let (body, status) = self.client.collection_media(clean_id, liked).await?;
-        let ok_key = if liked {
-            "collected_media"
+        let req = self.client.like_song(clean_id, liked).await?;
+        if req.check() {
+            Ok(SongLikeAck {
+                provider: "soda".to_owned(),
+                id: clean_id.to_owned(),
+                liked,
+                code: Some(200),
+            })
         } else {
-            "deleted_media"
-        };
-        if body.get(ok_key).is_none() {
-            let status_message = body
-                .get("status_info")
-                .and_then(|value| value.get("status_msg"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let message = status_message
-                .map(str::to_owned)
-                .unwrap_or_else(|| format!("soda like-song failed with status {status}"));
-            return Err(unavailable(message));
+            let (code, raw_message) = req.get_err_message();
+            let message =
+                format!("soda like_song failed with code {code}, raw_message: {raw_message}");
+            Err(unavailable(message))
         }
-        Ok(SongLikeAck {
-            provider: "soda".to_owned(),
-            id: clean_id.to_owned(),
-            liked,
-            code: Some(i64::from(status)),
-        })
     }
 
     async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
@@ -295,7 +214,19 @@ impl ProviderAdapter for SodaAdapter {
                 liked_ids.push(id.clone());
             }
         }
-        Ok(song_like_check_ack("soda", &clean_ids, &liked_ids))
+        let liked_set = liked_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+
+        Ok(SongLikeCheckAck {
+            provider: "soda".to_owned(),
+            ids: ids.to_vec(),
+            liked: ids
+                .iter()
+                .map(|id| (id.clone(), liked_set.contains(id)))
+                .collect(),
+        })
     }
 }
 
@@ -329,66 +260,5 @@ fn invalid_response(message: String) -> ProviderError {
         retryable: false,
         action: None,
         raw_message: None,
-    }
-}
-
-fn read_soda_avatar_url(value: Option<&Value>) -> String {
-    let Some(value) = value else {
-        return String::new();
-    };
-    let Some(obj) = value.as_object() else {
-        return String::new();
-    };
-    let url0 = obj
-        .get("urls")
-        .and_then(Value::as_array)
-        .and_then(|urls| urls.first())
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    if !url0.is_empty() {
-        return url0.to_owned();
-    }
-    obj.get("uri")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn normalize_provider_image_url(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        return String::new();
-    }
-    if let Some(rest) = value.strip_prefix("//") {
-        return format!("https://{rest}");
-    }
-    if value.len() >= 7 && value[..7].eq_ignore_ascii_case("http://") {
-        return format!("https://{}", &value[7..]);
-    }
-    value.to_owned()
-}
-
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        _ => String::new(),
-    }
-}
-
-fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> SongLikeCheckAck {
-    let liked_set = liked_ids
-        .iter()
-        .cloned()
-        .collect::<std::collections::HashSet<_>>();
-    SongLikeCheckAck {
-        provider: provider.to_owned(),
-        ids: ids.to_vec(),
-        liked: ids
-            .iter()
-            .map(|id| (id.clone(), liked_set.contains(id)))
-            .collect(),
     }
 }
