@@ -13,6 +13,7 @@ use crate::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+        VipLevel,
     },
 };
 
@@ -226,21 +227,21 @@ impl ProviderAdapter for NeteaseAdapter {
                     .unwrap_or(ProviderLoginStatus {
                         provider: "netease".to_owned(),
                         logged_in: true,
-                        vip_level: Some("none".to_owned()),
+                        vip_level: Some(crate::types::VipLevel::None),
                         ..Default::default()
                     })
             } else {
                 ProviderLoginStatus {
                     provider: "netease".to_owned(),
                     logged_in: has_cookie,
-                    vip_level: Some("none".to_owned()),
+                    vip_level: Some(crate::types::VipLevel::None),
                     ..Default::default()
                 }
             };
             let vip_level = trial_login_status
                 .vip_level
                 .clone()
-                .unwrap_or_else(|| "none".to_owned());
+                .unwrap_or_else(|| crate::types::VipLevel::None);
             let actual_level = netease_actual_level(datum, quality);
             let result = SongUrlResult {
                 url: url.map(str::to_owned),
@@ -647,10 +648,10 @@ fn netease_trial_restriction(code: Option<i64>, fee: Option<i64>) -> Value {
     Value::Object(restriction)
 }
 
-fn netease_trial_message(logged_in: bool, vip_level: &str) -> String {
+fn netease_trial_message(logged_in: bool, vip_level: &VipLevel) -> String {
     match (logged_in, vip_level) {
-        (true, "svip") => "此歌曲需要单曲、专辑购买或更高权限".to_owned(),
-        (true, "vip") => "此歌曲需要 SVIP 或购买 · 当前仅播放试听片段".to_owned(),
+        (true, VipLevel::Svip) => "此歌曲需要单曲、专辑购买或更高权限".to_owned(),
+        (true, VipLevel::Vip) => "此歌曲需要 SVIP 或购买 · 当前仅播放试听片段".to_owned(),
         (true, _) => "此歌曲需要 VIP · 当前仅播放试听片段".to_owned(),
         (false, _) => "当前未登录 · 仅播放试听片段".to_owned(),
     }
@@ -785,16 +786,16 @@ fn map_netease_vip_status(profile: &Value, vip_info_body: Option<&Value>) -> Pro
         || explicit_is_svip == Some(true)
         || vip_type.unwrap_or_default() >= 10
     {
-        "svip"
+        VipLevel::Svip
     } else if text.contains("vip")
         || text.contains("黑胶")
         || text.contains("会员")
         || explicit_is_vip == Some(true)
         || vip_type.unwrap_or_default() > 0
     {
-        "vip"
+        VipLevel::Vip
     } else {
-        "none"
+        VipLevel::None
     };
     let raw_vip_tier = first_number(
         &candidates,
@@ -811,13 +812,15 @@ fn map_netease_vip_status(profile: &Value, vip_info_body: Option<&Value>) -> Pro
     )
     .or_else(|| parse_vip_tier_from_text(&vip_level_raw))
     .or_else(|| parse_vip_tier_from_text(&raw_label));
-    let vip_tier = (vip_level != "none").then_some(raw_vip_tier).flatten();
+    let vip_tier = (vip_level != VipLevel::None)
+        .then_some(raw_vip_tier)
+        .flatten();
     let vip_level_name = vip_level_name_of(vip_tier);
     let base_label = if !raw_label.is_empty() {
         raw_label
-    } else if vip_level == "svip" {
+    } else if vip_level == VipLevel::Svip {
         "黑胶SVIP".to_owned()
-    } else if vip_level == "vip" {
+    } else if vip_level == VipLevel::Vip {
         "黑胶VIP".to_owned()
     } else {
         String::new()
@@ -832,12 +835,12 @@ fn map_netease_vip_status(profile: &Value, vip_info_body: Option<&Value>) -> Pro
         avatar_url,
         vip_type,
         vip_level: Some(vip_level.to_owned()),
-        is_vip: Some(matches!(vip_level, "vip" | "svip")),
-        is_svip: Some(vip_level == "svip"),
+        is_vip: Some(vip_level != VipLevel::None),
+        is_svip: Some(vip_level == VipLevel::Svip),
         vip_label: (!vip_label.is_empty()).then_some(vip_label),
         vip_icon: match vip_level {
-            "svip" => Some("netease-svip".to_owned()),
-            "vip" => Some("netease-vip".to_owned()),
+            VipLevel::Svip => Some("netease-svip".to_owned()),
+            VipLevel::Vip => Some("netease-vip".to_owned()),
             _ => None,
         },
         vip_icon_url,
@@ -1095,7 +1098,7 @@ mod tests {
         assert_eq!(status.avatar_url.as_deref(), Some("u"));
         assert_eq!(status.user_id.as_deref(), Some("42"));
         assert_eq!(status.vip_type, Some(11));
-        assert_eq!(status.vip_level.as_deref(), Some("svip"));
+        assert_eq!(status.vip_level, Some(crate::types::VipLevel::Svip));
         assert_eq!(status.is_vip, Some(true));
         assert_eq!(status.is_svip, Some(true));
         assert_eq!(status.vip_label.as_deref(), Some("黑胶SVIP·陆"));

@@ -13,7 +13,7 @@ use crate::{
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, TrackQualityOption,
+        TrackQualityAvailability, TrackQualityOption, VipLevel,
     },
     utils::decrypt_qrc,
 };
@@ -23,8 +23,8 @@ use serde_json::Value;
 use super::{
     client::QqClient,
     map::{
-        map_qq_playlist_to_detail, map_qq_playlist_to_detail_official,
-        map_qq_playlist_to_summary, map_qq_song_to_track, normalize_provider_image_url,
+        map_qq_playlist_to_detail, map_qq_playlist_to_detail_official, map_qq_playlist_to_summary,
+        map_qq_song_to_track, normalize_provider_image_url,
     },
 };
 
@@ -981,27 +981,27 @@ fn normalize_vip_icon_url(value: &str) -> Option<String> {
     None
 }
 
-fn qq_vip_badge_icon_from_url(value: &str) -> Option<(String, String, Option<i64>)> {
+fn qq_vip_badge_icon_from_url(value: &str) -> Option<(String, VipLevel, Option<i64>)> {
     let url = normalize_vip_icon_url(value)?;
     let lower = url.to_ascii_lowercase();
     let marker = lower.rfind('/')?;
     let tail = &lower[marker + 1..];
-    let level = if tail.starts_with("svip") {
-        "svip"
+    let (level, len) = if tail.starts_with("svip") {
+        (VipLevel::Svip, 4)
     } else if tail.starts_with("vip") {
-        "vip"
+        (VipLevel::Vip, 3)
     } else {
         return None;
     };
-    let digits = tail[level.len()..]
+    let digits = tail[len..]
         .chars()
         .take_while(|ch| ch.is_ascii_digit())
         .collect::<String>();
     let tier = digits.parse::<i64>().ok();
-    Some((url, level.to_owned(), tier))
+    Some((url, level, tier))
 }
 
-fn first_qq_vip_badge_icon(candidates: &[&Value]) -> Option<(String, String, Option<i64>)> {
+fn first_qq_vip_badge_icon(candidates: &[&Value]) -> Option<(String, VipLevel, Option<i64>)> {
     for value in candidates {
         let badge = qq_vip_badge_icon_from_url(&read_string_field(
             value,
@@ -1028,13 +1028,14 @@ fn first_qq_vip_badge_icon(candidates: &[&Value]) -> Option<(String, String, Opt
     None
 }
 
-fn qq_official_vip_icon_url(level: &str, tier: Option<i64>) -> Option<String> {
-    if level == "none" {
+fn qq_official_vip_icon_url(level: &VipLevel, tier: Option<i64>) -> Option<String> {
+    if level == &VipLevel::None {
         return None;
     }
     let badge_tier = tier.unwrap_or(1).clamp(1, 9);
     Some(format!(
-        "https://y.qq.com/mediastyle/lv-icon/v14/2x/{level}{badge_tier}.png"
+        "https://y.qq.com/mediastyle/lv-icon/v14/2x/{}{badge_tier}.png",
+        level.as_str()
     ))
 }
 
@@ -1206,7 +1207,7 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
         || super_vip == Some(true)
         || explicit_type.unwrap_or_default() >= 10
     {
-        "svip".to_owned()
+        VipLevel::Svip
     } else if lower_level.contains("vip")
         || lower_level.contains("绿钻")
         || lower_level.contains("豪华")
@@ -1215,9 +1216,9 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
         || normal_vip == Some(true)
         || explicit_type.unwrap_or_default() > 0
     {
-        "vip".to_owned()
+        VipLevel::Vip
     } else {
-        "none".to_owned()
+        VipLevel::None
     };
 
     let usable_explicit_label = if !explicit_level.is_empty()
@@ -1239,11 +1240,11 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
         String::new()
     };
 
-    let fallback_tier = if level == "svip" {
+    let fallback_tier = if level == VipLevel::Svip {
         super_tier
             .or(normal_tier)
             .or_else(|| parse_vip_tier_from_text(&explicit_level))
-    } else if level == "vip" {
+    } else if level == VipLevel::Vip {
         normal_tier.or_else(|| parse_vip_tier_from_text(&explicit_level))
     } else {
         None
@@ -1255,9 +1256,9 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
     let tier_name = vip_level_name_of(tier);
     let base_label = if !usable_explicit_label.is_empty() {
         usable_explicit_label
-    } else if level == "svip" {
+    } else if level == VipLevel::Svip {
         "超级会员".to_owned()
-    } else if level == "vip" {
+    } else if level == VipLevel::Vip {
         "豪华绿钻".to_owned()
     } else {
         "未开通".to_owned()
@@ -1270,21 +1271,21 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
         .or_else(|| qq_official_vip_icon_url(&level, tier));
 
     status.vip_type = Some(explicit_type.unwrap_or_else(|| {
-        if level == "svip" {
+        if level == VipLevel::Svip {
             11
-        } else if level == "vip" {
+        } else if level == VipLevel::Vip {
             1
         } else {
             0
         }
     }));
     status.vip_level = Some(level.clone());
-    status.is_vip = Some(level == "vip" || level == "svip");
-    status.is_svip = Some(level == "svip");
+    status.is_vip = Some(level != VipLevel::None);
+    status.is_svip = Some(level == VipLevel::Svip);
     status.vip_label = Some(label);
-    status.vip_icon = if level == "svip" {
+    status.vip_icon = if level == VipLevel::Svip {
         Some("qq-super-vip".to_owned())
-    } else if level == "vip" {
+    } else if level == VipLevel::Vip {
         Some("qq-green-vip".to_owned())
     } else {
         None
@@ -1324,7 +1325,10 @@ mod tests {
         is_favorite_playlist, is_qzone_background_playlist, map_qq_login_status,
         qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction, read_playlist_list,
     };
-    use crate::{providers::error::ProviderErrorCode, types::PlaylistSummary};
+    use crate::{
+        providers::error::ProviderErrorCode,
+        types::{PlaylistSummary, VipLevel},
+    };
 
     #[test]
     fn read_playlist_list_supports_multiple_shapes() {
@@ -1425,7 +1429,7 @@ mod tests {
         );
         assert_eq!(status.user_id.as_deref(), Some("123"));
         assert_eq!(status.vip_type, Some(11));
-        assert_eq!(status.vip_level.as_deref(), Some("svip"));
+        assert_eq!(status.vip_level, Some(VipLevel::Svip));
         assert_eq!(status.is_vip, Some(true));
         assert_eq!(status.is_svip, Some(true));
         assert_eq!(status.vip_label.as_deref(), Some("超级会员·伍"));
@@ -1455,7 +1459,7 @@ mod tests {
             }
         });
         let status = map_qq_login_status(None, Some(&vip), Some("123"));
-        assert_eq!(status.vip_level.as_deref(), Some("svip"));
+        assert_eq!(status.vip_level, Some(VipLevel::Svip));
         assert_eq!(status.vip_label.as_deref(), Some("超级会员·陆"));
         assert_eq!(
             status.vip_icon_url.as_deref(),

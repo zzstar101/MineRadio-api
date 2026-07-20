@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use crate::{
-    types::{PlayableState, PlaylistDetail, PlaylistSummary, Track},
-};
+use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -89,8 +87,6 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
         artwork_url: None,
     }
 }
-
-
 
 pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     PlaylistSummary {

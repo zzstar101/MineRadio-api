@@ -58,6 +58,68 @@ impl QqSearchResp {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct QqTrackDetailResp {
+    req_0: QqTrackDetailReq,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QqTrackDetailReq {
+    data: QqTrackDetailData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QqTrackDetailData {
+    track_info: QqTrackDetailInfo,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QqTrackDetailInfo {
+    id: i64,
+    #[serde(rename = "type")]
+    track_info_type: i64,
+    mid: String,
+    name: String,
+    title: String,
+    subtitle: String,
+    singer: Vec<Singer>,
+    album: Album,
+    interval: i64,
+    file: File,
+    pay: Pay,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct File {
+    //HQ旧值
+    size_320mp3: i64,
+    size_ape: i64,
+    //SQ无损
+    size_flac: i64,
+
+    size_dts: i64,
+    size_try: i64,
+
+    b_30s: i64,
+    e_30s: i64,
+    //两个同时作为标准音质判断
+    size_96ogg: i64,
+    size_96aac: i64,
+    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效
+    size_new: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Pay {
+    pay_month: i64,
+    price_track: i64,
+    price_album: i64,
+    pay_play: i64,
+    pay_down: i64,
+    pay_status: i64,
+    time_free: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct QqLyricResp {
     req_0: QqLyricReq,
 }

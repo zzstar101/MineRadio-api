@@ -56,6 +56,25 @@ mod tests {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VipLevel {
+    Svip,
+    Vip,
+    #[default]
+    None,
+}
+
+impl VipLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Svip => "svip",
+            Self::Vip => "vip",
+            Self::None => "none",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
@@ -110,7 +129,7 @@ pub struct SongUrlResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vip_type: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_level: Option<String>,
+    pub vip_level: Option<VipLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_vip: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -312,7 +331,7 @@ pub struct ProviderLoginStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vip_type: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_level: Option<String>,
+    pub vip_level: Option<VipLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_vip: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]

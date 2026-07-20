@@ -1,8 +1,31 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeteaseLyricResp {
+    //lrc歌词
+    lrc: NeteaseLyric,
+    //逐字歌词
+    yrc: NeteaseLyric,
+    //lrc翻译歌词
+    tlyric: NeteaseLyric,
+}
+
+impl NeteaseLyricResp {
+    pub fn standardize(self) -> (Option<String>, Option<String>) {
+        (self.yrc.lyric.or(self.lrc.lyric), self.tlyric.lyric)
+    }
+}
+#[derive(Deserialize)]
+pub struct NeteaseLyric {
+    version: i64,
+
+    lyric: Option<String>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseAlbumListResp {
     data: Vec<Album>,
@@ -29,7 +52,7 @@ impl NeteaseAlbumListResp {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseAlbumDetailResp {
     songs: Vec<Song>,
@@ -85,7 +108,7 @@ fn get_playable(fee: u8) -> PlayableState {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Song {
     ar: Vec<Artist>,
@@ -101,12 +124,12 @@ pub struct Song {
     dt: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct Al {
     name: String,
 }
 
-/*#[derive(Serialize, Deserialize)]
+/*#[derive(Deserialize)]
 pub struct H {
     br: i64,
     fid: i64,
@@ -115,7 +138,7 @@ pub struct H {
     sr: i64,
 }
 
- #[derive(Serialize, Deserialize)]
+ #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Privilege {
     id: i64,
@@ -124,7 +147,7 @@ pub struct Privilege {
 }
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FreeTrialPrivilege {
     res_consumable: bool,
@@ -136,7 +159,7 @@ pub struct FreeTrialPrivilege {
 }*/
 
 //reuseable
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Album {
     artists: Vec<Artist>,
@@ -146,7 +169,7 @@ struct Album {
     size: Option<u32>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Artist {
     /*#[serde(rename = "img1v1Id")]
