@@ -9,12 +9,12 @@ use async_trait::async_trait;
 
 use crate::types::{
     AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-    ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
+    ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
     Track, TrackQualityAvailability,
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
-
+pub use crate::types::ProviderId;
 #[async_trait]
 pub trait ProviderAdapter: Send + Sync {
     fn id(&self) -> ProviderId;

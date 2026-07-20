@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::{
     parsers::{lrc, netease},
-    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track},
+    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track, ProviderId},
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {
@@ -62,7 +62,7 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
 
     Track {
         id: id.clone(),
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         source_id: id,
         media_mid: None,
         title: raw
@@ -134,7 +134,7 @@ pub fn map_hana_lyric_to_payload(
     }) || !klyric.unwrap_or_default().trim().is_empty();
 
     LyricPayload {
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         track_id: track_id.to_owned(),
         lines,
         has_translation: !tlyric.trim().is_empty() && !translation_map.is_empty(),
@@ -171,7 +171,7 @@ pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playl
         .unwrap_or_default();
 
     PlaylistSummary {
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         id,
         name: raw
             .get("name")

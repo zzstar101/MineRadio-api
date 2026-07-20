@@ -850,11 +850,11 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::PlayableState;
+    use crate::types::{PlayableState, ProviderId};
 
     fn track(id: &str, title: &str) -> Track {
         Track {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             id: id.to_owned(),
             source_id: id.to_owned(),
             media_mid: None,

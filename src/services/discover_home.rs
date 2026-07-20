@@ -17,7 +17,7 @@ use crate::{
 pub type NeteaseResponse = Value;
 pub type DiscoverRequestParams = HashMap<String, Value>;
 
-const PROVIDER_ORDER: [&str; 3] = ["netease", "qq", "soda"];
+const PROVIDER_ORDER: [ProviderId; 3] = [ProviderId::Netease, ProviderId::Qq, ProviderId::Soda];
 
 #[async_trait]
 pub trait DiscoverRequester: Send + Sync {
@@ -76,7 +76,7 @@ pub async fn build_discover_home(options: DiscoverHomeServiceOptions) -> anyhow:
     let updated_at = now_millis();
     let mut statuses = Vec::new();
     for provider in PROVIDER_ORDER {
-        statuses.push(safe_login_status(provider, options.provider_adapters.get(provider)).await);
+        statuses.push(safe_login_status(provider, options.provider_adapters.get(&provider)).await);
     }
     let logged = statuses.iter().find(|status| status.logged_in).cloned();
 
@@ -100,7 +100,7 @@ pub async fn build_discover_home(options: DiscoverHomeServiceOptions) -> anyhow:
 
     let netease_discover = if logged_providers
         .iter()
-        .any(|provider| provider == "netease")
+        .any(|provider| *provider == ProviderId::Netease)
     {
         load_netease_discover(options.discover_requester.as_ref()).await
     } else {
@@ -160,7 +160,7 @@ pub async fn build_discover_home(options: DiscoverHomeServiceOptions) -> anyhow:
 
 #[derive(Clone, Default)]
 struct LoggedStatus {
-    provider: String,
+    provider: ProviderId,
     logged_in: bool,
     user_id: String,
     nickname: String,
@@ -175,25 +175,25 @@ struct DiscoverBundle {
 }
 
 async fn safe_login_status(
-    provider: &str,
+    provider: ProviderId,
     adapter: Option<&Arc<dyn ProviderAdapter>>,
 ) -> LoggedStatus {
     let Some(adapter) = adapter else {
         return LoggedStatus {
-            provider: provider.to_owned(),
+            provider,
             ..Default::default()
         };
     };
     match adapter.login_status().await {
         Ok(status) => LoggedStatus {
-            provider: provider.to_owned(),
+            provider,
             logged_in: status.logged_in,
             user_id: status.user_id.unwrap_or_default(),
             nickname: status.nickname.unwrap_or_default(),
             avatar_url: status.avatar_url.unwrap_or_default(),
         },
         Err(_) => LoggedStatus {
-            provider: provider.to_owned(),
+            provider,
             ..Default::default()
         },
     }
@@ -295,7 +295,7 @@ async fn load_netease_discover(requester: Option<&Arc<dyn DiscoverRequester>>) -
 
 async fn load_adapter_playlists(
     adapters: &HashMap<ProviderId, Arc<dyn ProviderAdapter>>,
-    providers: &[String],
+    providers: &[ProviderId],
 ) -> Vec<Value> {
     let mut out = Vec::new();
     for provider in providers {
@@ -321,11 +321,14 @@ async fn first_playlist_tracks(
     playlists: &[Value],
 ) -> Option<Vec<Value>> {
     for playlist in playlists {
-        let provider = string_value(record(playlist).get("provider"));
+        let provider_str = string_value(record(playlist).get("provider"));
         let id = string_value(record(playlist).get("id"));
-        if provider.is_empty() || id.is_empty() {
+        if provider_str.is_empty() || id.is_empty() {
             continue;
         }
+        let Ok(provider) = provider_str.parse::<ProviderId>() else {
+            continue;
+        };
         let Some(adapter) = adapters.get(&provider) else {
             continue;
         };
@@ -347,7 +350,7 @@ async fn first_playlist_tracks(
 
 async fn first_search_tracks(
     adapters: &HashMap<ProviderId, Arc<dyn ProviderAdapter>>,
-    providers: &[String],
+    providers: &[ProviderId],
 ) -> Vec<Value> {
     for provider in providers {
         let Some(adapter) = adapters.get(provider) else {
@@ -645,7 +648,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct MockProviderAdapter {
-        id: String,
+        id: ProviderId,
         login_status: ProviderLoginStatus,
         playlists: Vec<PlaylistSummary>,
         playlist_detail: Option<PlaylistDetail>,
@@ -655,7 +658,7 @@ mod tests {
     #[async_trait]
     impl ProviderAdapter for MockProviderAdapter {
         fn id(&self) -> ProviderId {
-            self.id.clone()
+            self.id
         }
 
         async fn search(&self, _keyword: &str, _limit: u32) -> ProviderResult<Vec<Track>> {
@@ -797,10 +800,10 @@ mod tests {
         }
     }
 
-    fn make_track(provider: &str, id: &str, title: &str) -> Track {
+    fn make_track(provider: ProviderId, id: &str, title: &str) -> Track {
         Track {
             id: id.to_owned(),
-            provider: provider.to_owned(),
+            provider,
             source_id: id.to_owned(),
             title: title.to_owned(),
             artists: vec!["tester".to_owned()],
@@ -833,11 +836,11 @@ mod tests {
         let response = build_discover_home(DiscoverHomeServiceOptions {
             provider_adapters: adapter_map(vec![
                 Arc::new(MockProviderAdapter {
-                    id: "netease".to_owned(),
+                    id: ProviderId::Netease,
                     ..Default::default()
                 }),
                 Arc::new(MockProviderAdapter {
-                    id: "qq".to_owned(),
+                    id: ProviderId::Qq,
                     ..Default::default()
                 }),
             ]),
@@ -856,9 +859,9 @@ mod tests {
     async fn prefers_netease_recommendation_sources_when_available() {
         let response = build_discover_home(DiscoverHomeServiceOptions {
             provider_adapters: adapter_map(vec![Arc::new(MockProviderAdapter {
-                id: "netease".to_owned(),
+                id: ProviderId::Netease,
                 login_status: ProviderLoginStatus {
-                    provider: "netease".to_owned(),
+                    provider: ProviderId::Netease,
                     logged_in: true,
                     nickname: Some("tester".to_owned()),
                     user_id: Some("42".to_owned()),
@@ -921,9 +924,9 @@ mod tests {
     async fn falls_back_to_playlist_detail_then_search_when_daily_songs_missing() {
         let response = build_discover_home(DiscoverHomeServiceOptions {
             provider_adapters: adapter_map(vec![Arc::new(MockProviderAdapter {
-                id: "soda".to_owned(),
+                id: ProviderId::Soda,
                 login_status: ProviderLoginStatus {
-                    provider: "soda".to_owned(),
+                    provider: ProviderId::Soda,
                     logged_in: true,
                     nickname: Some("soda user".to_owned()),
                     user_id: Some("soda-42".to_owned()),
@@ -931,7 +934,7 @@ mod tests {
                     ..Default::default()
                 },
                 playlists: vec![PlaylistSummary {
-                    provider: "soda".to_owned(),
+                    provider: ProviderId::Soda,
                     id: "playlist-1".to_owned(),
                     name: "empty playlist".to_owned(),
                     cover_url: String::new(),
@@ -939,7 +942,7 @@ mod tests {
                     track_ids: Vec::new(),
                     collected: Some(false),
                 }],
-                search_tracks: vec![make_track("soda", "track-1", "search fallback")],
+                search_tracks: vec![make_track(ProviderId::Soda, "track-1", "search fallback")],
                 ..Default::default()
             })]),
             podcast: podcast_service(Vec::new()),

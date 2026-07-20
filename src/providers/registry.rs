@@ -6,7 +6,7 @@ use crate::types::ProviderId;
 
 use super::ProviderAdapter;
 
-pub const PROVIDER_IDS: [&str; 3] = ["netease", "qq", "soda"];
+pub const PROVIDER_IDS: [ProviderId; 3] = [ProviderId::Netease, ProviderId::Qq, ProviderId::Soda];
 
 const NETEASE_CAPABILITIES: [&str; 9] = [
     "search",
@@ -57,7 +57,7 @@ pub struct CapabilityMatrix {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderStatusEntry {
-    pub provider_id: &'static str,
+    pub provider_id: ProviderId,
     pub available: bool,
     pub capabilities: Vec<&'static str>,
     pub message: &'static str,
@@ -68,7 +68,7 @@ impl ProviderRegistry {
         self.providers.insert(provider.id(), provider);
     }
 
-    pub fn get(&self, id: &str) -> Option<Arc<dyn ProviderAdapter>> {
+    pub fn get(&self, id: &ProviderId) -> Option<Arc<dyn ProviderAdapter>> {
         self.providers.get(id).cloned()
     }
 
@@ -86,19 +86,19 @@ pub fn build_capability_matrix() -> CapabilityMatrix {
         version: "0.1.0",
         providers: vec![
             ProviderStatusEntry {
-                provider_id: "netease",
+                provider_id: ProviderId::Netease,
                 available: true,
                 capabilities: NETEASE_CAPABILITIES.to_vec(),
                 message: "online",
             },
             ProviderStatusEntry {
-                provider_id: "qq",
+                provider_id: ProviderId::Qq,
                 available: true,
                 capabilities: QQ_CAPABILITIES.to_vec(),
                 message: "online",
             },
             ProviderStatusEntry {
-                provider_id: "soda",
+                provider_id: ProviderId::Soda,
                 available: true,
                 capabilities: SODA_CAPABILITIES.to_vec(),
                 message: "online",

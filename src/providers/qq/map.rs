@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, Track};
+use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, Track, ProviderId};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -67,7 +67,7 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
 
     Track {
         id: id.clone(),
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         source_id: id,
         media_mid: (!media_mid.is_empty()).then_some(media_mid),
         title: first_string(&[raw.get("songname"), raw.get("name"), raw.get("title")]),
@@ -90,7 +90,7 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
 
 pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     PlaylistSummary {
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         id: {
             let id = first_string(&[
                 raw.get("disstid"),
@@ -184,7 +184,7 @@ pub fn map_qq_playlist_to_detail_official(
         tracks.push(Track {
             id: id.clone(),
             source_id: id,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             media_mid: song
                 .get("songlist")
                 .and_then(Value::as_str)
@@ -210,7 +210,7 @@ pub fn map_qq_playlist_to_detail_official(
     }
 
     PlaylistDetail {
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         id: dirinfo
             .get("id")
             .and_then(Value::as_u64)

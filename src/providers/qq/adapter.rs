@@ -49,7 +49,7 @@ impl QqAdapter {
 #[async_trait]
 impl ProviderAdapter for QqAdapter {
     fn id(&self) -> ProviderId {
-        "qq".to_owned()
+        ProviderId::Qq
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
@@ -94,7 +94,7 @@ impl ProviderAdapter for QqAdapter {
                         return Ok(SongUrlResult {
                             url: Some(url),
                             proxied: false,
-                            provider: Some("qq".to_owned()),
+                            provider: Some(ProviderId::Qq),
                             trial: Some(false),
                             playable: Some(true),
                             level: Some(quality.to_owned()),
@@ -122,7 +122,7 @@ impl ProviderAdapter for QqAdapter {
         if !has_cookie {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 message: format!("qq song-url {} requires cookie", track.source_id),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -132,7 +132,7 @@ impl ProviderAdapter for QqAdapter {
 
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: last_error
                 .unwrap_or_else(|| format!("qq song-url {} returned no url", track.source_id)),
             retryable: false,
@@ -148,7 +148,7 @@ impl ProviderAdapter for QqAdapter {
             .into_iter()
             .filter(|quality| file_supports_quality(file, quality))
             .map(|quality| TrackQualityOption {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 id: quality.to_owned(),
                 label: qq_quality_label(quality).to_owned(),
                 request_quality: quality.to_owned(),
@@ -158,7 +158,7 @@ impl ProviderAdapter for QqAdapter {
             })
             .collect();
         Ok(TrackQualityAvailability {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             track_id: track.source_id.clone(),
             default_quality: qualities.first().map(|item| item.request_quality.clone()),
             qualities,
@@ -210,7 +210,7 @@ impl ProviderAdapter for QqAdapter {
                 .unwrap_or(false)
         });
         Ok(LyricPayload {
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             track_id: track.id.clone(),
             lines,
             has_translation,
@@ -240,7 +240,7 @@ impl ProviderAdapter for QqAdapter {
                             if let Some(id) = l.get("tid").and_then(Value::as_u64) {
                                 if let Some(name) = l.get("dirName").and_then(Value::as_str) {
                                     out.push(PlaylistSummary {
-                                        provider: "qq".to_owned(),
+                                        provider: ProviderId::Qq,
                                         id: id.to_string(),
                                         name: name.to_string(),
                                         cover_url: l
@@ -308,7 +308,7 @@ impl ProviderAdapter for QqAdapter {
         let Some(first) = first else {
             return Err(ProviderError {
                 code: ProviderErrorCode::NoPlaylist,
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 message: format!("qq playlist {id} missing payload"),
                 retryable: false,
                 action: None,
@@ -331,7 +331,7 @@ impl ProviderAdapter for QqAdapter {
         let cookie = self.client.current_cookie().await;
         let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
             return Ok(ProviderLoginStatus {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 logged_in: false,
                 nickname: None,
                 user_id: None,
@@ -342,7 +342,7 @@ impl ProviderAdapter for QqAdapter {
         let euin = self.client.euin().await;
         let Some(euin) = euin else {
             return Ok(ProviderLoginStatus {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 logged_in: true,
                 nickname: None,
                 user_id: None,
@@ -363,7 +363,7 @@ impl ProviderAdapter for QqAdapter {
                     Ok(map_qq_login_status(None, Some(vip_info), Some(&euin)))
                 } else {
                     Ok(ProviderLoginStatus {
-                        provider: "qq".to_owned(),
+                        provider: ProviderId::Qq,
                         logged_in: true,
                         user_id: Some(euin),
                         ..Default::default()
@@ -375,7 +375,7 @@ impl ProviderAdapter for QqAdapter {
 
     async fn logout(&self) -> ProviderResult<()> {
         self.client.logout().await?;
-        auth_session::clear_runtime_provider_cookie("qq").await;
+        auth_session::clear_runtime_provider_cookie(&ProviderId::Qq).await;
         Ok(())
     }
 
@@ -396,7 +396,7 @@ impl ProviderAdapter for QqAdapter {
             .unwrap_or_default();
         if matches!(code, 0 | 100) {
             return Ok(PlaylistAddSongAck {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 playlist_id: playlist_id.to_owned(),
                 track_id: track_id.to_owned(),
                 success: true,
@@ -406,7 +406,7 @@ impl ProviderAdapter for QqAdapter {
         if matches!(code, 301 | 1000) {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 message: format!("qq playlist {playlist_id} add-song requires cookie"),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -415,7 +415,7 @@ impl ProviderAdapter for QqAdapter {
         }
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: body
                 .get("errMsg")
                 .or_else(|| body.get("message"))
@@ -558,7 +558,7 @@ fn qq_song_url_restriction(
     if !has_cookie {
         return Some(ProviderError {
             code: ProviderErrorCode::LoginRequired,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: format!("qq song-url {track_id} requires cookie"),
             retryable: true,
             action: Some("login".to_owned()),
@@ -569,7 +569,7 @@ fn qq_song_url_restriction(
     if code == 104003 && !has_playback_key {
         return Some(ProviderError {
             code: ProviderErrorCode::LoginRequired,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: "qq playback authorization required".to_owned(),
             retryable: true,
             action: Some("login".to_owned()),
@@ -585,7 +585,7 @@ fn qq_song_url_restriction(
     {
         return Some(ProviderError {
             code: ProviderErrorCode::PaidRequired,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: raw_message
                 .clone()
                 .unwrap_or_else(|| "qq paid playback required".to_owned()),
@@ -598,7 +598,7 @@ fn qq_song_url_restriction(
     if code == 104003 {
         return Some(ProviderError {
             code: ProviderErrorCode::CopyrightUnavailable,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: raw_message
                 .clone()
                 .unwrap_or_else(|| format!("qq song-url {track_id} unavailable")),
@@ -1046,7 +1046,7 @@ fn map_qq_login_status(
 ) -> ProviderLoginStatus {
     let candidates = qq_login_profile_candidates(body, vip_info, fallback_user_id);
     let mut status = ProviderLoginStatus {
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         logged_in: true,
         ..Default::default()
     };
@@ -1298,7 +1298,7 @@ fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) 
 fn no_result(action: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         message: format!("{} no result", action),
         retryable: false,
         action: Some(action.to_string()),
@@ -1309,7 +1309,7 @@ fn no_result(action: &str) -> ProviderError {
 fn invalid_response(message: String) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::InvalidResponse,
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         message,
         retryable: false,
         action: None,
@@ -1327,7 +1327,7 @@ mod tests {
     };
     use crate::{
         providers::error::ProviderErrorCode,
-        types::{PlaylistSummary, VipLevel},
+        types::{PlaylistSummary, VipLevel, ProviderId},
     };
 
     #[test]
@@ -1347,7 +1347,7 @@ mod tests {
     #[test]
     fn playlist_flags_detect_favorites_and_qzone_background() {
         let favorite = PlaylistSummary {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             id: "1".to_owned(),
             cover_url: String::new(),
             name: "我喜欢".to_owned(),
@@ -1356,7 +1356,7 @@ mod tests {
             collected: Some(false),
         };
         let ordinary = PlaylistSummary {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             id: "2".to_owned(),
             cover_url: String::new(),
             name: "收藏歌单".to_owned(),

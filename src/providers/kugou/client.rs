@@ -7,7 +7,7 @@ use reqwest::{Client, Method, Response};
 use serde_json::Value;
 
 use crate::providers::{
-    ProviderResult,
+    ProviderResult, ProviderId,
     error::{ProviderError, ProviderErrorCode},
 };
 use crate::services::auth_session;
@@ -113,7 +113,7 @@ impl KugouClient {
     }
 
     pub async fn current_cookie(&self) -> KugouCookie {
-        auth_session::get_provider_cookie("kugou")
+        auth_session::get_provider_cookie(&ProviderId::Kugou)
             .await
             .map(|value| parse_cookie(&value))
             .unwrap_or_default()
@@ -408,7 +408,7 @@ async fn parse_response(response: Response) -> ProviderResult<KugouResponse> {
     if !http_status.is_success() || api_failed {
         return Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
-            provider: "kugou".to_owned(),
+            provider: ProviderId::Kugou,
             message: body
                 .get("msg")
                 .or_else(|| body.get("message"))
@@ -490,7 +490,7 @@ fn unix_seconds() -> u64 {
 fn unavailable_error(message: String) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
-        provider: "kugou".to_owned(),
+        provider: ProviderId::Kugou,
         message: message.clone(),
         retryable: true,
         action: None,

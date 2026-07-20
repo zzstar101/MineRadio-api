@@ -9,7 +9,7 @@ use reqwest::{
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
-    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
+    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey, ProviderId},
     utils::cryptors::qq::{gtk_from_pskey, hash33},
 };
 
@@ -73,7 +73,7 @@ impl QqQrLoginService {
         let key = encode_key(&qrsig, hash33(&qrsig));
         self.image_cache.lock().await.insert(key.clone(), img);
         Ok(ProviderLoginQrKey {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             key,
         })
     }
@@ -91,7 +91,7 @@ impl QqQrLoginService {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("QQ_QR_IMAGE_MISSING"))?;
         Ok(ProviderLoginQrImage {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             key: normalized_key.to_owned(),
             img,
             url: None,
@@ -121,7 +121,7 @@ impl QqQrLoginService {
                 self.image_cache.lock().await.remove(normalized_key);
             }
             return Ok(ProviderLoginQrCheck {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 key: normalized_key.to_owned(),
                 code: ptui.code,
                 message: Some(message.clone()),
@@ -187,12 +187,12 @@ impl QqQrLoginService {
         if cookie.is_empty() {
             anyhow::bail!("QQ_QR_COOKIE_MISSING");
         }
-        set_runtime_provider_cookie("qq".to_owned(), cookie)
+        set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|err| anyhow::anyhow!(err))?;
         self.image_cache.lock().await.remove(normalized_key);
         Ok(ProviderLoginQrCheck {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             key: normalized_key.to_owned(),
             code: 0,
             message: Some("登录成功".to_owned()),

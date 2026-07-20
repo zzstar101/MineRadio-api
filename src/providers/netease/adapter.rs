@@ -107,7 +107,7 @@ impl NeteaseAdapter {
     async fn login_status_internal(&self) -> ProviderResult<ProviderLoginStatus> {
         let Some(cookie) = self.client.current_cookie().await else {
             return Ok(ProviderLoginStatus {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 logged_in: false,
                 nickname: None,
                 user_id: None,
@@ -117,7 +117,7 @@ impl NeteaseAdapter {
         };
         if cookie.trim().is_empty() {
             return Ok(ProviderLoginStatus {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 logged_in: false,
                 nickname: None,
                 user_id: None,
@@ -130,7 +130,7 @@ impl NeteaseAdapter {
         let profile = body.get("profile");
         let Some(profile) = profile else {
             return Ok(ProviderLoginStatus {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 logged_in: false,
                 ..Default::default()
             });
@@ -153,7 +153,7 @@ impl NeteaseAdapter {
 #[async_trait]
 impl ProviderAdapter for NeteaseAdapter {
     fn id(&self) -> ProviderId {
-        "netease".to_owned()
+        ProviderId::Netease
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
@@ -225,14 +225,14 @@ impl ProviderAdapter for NeteaseAdapter {
                 self.login_status_internal()
                     .await
                     .unwrap_or(ProviderLoginStatus {
-                        provider: "netease".to_owned(),
+                        provider: ProviderId::Netease,
                         logged_in: true,
                         vip_level: Some(crate::types::VipLevel::None),
                         ..Default::default()
                     })
             } else {
                 ProviderLoginStatus {
-                    provider: "netease".to_owned(),
+                    provider: ProviderId::Netease,
                     logged_in: has_cookie,
                     vip_level: Some(crate::types::VipLevel::None),
                     ..Default::default()
@@ -246,7 +246,7 @@ impl ProviderAdapter for NeteaseAdapter {
             let result = SongUrlResult {
                 url: url.map(str::to_owned),
                 proxied: false,
-                provider: Some("netease".to_owned()),
+                provider: Some(ProviderId::Netease),
                 trial: Some(trial),
                 playable: Some(true),
                 level: Some(actual_level.clone()),
@@ -291,7 +291,7 @@ impl ProviderAdapter for NeteaseAdapter {
             }
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 message: format!("netease song-url returned no data for {}", track.source_id),
                 retryable: false,
                 action: None,
@@ -358,7 +358,7 @@ impl ProviderAdapter for NeteaseAdapter {
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned);
             qualities.push(TrackQualityOption {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 id: actual_level.clone(),
                 label: netease_quality_label(&actual_level, &quality).to_owned(),
                 short: Some(netease_quality_short(&actual_level, &quality).to_owned()),
@@ -376,7 +376,7 @@ impl ProviderAdapter for NeteaseAdapter {
             netease_quality_rank(option.level.as_deref().unwrap_or(&option.id))
         });
         Ok(TrackQualityAvailability {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             track_id: track.source_id.clone(),
             default_quality: qualities.first().map(|item| item.request_quality.clone()),
             qualities,
@@ -436,7 +436,7 @@ impl ProviderAdapter for NeteaseAdapter {
         let Some(playlist) = body.get("playlist") else {
             return Err(ProviderError {
                 code: ProviderErrorCode::NoPlaylist,
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 message: format!("netease playlist {id} missing payload"),
                 retryable: false,
                 action: None,
@@ -461,7 +461,7 @@ impl ProviderAdapter for NeteaseAdapter {
 
     async fn logout(&self) -> ProviderResult<()> {
         self.client.logout().await?;
-        auth_session::clear_runtime_provider_cookie("netease").await;
+        auth_session::clear_runtime_provider_cookie(&ProviderId::Netease).await;
         Ok(())
     }
 
@@ -469,7 +469,7 @@ impl ProviderAdapter for NeteaseAdapter {
         self.client.ensure_login().await?;
         let body = self.client.like(id, liked).await?;
         Ok(SongLikeAck {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             id: id.to_owned(),
             liked,
             code: Some(response_code(&body)),
@@ -485,7 +485,7 @@ impl ProviderAdapter for NeteaseAdapter {
             .collect::<Vec<_>>();
         if clean_ids.is_empty() {
             return Ok(SongLikeCheckAck {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 ids: Vec::new(),
                 liked: std::collections::HashMap::new(),
             });
@@ -518,14 +518,14 @@ impl ProviderAdapter for NeteaseAdapter {
         };
 
         if !liked_ids.is_empty() {
-            return Ok(song_like_check_ack("netease", &clean_ids, &liked_ids));
+            return Ok(song_like_check_ack(&clean_ids, &liked_ids));
         }
 
         let status = self.login_status_internal().await?;
         let Some(uid) = status.user_id.filter(|uid| !uid.is_empty()) else {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 message: "netease like-check requires login".to_owned(),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -538,7 +538,7 @@ impl ProviderAdapter for NeteaseAdapter {
             .and_then(Value::as_array)
             .map(|items| items.iter().map(read_id_like).collect::<Vec<_>>())
             .unwrap_or_default();
-        Ok(song_like_check_ack("netease", &clean_ids, &liked_ids))
+        Ok(song_like_check_ack(&clean_ids, &liked_ids))
     }
 
     async fn add_song_to_playlist(
@@ -559,7 +559,7 @@ impl ProviderAdapter for NeteaseAdapter {
         if !is_successful(&final_response) {
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 message: format!("netease playlist add failed for {track_id}"),
                 retryable: false,
                 action: None,
@@ -567,7 +567,7 @@ impl ProviderAdapter for NeteaseAdapter {
             });
         }
         Ok(PlaylistAddSongAck {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             playlist_id: playlist_id.to_owned(),
             track_id: track_id.to_owned(),
             success: true,
@@ -687,13 +687,13 @@ fn read_id_like(value: &Value) -> String {
     }
 }
 
-fn song_like_check_ack(provider: &str, ids: &[String], liked_ids: &[String]) -> SongLikeCheckAck {
+fn song_like_check_ack(ids: &[String], liked_ids: &[String]) -> SongLikeCheckAck {
     let liked_set = liked_ids
         .iter()
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     SongLikeCheckAck {
-        provider: provider.to_owned(),
+        provider: ProviderId::Netease,
         ids: ids.to_vec(),
         liked: ids
             .iter()
@@ -713,7 +713,7 @@ fn state_error(state: PlayableState, id: &str) -> ProviderError {
     };
     ProviderError {
         code,
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         message: format!("netease song-url {id} state {state}"),
         retryable: state == PlayableState::LoginRequired,
         action: (state == PlayableState::LoginRequired).then(|| "login".to_owned()),
@@ -828,7 +828,7 @@ fn map_netease_vip_status(profile: &Value, vip_info_body: Option<&Value>) -> Pro
     let vip_label = append_vip_tier(&base_label, vip_level_name.as_deref());
 
     ProviderLoginStatus {
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         logged_in: true,
         nickname,
         user_id,
@@ -1092,7 +1092,7 @@ mod tests {
         });
 
         let status = map_netease_vip_status(&profile, Some(&vip_info));
-        assert_eq!(status.provider, "netease");
+        assert_eq!(status.provider.as_str(), "netease");
         assert!(status.logged_in);
         assert_eq!(status.nickname.as_deref(), Some("n"));
         assert_eq!(status.avatar_url.as_deref(), Some("u"));

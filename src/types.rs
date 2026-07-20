@@ -2,8 +2,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub type ProviderId = String;
-
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayableState {
@@ -71,6 +69,52 @@ impl VipLevel {
             Self::Svip => "svip",
             Self::Vip => "vip",
             Self::None => "none",
+        }
+    }
+}
+
+//等待其他修改完成批量接入
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderId {
+    Qq,
+    Netease,
+    Soda,
+    Kugou,
+    #[default]
+    Unknown,
+}
+
+impl ProviderId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Qq => "qq",
+            Self::Netease => "netease",
+            Self::Soda => "soda",
+            Self::Kugou => "kugou",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProviderId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "qq" => Ok(Self::Qq),
+            "netease" => Ok(Self::Netease),
+            "soda" => Ok(Self::Soda),
+            "kugou" => Ok(Self::Kugou),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(format!("unknown provider id: {s}")),
         }
     }
 }

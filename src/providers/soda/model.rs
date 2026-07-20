@@ -3,6 +3,7 @@ use serde::{Deserialize, de::IgnoredAny};
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
     SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption, VipLevel,
+    ProviderId
 };
 
 #[derive(Deserialize)]
@@ -27,7 +28,7 @@ impl SodaLoginStatusResp {
                     _ => 0,
                 });
                 Some(ProviderLoginStatus {
-                    provider: "soda".to_owned(),
+                    provider: ProviderId::Soda,
                     logged_in: true,
                     nickname: Some(info.nickname),
                     user_id: Some(info.id),
@@ -115,7 +116,7 @@ impl SodaPlaylistListResp {
             .playlists
             .into_iter()
             .map(|p| PlaylistSummary {
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 id: p.id,
                 name: p.title,
                 cover_url: p
@@ -162,7 +163,7 @@ impl SodaPLaylistDetailResp {
             None
         } else {
             Some(PlaylistDetail {
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 id: p.id,
                 name: p.title,
                 cover_url: p.url_cover.standardize(),
@@ -247,7 +248,7 @@ impl SodaAlbumListInfo {
     fn standardize(self) -> AlbumSummary {
         let id = self.id;
         AlbumSummary {
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             id,
             artists: self
                 .artists
@@ -344,7 +345,7 @@ impl SodaSongUrlResp {
                 urlencoding::encode(&play_info.play_auth)
             )),
             proxied: true,
-            provider: Some("soda".to_owned()),
+            provider: Some(ProviderId::Soda),
             trial: None,
             playable: Some(true),
             level: Some(play_info.quality.clone()),
@@ -401,7 +402,7 @@ impl SodaTrackV2Resp {
     }
     pub fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
         Some(TrackQualityAvailability {
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             track_id: self.track.id.clone(),
             default_quality: Some("standard".to_string()),
             qualities: self.track.standardize_quality()?,
@@ -507,7 +508,7 @@ impl SodaTrack {
         Track {
             source_id: id.clone(),
             id,
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             media_mid: None,
             title: self.name,
             artists: self
@@ -553,7 +554,7 @@ impl SodaTrack {
                 let br = b.br;
                 let size = b.size;
                 Some(TrackQualityOption {
-                    provider: "soda".to_owned(),
+                    provider: ProviderId::Soda,
                     id: level.to_owned(),
                     label,
                     detail: Some(

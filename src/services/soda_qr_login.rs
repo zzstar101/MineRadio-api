@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
-    types::{ProviderLoginQrCheck, ProviderLoginQrImage},
+    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderId},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -113,7 +113,7 @@ impl SodaQrLoginService {
 
         if confirmed {
             if let Some(cookie) = cookie_from_set_cookie_headers(&headers) {
-                set_runtime_provider_cookie("soda".to_owned(), cookie)
+                set_runtime_provider_cookie(ProviderId::Soda, cookie)
                     .await
                     .map_err(|err| anyhow::anyhow!(err))?;
                 stored = true;
@@ -121,7 +121,7 @@ impl SodaQrLoginService {
         }
 
         Ok(ProviderLoginQrCheck {
-            provider: SODA_PROVIDER.to_owned(),
+            provider: ProviderId::Soda,
             key: payload
                 .expired_token
                 .filter(|_| expired)
@@ -157,7 +157,7 @@ impl SodaQrLoginService {
         }
         let payload = read_soda_qr_code_body(resp.json::<Value>().await?)?;
         let image = ProviderLoginQrImage {
-            provider: SODA_PROVIDER.to_owned(),
+            provider: ProviderId::Soda,
             key: payload.token,
             img: payload.qrcode,
             url: None,

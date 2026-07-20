@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     providers::{
-        ProviderResult,
+        ProviderResult, ProviderId,
         error::{ProviderError, ProviderErrorCode},
         qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqSearchResp},
     },
@@ -36,7 +36,7 @@ impl QqClient {
     }
 
     pub async fn current_cookie(&self) -> Option<String> {
-        auth_session::get_provider_cookie("qq").await
+        auth_session::get_provider_cookie(&ProviderId::Qq).await
     }
 
     pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
@@ -50,7 +50,7 @@ impl QqClient {
         {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 message: "qq login required".to_owned(),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -126,7 +126,7 @@ impl QqClient {
 
         serde_json::from_slice(&body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: format!("decode qq search response: {err}"),
             retryable: false,
             action: Some("search".to_owned()),
@@ -532,7 +532,7 @@ impl QqClient {
             .map_err(unavailable_error)?;
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: format!("decode qq {action} response: {err}"),
             retryable: false,
             action: Some(action.to_owned()),
@@ -635,7 +635,7 @@ impl QqClient {
         if !status.is_success() {
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 message: format!("qq {action} upstream returned HTTP {}", status.as_u16()),
                 retryable: status.is_server_error(),
                 action: Some(action.to_owned()),
@@ -644,7 +644,7 @@ impl QqClient {
         }
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             message: format!("decode qq {action} response: {err}"),
             retryable: false,
             action: Some(action.to_owned()),
@@ -786,7 +786,7 @@ fn header_value(value: &str) -> ProviderResult<HeaderValue> {
 fn internal_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Internal,
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         message: err.to_string(),
         retryable: false,
         action: None,
@@ -797,7 +797,7 @@ fn internal_error(err: impl std::fmt::Display) -> ProviderError {
 fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq,
         message: err.to_string(),
         retryable: true,
         action: None,

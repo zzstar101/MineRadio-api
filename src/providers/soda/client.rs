@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::providers::{
-    ProviderResult,
+    ProviderResult, ProviderId,
     error::{ProviderError, ProviderErrorCode},
     soda::model::{
         SodaCollectionResp, SodaLoginStatusResp, SodaPLaylistDetailResp, SodaPlaylistListResp,
@@ -43,7 +43,7 @@ impl SodaClient {
     }
 
     pub async fn current_cookie(&self) -> Option<String> {
-        auth_session::get_provider_cookie("soda").await
+        auth_session::get_provider_cookie(&ProviderId::Soda).await
     }
 
     pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
@@ -57,7 +57,7 @@ impl SodaClient {
         {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 message: "soda login required".to_owned(),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -194,7 +194,7 @@ impl SodaClient {
         if !status.is_success() {
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 message: format!("soda upstream http {}", status.as_u16()),
                 retryable: false,
                 action: None,
@@ -208,7 +208,7 @@ impl SodaClient {
             .map_err(unavailable_error)?;
         serde_json::from_slice(&body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             message: format!("decode soda like_song response: {err}"),
             retryable: false,
             action: Some("like_song".to_owned()),
@@ -258,7 +258,7 @@ impl SodaClient {
         if !status.is_success() {
             return Err(ProviderError {
                 code: ProviderErrorCode::Unavailable,
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 message: format!("soda upstream http {}", status.as_u16()),
                 retryable: false,
                 action: None,
@@ -272,7 +272,7 @@ impl SodaClient {
             .map_err(unavailable_error)?;
         serde_json::from_slice(&body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             message: format!("decode soda {action} response: {err}"),
             retryable: false,
             action: Some(action.to_owned()),
@@ -288,7 +288,7 @@ fn header_value(value: &str) -> ProviderResult<HeaderValue> {
 fn internal_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Internal,
-        provider: "soda".to_owned(),
+        provider: ProviderId::Soda,
         message: err.to_string(),
         retryable: false,
         action: None,
@@ -299,7 +299,7 @@ fn internal_error(err: impl std::fmt::Display) -> ProviderError {
 fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
-        provider: "soda".to_owned(),
+        provider: ProviderId::Soda,
         message: err.to_string(),
         retryable: true,
         action: None,

@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{providers::netease::client::NeteaseClient, services::auth_session, utils};
+use crate::{
+    providers::netease::client::NeteaseClient, services::auth_session, types::ProviderId, utils,
+};
 
 pub type NeteaseResponse = Value;
 
@@ -283,7 +285,7 @@ impl PodcastService {
     }
 
     async fn login_status(&self) -> anyhow::Result<PodcastLoginInfo> {
-        if auth_session::get_provider_cookie("netease").await.is_none() {
+        if auth_session::get_provider_cookie(&ProviderId::Netease).await.is_none() {
             return Ok(PodcastLoginInfo {
                 logged_in: false,
                 user_id: None,

@@ -67,12 +67,12 @@ impl CrossSourceResolver {
             return self.resolve_merged_search(query).await;
         }
 
-        let attempts = self.ordered_providers(query.provider.as_deref());
+        let attempts = self.ordered_providers(query.provider);
         let mut first_error: Option<anyhow::Error> = None;
         let first_provider = attempts
             .first()
             .cloned()
-            .unwrap_or_else(|| "netease".to_owned());
+            .unwrap_or_else(|| ProviderId::Netease);
 
         for provider_id in attempts {
             let Some(adapter) = self.provider(&provider_id) else {
@@ -110,7 +110,7 @@ impl CrossSourceResolver {
         let attempts = self.ordered_providers(if import_only {
             None
         } else {
-            Some(&track.provider)
+            Some(track.provider)
         });
         let mut first_error: Option<anyhow::Error> = None;
 
@@ -239,35 +239,33 @@ impl CrossSourceResolver {
             provider_order
                 .first()
                 .cloned()
-                .unwrap_or_else(|| "netease".to_owned()),
+                .unwrap_or_else(|| ProviderId::Netease),
             "no matching tracks found",
         ))
     }
 
     fn provider_order(&self) -> Vec<ProviderId> {
-        self.deps.provider_order.clone().unwrap_or_else(|| {
-            PROVIDER_IDS
-                .iter()
-                .map(|provider_id| (*provider_id).to_owned())
-                .collect()
-        })
+        self.deps
+            .provider_order
+            .clone()
+            .unwrap_or_else(|| PROVIDER_IDS.to_vec())
     }
 
-    fn ordered_providers(&self, preferred: Option<&str>) -> Vec<ProviderId> {
+    fn ordered_providers(&self, preferred: Option<ProviderId>) -> Vec<ProviderId> {
         let provider_order = self.provider_order();
         let Some(preferred) = preferred else {
             return provider_order;
         };
-        std::iter::once(preferred.to_owned())
+        std::iter::once(preferred)
             .chain(
                 provider_order
                     .into_iter()
-                    .filter(|provider_id| provider_id != preferred),
+                    .filter(|provider_id| *provider_id != preferred),
             )
             .collect()
     }
 
-    fn provider(&self, provider_id: &str) -> Option<Arc<dyn ProviderAdapter>> {
+    fn provider(&self, provider_id: &ProviderId) -> Option<Arc<dyn ProviderAdapter>> {
         self.deps
             .providers
             .as_ref()
@@ -385,7 +383,7 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
     if !album.is_empty() && (album.contains(&q) || q.contains(&album)) {
         score += 8.0;
     }
-    if track.provider == "qq" {
+    if track.provider == ProviderId::Qq {
         score += if search_intent_prefers_qq(keyword) {
             48.0
         } else {
@@ -422,9 +420,9 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
     score - source_index as f64 * 0.75
 }
 
-fn merged_provider_limit(provider_id: &str, requested_limit: u32) -> u32 {
+fn merged_provider_limit(provider_id: &ProviderId, requested_limit: u32) -> u32 {
     if requested_limit >= 18 {
-        if provider_id == "qq" {
+        if *provider_id == ProviderId::Qq {
             return 12;
         }
         return 14;
@@ -584,9 +582,9 @@ mod tests {
     }
 
     impl MockProvider {
-        fn new(id: &str, calls: Calls) -> Self {
+        fn new(id: ProviderId, calls: Calls) -> Self {
             Self {
-                id: id.to_owned(),
+                id,
                 calls,
                 search_result: Vec::new(),
                 search_error: None,
@@ -602,7 +600,7 @@ mod tests {
         }
 
         fn with_search_error(mut self, code: ProviderErrorCode, message: &str) -> Self {
-            self.search_error = Some(provider_error(&self.id, code, message, false));
+            self.search_error = Some(provider_error(self.id, code, message, false));
             self
         }
 
@@ -680,7 +678,7 @@ mod tests {
             }
             self.song_url_result
                 .clone()
-                .ok_or_else(|| provider_error(&self.id, ProviderErrorCode::NoUrl, "no url", true))
+                .ok_or_else(|| provider_error(self.id, ProviderErrorCode::NoUrl, "no url", true))
         }
 
         async fn track_qualities(
@@ -692,7 +690,7 @@ mod tests {
 
         async fn lyric(&self, _track: &Track) -> providers::ProviderResult<LyricPayload> {
             Err(provider_error(
-                &self.id,
+                self.id,
                 ProviderErrorCode::NoResult,
                 "no lyric",
                 false,
@@ -701,7 +699,7 @@ mod tests {
 
         async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Err(provider_error(
-                &self.id,
+                self.id,
                 ProviderErrorCode::NoPlaylist,
                 "no playlists",
                 false,
@@ -710,7 +708,7 @@ mod tests {
 
         async fn playlist_detail(&self, _id: &str) -> providers::ProviderResult<PlaylistDetail> {
             Err(provider_error(
-                &self.id,
+                self.id,
                 ProviderErrorCode::NoPlaylist,
                 "no playlist",
                 false,
@@ -727,14 +725,14 @@ mod tests {
     }
 
     fn provider_error(
-        provider: &str,
+        provider: ProviderId,
         code: ProviderErrorCode,
         message: &str,
         retryable: bool,
     ) -> ProviderError {
         ProviderError {
             code,
-            provider: provider.to_owned(),
+            provider,
             message: message.to_owned(),
             retryable,
             action: None,
@@ -742,9 +740,9 @@ mod tests {
         }
     }
 
-    fn track(provider: &str, id: &str, title: &str, artists: &[&str]) -> Track {
+    fn track(provider: ProviderId, id: &str, title: &str, artists: &[&str]) -> Track {
         Track {
-            provider: provider.to_owned(),
+            provider,
             id: id.to_owned(),
             source_id: id.to_owned(),
             media_mid: None,
@@ -759,7 +757,7 @@ mod tests {
         }
     }
 
-    fn resolver(providers: Vec<MockProvider>, provider_order: Vec<&str>) -> CrossSourceResolver {
+    fn resolver(providers: Vec<MockProvider>, provider_order: Vec<ProviderId>) -> CrossSourceResolver {
         let providers = providers
             .into_iter()
             .map(|provider| {
@@ -785,21 +783,21 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls)).with_search(vec![track(
-                    "netease",
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(vec![track(
+                    ProviderId::Netease,
                     "n-1",
                     "夜航",
                     &["星野"],
                 )]),
-                MockProvider::new("qq", Arc::clone(&calls)),
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = resolver
             .resolve_search(ResolveSearchQuery {
                 keyword: "夜航".to_owned(),
-                provider: Some("netease".to_owned()),
+                provider: Some(ProviderId::Netease),
                 limit: 5,
             })
             .await
@@ -814,16 +812,16 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls)).with_search(vec![
-                    track("netease", "n-1", "夜航", &["星野"]),
-                    track("netease", "same", "同名", &["Ada"]),
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(vec![
+                    track(ProviderId::Netease, "n-1", "夜航", &["星野"]),
+                    track(ProviderId::Netease, "same", "同名", &["Ada"]),
                 ]),
-                MockProvider::new("qq", Arc::clone(&calls)).with_search(vec![
-                    track("qq", "q-1", "夜航", &["星野"]),
-                    track("qq", "same", "同名", &["Ada"]),
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![
+                    track(ProviderId::Qq, "q-1", "夜航", &["星野"]),
+                    track(ProviderId::Qq, "same", "同名", &["Ada"]),
                 ]),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = resolver
@@ -848,14 +846,14 @@ mod tests {
         let search_barrier = Arc::new(Barrier::new(2));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls))
-                    .with_search(vec![track("netease", "n-1", "夜航", &["星野"])])
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                    .with_search(vec![track(ProviderId::Netease, "n-1", "夜航", &["星野"])])
                     .with_search_barrier(Arc::clone(&search_barrier)),
-                MockProvider::new("qq", Arc::clone(&calls))
-                    .with_search(vec![track("qq", "q-1", "夜航", &["星野"])])
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                    .with_search(vec![track(ProviderId::Qq, "q-1", "夜航", &["星野"])])
                     .with_search_barrier(search_barrier),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = timeout(
@@ -878,27 +876,27 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls)).with_search(Vec::new()),
-                MockProvider::new("qq", Arc::clone(&calls)).with_search(vec![track(
-                    "qq",
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(Vec::new()),
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![track(
+                    ProviderId::Qq,
                     "q-1",
                     "夜航",
                     &["星野"],
                 )]),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = resolver
             .resolve_search(ResolveSearchQuery {
                 keyword: "夜航".to_owned(),
-                provider: Some("netease".to_owned()),
+                provider: Some(ProviderId::Netease),
                 limit: 3,
             })
             .await
             .unwrap();
 
-        assert_eq!(result[0].provider, "qq");
+        assert_eq!(result[0].provider, ProviderId::Qq);
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             &["netease:search:夜航:3", "qq:search:夜航:3"]
@@ -910,15 +908,15 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls))
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
                     .with_song_url("https://n.example/song.m4a"),
-                MockProvider::new("qq", Arc::clone(&calls)),
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = resolver
-            .resolve_song_url(track("netease", "n-1", "夜航", &["星野"]), None)
+            .resolve_song_url(track(ProviderId::Netease, "n-1", "夜航", &["星野"]), None)
             .await
             .unwrap();
 
@@ -931,17 +929,17 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls))
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
                     .with_search_error(ProviderErrorCode::Unavailable, "netease down"),
-                MockProvider::new("qq", Arc::clone(&calls))
-                    .with_search(vec![track("qq", "q-9", "夜航", &["星野"])])
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                    .with_search(vec![track(ProviderId::Qq, "q-9", "夜航", &["星野"])])
                     .with_song_url("https://q.example/song.m4a"),
             ],
-            vec!["netease", "qq"],
+            vec![ProviderId::Netease, ProviderId::Qq],
         );
 
         let result = resolver
-            .resolve_song_url(track("netease", "n-1", "夜航", &["星野"]), None)
+            .resolve_song_url(track(ProviderId::Netease, "n-1", "夜航", &["星野"]), None)
             .await
             .unwrap();
 
@@ -959,15 +957,15 @@ mod tests {
     #[tokio::test]
     async fn resolve_song_url_searches_import_only_tracks_instead_of_direct_id() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut import_track = track("netease", "import:apple-music:1", "夜航", &["星野"]);
+        let mut import_track = track(ProviderId::Netease, "import:apple-music:1", "夜航", &["星野"]);
         import_track.source_id = "import:apple-music:1".to_owned();
         let resolver = resolver(
             vec![
-                MockProvider::new("netease", Arc::clone(&calls))
-                    .with_search(vec![track("netease", "n-match", "夜航", &["星野"])])
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                    .with_search(vec![track(ProviderId::Netease, "n-match", "夜航", &["星野"])])
                     .with_song_url("https://n.example/match.m4a"),
             ],
-            vec!["netease"],
+            vec![ProviderId::Netease],
         );
 
         let result = resolver.resolve_song_url(import_track, None).await.unwrap();

@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track, ProviderId};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct QqSearchResp {
@@ -38,7 +38,7 @@ impl QqSearchResp {
             .into_iter()
             .map(|l| Track {
                 id: l.songmid.clone(),
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 source_id: l.songmid.clone(),
                 media_mid: Some(l.songmid),
                 title: l.songname,
@@ -157,7 +157,7 @@ impl QqAlbumListResp {
             .albums
             .into_iter()
             .map(|s| AlbumSummary {
-                provider: "qq".to_owned(),
+                provider: ProviderId::Qq,
                 id: s.mid.clone(),
                 name: s.name,
                 artists: s.singer.into_iter().map(|a| a.name).collect(),
@@ -216,7 +216,7 @@ impl QqAlbumDetailResp {
                 track_ids.push(l.mid.clone());
                 Track {
                     id: l.mid.clone(),
-                    provider: "qq".to_owned(),
+                    provider: ProviderId::Qq,
                     source_id: l.mid.clone(),
                     media_mid: Some(l.mid),
                     title: l.title,
@@ -236,7 +236,7 @@ impl QqAlbumDetailResp {
             .collect();
 
         AlbumDetail {
-            provider: "qq".to_owned(),
+            provider: ProviderId::Qq,
             id: album.album_mid.clone(),
             name: album.album_name,
             artists: artists.singer_list.into_iter().map(|s| s.name).collect(),

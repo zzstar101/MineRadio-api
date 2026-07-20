@@ -1,12 +1,12 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, Track};
+use crate::types::{PlayableState, Track, ProviderId};
 
 pub fn map_kugou_song_to_track(raw: &Value) -> Track {
     let hash = first_string(raw, &["FileHash", "hash", "Hash"]);
     Track {
         id: hash.clone(),
-        provider: "kugou".to_owned(),
+        provider: ProviderId::Kugou,
         source_id: hash,
         media_mid: non_empty(first_string(raw, &["AlbumAudioID", "album_audio_id"])),
         title: first_string(raw, &["SongName", "songname", "filename"]),

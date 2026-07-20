@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track, ProviderId};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +39,7 @@ impl NeteaseAlbumListResp {
         self.data
             .into_iter()
             .map(|a| AlbumSummary {
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 id: a.id.to_string(),
                 name: a.name,
                 artists: a.artists.into_iter().map(|a| a.name).collect(),
@@ -70,7 +70,7 @@ impl NeteaseAlbumDetailResp {
                 track_ids.push(t.id.to_string());
                 Track {
                     id: t.id.to_string(),
-                    provider: "netease".to_owned(),
+                    provider: ProviderId::Netease,
                     source_id: t.id.to_string(),
                     media_mid: None,
                     title: t.name,
@@ -85,7 +85,7 @@ impl NeteaseAlbumDetailResp {
             })
             .collect();
         AlbumDetail {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             id: a.id.to_string(),
             name: a.name,
             artists: a.artists.into_iter().map(|a| a.name).collect(),

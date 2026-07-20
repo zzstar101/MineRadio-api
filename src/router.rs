@@ -20,7 +20,7 @@ use crate::{
     services::{
         self, cross_source_resolver, podcast, sidecar_log, weather_radio::WeatherRadioParams,
     },
-    types::{SongUrlOptions, Track},
+    types::{ProviderId, SongUrlOptions, Track},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,7 +30,7 @@ struct HealthResponse {
     app_version: String,
     api_version: String,
     schema_version: String,
-    providers: Vec<&'static str>,
+    providers: Vec<ProviderId>,
     provider_status: CapabilityMatrix,
 }
 
@@ -480,7 +480,10 @@ async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>)
     match resolver
         .resolve_search(cross_source_resolver::ResolveSearchQuery {
             keyword,
-            provider: query.provider.filter(|value| !value.trim().is_empty()),
+            provider: query
+                .provider
+                .filter(|value| !value.trim().is_empty())
+                .and_then(|value| value.parse().ok()),
             limit: query.limit.unwrap_or(20).max(1),
         })
         .await
@@ -604,21 +607,27 @@ async fn set_provider_session_cookie(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<SessionCookieRequest>,
 ) -> Response {
-    if !is_known_provider(&pid) {
+    let Ok(provider) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    if !is_known_provider(provider) {
         return unknown_provider(&pid);
     }
-    match services::auth_session::set_runtime_provider_cookie(pid.clone(), body.cookie).await {
-        Ok(()) => ok(serde_json::json!({ "provider": pid, "stored": true })),
+    match services::auth_session::set_runtime_provider_cookie(provider, body.cookie).await {
+        Ok(()) => ok(serde_json::json!({ "provider": provider, "stored": true })),
         Err(err) => bad_request(err),
     }
 }
 
 async fn clear_provider_session_cookie(Path(pid): Path<String>) -> Response {
-    if !is_known_provider(&pid) {
+    let Ok(provider) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    if !is_known_provider(provider) {
         return unknown_provider(&pid);
     }
-    services::auth_session::clear_runtime_provider_cookie(&pid).await;
-    ok(serde_json::json!({ "provider": pid, "stored": false }))
+    services::auth_session::clear_runtime_provider_cookie(&provider).await;
+    ok(serde_json::json!({ "provider": provider, "stored": false }))
 }
 
 async fn provider_search(
@@ -630,8 +639,11 @@ async fn provider_search(
     if keyword.is_empty() {
         return bad_request("keyword required");
     }
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider
         .search(&keyword, query.limit.unwrap_or(20).max(1))
@@ -647,8 +659,11 @@ async fn provider_song_url(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     let Some((track, options)) = parse_song_url_body(body) else {
         return bad_request("invalid or missing Track body");
@@ -664,8 +679,11 @@ async fn provider_qualities(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     let Some(track) = parse_track_body(body) else {
         return bad_request("invalid or missing Track body");
@@ -681,8 +699,11 @@ async fn provider_lyric(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     let Some(track) = parse_track_body(body) else {
         return bad_request("invalid or missing Track body");
@@ -694,8 +715,11 @@ async fn provider_lyric(
 }
 
 async fn provider_playlists(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.playlist_list().await {
         Ok(result) => ok(result),
@@ -707,8 +731,11 @@ async fn provider_playlist_detail(
     State(state): State<AppState>,
     Path((pid, id)): Path<(String, String)>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.playlist_detail(&id).await {
         Ok(result) => ok(result),
@@ -717,8 +744,11 @@ async fn provider_playlist_detail(
 }
 
 async fn provider_albums(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.album_list().await {
         Ok(result) => ok(result),
@@ -730,8 +760,11 @@ async fn provider_album_detail(
     State(state): State<AppState>,
     Path((pid, id)): Path<(String, String)>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.album_detail(&id).await {
         Ok(result) => ok(result),
@@ -740,8 +773,11 @@ async fn provider_album_detail(
 }
 
 async fn provider_login_status(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.login_status().await {
         Ok(result) => ok(result),
@@ -750,38 +786,41 @@ async fn provider_login_status(State(state): State<AppState>, Path(pid): Path<St
 }
 
 async fn provider_logout(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
     };
-    let had_runtime_or_env_session = services::auth_session::get_provider_cookie(&pid)
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
+    };
+    let had_runtime_or_env_session = services::auth_session::get_provider_cookie(&provider_id)
         .await
         .map(|cookie| !cookie.trim().is_empty())
         .unwrap_or(false);
 
-    if pid == "soda" {
+    if provider_id == ProviderId::Soda {
         let logout_result = provider.logout().await;
-        services::auth_session::clear_runtime_provider_cookie(&pid).await;
+        services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
         match logout_result {
-            Ok(()) => ok(serde_json::json!({ "provider": pid, "loggedOut": true })),
+            Ok(()) => ok(serde_json::json!({ "provider": provider_id, "loggedOut": true })),
             Err(err)
                 if had_runtime_or_env_session
                     && matches!(err.code, ProviderErrorCode::NotImplemented)
                     && err.action.as_deref() == Some("no-session") =>
             {
-                ok(serde_json::json!({ "provider": pid, "loggedOut": true }))
+                ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
             }
             Err(err) => provider_error_response(err),
         }
     } else {
-        services::auth_session::clear_runtime_provider_cookie(&pid).await;
+        services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
         match provider.logout().await {
-            Ok(()) => ok(serde_json::json!({ "provider": pid, "loggedOut": true })),
+            Ok(()) => ok(serde_json::json!({ "provider": provider_id, "loggedOut": true })),
             Err(err)
                 if had_runtime_or_env_session
                     && matches!(err.code, ProviderErrorCode::NotImplemented)
                     && err.action.as_deref() == Some("no-session") =>
             {
-                ok(serde_json::json!({ "provider": pid, "loggedOut": true }))
+                ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
             }
             Err(err) => provider_error_response(err),
         }
@@ -811,8 +850,11 @@ async fn provider_like(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<LikeBody>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider.like_song(&body.id, body.liked).await {
         Ok(result) => ok(result),
@@ -825,8 +867,11 @@ async fn provider_like_check(
     Path(pid): Path<String>,
     Query(query): Query<LikeCheckQuery>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     let ids = parse_like_check_ids(query);
     if ids.is_empty() {
@@ -855,8 +900,11 @@ async fn provider_playlist_add_song(
     Path(pid): Path<String>,
     axum::Json(body): axum::Json<PlaylistAddSongBody>,
 ) -> Response {
-    let Some(provider) = state.providers.get(&pid) else {
-        return unavailable_provider(&pid);
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
     };
     match provider
         .add_song_to_playlist(&body.playlist_id, &body.track_id)
@@ -912,21 +960,21 @@ fn build_cross_source_resolver(
     )
 }
 
-fn is_known_provider(provider: &str) -> bool {
-    matches!(provider, "netease" | "qq" | "soda")
+fn is_known_provider(provider: ProviderId) -> bool {
+    matches!(provider, ProviderId::Netease | ProviderId::Qq | ProviderId::Soda)
 }
 
-fn unknown_provider(provider: &str) -> Response {
+fn unknown_provider(raw: &str) -> Response {
     fail(
         StatusCode::NOT_FOUND,
         "PROVIDER_NOT_FOUND",
-        format!("unknown provider: {provider}"),
+        format!("unknown provider: {raw}"),
     )
 }
 
-fn unavailable_provider(provider: &str) -> Response {
+fn unavailable_provider(provider: ProviderId) -> Response {
     if !is_known_provider(provider) {
-        return unknown_provider(provider);
+        return unknown_provider(provider.as_str());
     }
     fail(
         StatusCode::NOT_IMPLEMENTED,

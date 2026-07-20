@@ -35,7 +35,7 @@ impl KugouAdapter {
 #[async_trait]
 impl ProviderAdapter for KugouAdapter {
     fn id(&self) -> ProviderId {
-        "kugou".to_owned()
+        ProviderId::Kugou
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
@@ -66,7 +66,7 @@ impl ProviderAdapter for KugouAdapter {
         let url = first_url(&body);
         Ok(SongUrlResult {
             url: url.clone(),
-            provider: Some("kugou".to_owned()),
+            provider: Some(ProviderId::Kugou),
             playable: Some(url.is_some()),
             quality: Some(quality.to_owned()),
             requested_quality,
@@ -86,7 +86,7 @@ impl ProviderAdapter for KugouAdapter {
         ]
         .into_iter()
         .map(|(id, request_quality)| TrackQualityOption {
-            provider: "kugou".to_owned(),
+            provider: ProviderId::Kugou,
             id: id.to_owned(),
             label: id.to_owned(),
             request_quality: request_quality.to_owned(),
@@ -95,7 +95,7 @@ impl ProviderAdapter for KugouAdapter {
         })
         .collect();
         Ok(TrackQualityAvailability {
-            provider: "kugou".to_owned(),
+            provider: ProviderId::Kugou,
             track_id: track.id.clone(),
             default_quality: Some("standard".to_owned()),
             qualities,
@@ -106,7 +106,7 @@ impl ProviderAdapter for KugouAdapter {
         let candidates = self.client.lyric_search(&track.source_id).await?;
         let Some(candidate) = lyric_candidates(&candidates).first() else {
             return Ok(LyricPayload {
-                provider: "kugou".to_owned(),
+                provider: ProviderId::Kugou,
                 track_id: track.id.clone(),
                 ..Default::default()
             });
@@ -121,7 +121,7 @@ impl ProviderAdapter for KugouAdapter {
             .unwrap_or_default();
         if id == 0 || access_key.is_empty() {
             return Ok(LyricPayload {
-                provider: "kugou".to_owned(),
+                provider: ProviderId::Kugou,
                 track_id: track.id.clone(),
                 ..Default::default()
             });
@@ -133,7 +133,7 @@ impl ProviderAdapter for KugouAdapter {
             .and_then(decode_base64_text)
             .unwrap_or_default();
         Ok(LyricPayload {
-            provider: "kugou".to_owned(),
+            provider: ProviderId::Kugou,
             track_id: track.id.clone(),
             lines: lrc::parse_lrc(&text),
             has_translation: false,
@@ -159,7 +159,7 @@ impl ProviderAdapter for KugouAdapter {
 }
 
 fn not_implemented(action: &str) -> ProviderError {
-    ProviderError::not_implemented("kugou".to_owned(), action)
+    ProviderError::not_implemented(ProviderId::Kugou, action)
 }
 
 fn search_items(body: &Value) -> &[Value] {

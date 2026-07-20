@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{
     providers::netease::client::{NeteaseClient, NeteaseClientResponse},
     services::auth_session::set_runtime_provider_cookie,
-    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
+    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey, ProviderId},
 };
 
 #[derive(Clone, Debug, Default)]
@@ -42,7 +42,7 @@ impl NeteaseQrLoginService {
         let key = read_string(response_body(&resp).get("unikey"))
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_MISSING"))?;
         Ok(ProviderLoginQrKey {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             key,
         })
     }
@@ -65,7 +65,7 @@ impl NeteaseQrLoginService {
         let img = read_string(data.get("qrimg"))
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_IMAGE_MISSING"))?;
         Ok(ProviderLoginQrImage {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             key: normalized_key.to_owned(),
             img,
             url: read_string(data.get("qrurl")),
@@ -102,13 +102,13 @@ impl NeteaseQrLoginService {
 
         let stored = code == 803 && cookie.is_some();
         if let Some(cookie) = cookie.filter(|_| stored) {
-            set_runtime_provider_cookie("netease".to_owned(), cookie)
+            set_runtime_provider_cookie(ProviderId::Netease, cookie)
                 .await
                 .map_err(|err| anyhow::anyhow!(err))?;
         }
 
         Ok(ProviderLoginQrCheck {
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             key: normalized_key.to_owned(),
             code,
             message: read_qr_message(&resp),
@@ -336,7 +336,7 @@ mod tests {
 
         let image = service.create_image("demo-key").await.unwrap();
 
-        assert_eq!(image.provider, "netease");
+        assert_eq!(image.provider.as_str(), "netease");
         assert_eq!(image.key, "demo-key");
         assert_eq!(
             image.url.as_deref(),
@@ -370,7 +370,7 @@ mod tests {
 
         let result = service.check("demo-key").await.unwrap();
 
-        assert_eq!(result.provider, "netease");
+        assert_eq!(result.provider.as_str(), "netease");
         assert_eq!(result.key, "demo-key");
         assert_eq!(result.code, 803);
         assert!(result.logged_in);

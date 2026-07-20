@@ -39,7 +39,7 @@ impl SodaAdapter {
 #[async_trait]
 impl ProviderAdapter for SodaAdapter {
     fn id(&self) -> ProviderId {
-        "soda".to_owned()
+        ProviderId::Soda
     }
 
     async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
@@ -116,7 +116,7 @@ impl ProviderAdapter for SodaAdapter {
                 .unwrap_or(false)
         });
         Ok(LyricPayload {
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             track_id,
             lines,
             has_translation,
@@ -169,12 +169,12 @@ impl ProviderAdapter for SodaAdapter {
             .is_empty()
         {
             return Err(ProviderError::not_implemented(
-                "soda".to_owned(),
+                ProviderId::Soda,
                 "no-session",
             ));
         }
         self.client.logout().await?;
-        auth_session::clear_runtime_provider_cookie("soda").await;
+        auth_session::clear_runtime_provider_cookie(&ProviderId::Soda).await;
         Ok(())
     }
 
@@ -184,7 +184,7 @@ impl ProviderAdapter for SodaAdapter {
         let req = self.client.like_song(clean_id, liked).await?;
         if req.check() {
             Ok(SongLikeAck {
-                provider: "soda".to_owned(),
+                provider: ProviderId::Soda,
                 id: clean_id.to_owned(),
                 liked,
                 code: Some(200),
@@ -220,7 +220,7 @@ impl ProviderAdapter for SodaAdapter {
             .collect::<std::collections::HashSet<_>>();
 
         Ok(SongLikeCheckAck {
-            provider: "soda".to_owned(),
+            provider: ProviderId::Soda,
             ids: ids.to_vec(),
             liked: ids
                 .iter()
@@ -233,7 +233,7 @@ impl ProviderAdapter for SodaAdapter {
 fn unavailable(message: String) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
-        provider: "soda".to_owned(),
+        provider: ProviderId::Soda,
         message,
         retryable: false,
         action: None,
@@ -244,7 +244,7 @@ fn unavailable(message: String) -> ProviderError {
 fn no_result(action: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
-        provider: "soda".to_owned(),
+        provider: ProviderId::Soda,
         message: format!("{} no result", action),
         retryable: false,
         action: Some(action.to_string()),
@@ -255,7 +255,7 @@ fn no_result(action: &str) -> ProviderError {
 fn invalid_response(message: String) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::InvalidResponse,
-        provider: "soda".to_owned(),
+        provider: ProviderId::Soda,
         message,
         retryable: false,
         action: None,

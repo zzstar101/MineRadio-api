@@ -21,7 +21,7 @@ impl AuthSession {
         }
     }
 
-    pub async fn get_provider_cookie(&self, provider: &str) -> Option<String> {
+    pub async fn get_provider_cookie(&self, provider: &ProviderId) -> Option<String> {
         self.runtime
             .read()
             .await
@@ -48,7 +48,7 @@ impl AuthSession {
         Ok(())
     }
 
-    pub async fn clear_runtime_provider_cookie(&self, provider: &str) {
+    pub async fn clear_runtime_provider_cookie(&self, provider: &ProviderId) {
         self.runtime.write().await.remove(provider);
         clear_persisted_provider_cookie(provider);
     }
@@ -75,11 +75,11 @@ pub async fn set_runtime_provider_cookie(
         .await
 }
 
-pub async fn clear_runtime_provider_cookie(provider: &str) {
+pub async fn clear_runtime_provider_cookie(provider: &ProviderId) {
     auth_session().clear_runtime_provider_cookie(provider).await;
 }
 
-pub async fn get_provider_cookie(provider: &str) -> Option<String> {
+pub async fn get_provider_cookie(provider: &ProviderId) -> Option<String> {
     auth_session().get_provider_cookie(provider).await
 }
 
@@ -87,11 +87,13 @@ fn auth_session() -> &'static AuthSession {
     AUTH_SESSION.get_or_init(AuthSession::new)
 }
 
-fn env_cookie(provider: &str) -> Option<String> {
+fn env_cookie(provider: &ProviderId) -> Option<String> {
     let key = match provider {
-        "netease" => "MINERADIO_NETEASE_COOKIE",
-        "qq" => "MINERADIO_QQ_COOKIE",
-        _ => "MINERADIO_SODA_COOKIE",
+        ProviderId::Netease => "MINERADIO_NETEASE_COOKIE",
+        ProviderId::Qq => "MINERADIO_QQ_COOKIE",
+        ProviderId::Soda => "MINERADIO_SODA_COOKIE",
+        ProviderId::Kugou => "MINERADIO_SODA_COOKIE",
+        ProviderId::Unknown => return None,
     };
     env::var(key)
         .ok()
@@ -153,13 +155,13 @@ fn write_persisted_cookies(cookies: HashMap<ProviderId, String>) {
     }
 }
 
-fn set_persisted_provider_cookie(provider: &str, cookie: &str) {
+fn set_persisted_provider_cookie(provider: &ProviderId, cookie: &str) {
     let mut cookies = read_persisted_cookies();
-    cookies.insert(provider.to_owned(), cookie.to_owned());
+    cookies.insert(*provider, cookie.to_owned());
     write_persisted_cookies(cookies);
 }
 
-fn clear_persisted_provider_cookie(provider: &str) {
+fn clear_persisted_provider_cookie(provider: &ProviderId) {
     let mut cookies = read_persisted_cookies();
     cookies.remove(provider);
     write_persisted_cookies(cookies);

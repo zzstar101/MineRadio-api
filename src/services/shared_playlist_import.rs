@@ -117,10 +117,11 @@ pub async fn import_shared_playlist(
         .into());
     }
 
-    let adapter = deps
-        .provider_adapters
-        .get(&candidate.provider)
-        .cloned()
+    let adapter = candidate
+        .provider
+        .parse::<ProviderId>()
+        .ok()
+        .and_then(|pid| deps.provider_adapters.get(&pid).cloned())
         .ok_or_else(|| SharedPlaylistImportError {
             code: "UNSUPPORTED_PROVIDER".to_owned(),
             message: "unsupported shared playlist provider".to_owned(),
@@ -415,7 +416,7 @@ fn detect_qq_playlist(url: &Url, source_url: &str) -> Option<SharedPlaylistCandi
         return None;
     }
     Some(SharedPlaylistCandidate {
-        provider: "qq".to_owned(),
+        provider: ProviderId::Qq.to_string(),
         id,
         source_url: source_url.to_owned(),
     })
@@ -452,7 +453,7 @@ fn detect_netease_playlist(url: &Url, source_url: &str) -> Option<SharedPlaylist
         return None;
     }
     Some(SharedPlaylistCandidate {
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease.to_string(),
         id,
         source_url: source_url.to_owned(),
     })
@@ -513,7 +514,7 @@ fn detect_kugou_playlist(source_url: &str, url: &Url) -> Option<SharedPlaylistCa
         Some(simple_hash_hex(source_url)),
     ]);
     Some(SharedPlaylistCandidate {
-        provider: "kugou".to_owned(),
+        provider: ProviderId::Kugou.to_string(),
         id,
         source_url: source_url.to_owned(),
     })
@@ -1611,9 +1612,9 @@ mod tests {
     };
     use async_trait::async_trait;
 
-    fn track(provider: &str) -> Track {
+    fn track(provider: ProviderId) -> Track {
         Track {
-            provider: provider.to_owned(),
+            provider,
             id: "song-1".to_owned(),
             source_id: "song-1".to_owned(),
             media_mid: None,
@@ -1629,13 +1630,13 @@ mod tests {
     }
 
     struct MockAdapter {
-        provider: String,
+        provider: ProviderId,
     }
 
     #[async_trait]
     impl ProviderAdapter for MockAdapter {
         fn id(&self) -> ProviderId {
-            self.provider.clone()
+            self.provider
         }
 
         async fn search(
@@ -1678,7 +1679,7 @@ mod tests {
                 track_count: None,
                 track_ids: Vec::new(),
                 collected: Some(false),
-                tracks: vec![track(&self.provider)],
+                tracks: vec![track(self.provider)],
             })
         }
 
@@ -1874,9 +1875,9 @@ mod tests {
             }),
             SharedPlaylistImporterDeps {
                 provider_adapters: HashMap::from([(
-                    "qq".to_owned(),
+                    ProviderId::Qq,
                     Arc::new(MockAdapter {
-                        provider: "qq".to_owned(),
+                        provider: ProviderId::Qq,
                     }) as Arc<dyn ProviderAdapter>,
                 )]),
             },

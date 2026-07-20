@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::{
     providers::{
-        ProviderResult,
+        ProviderResult, ProviderId,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,
@@ -50,7 +50,7 @@ impl NeteaseClient {
     }
 
     pub async fn current_cookie(&self) -> Option<String> {
-        auth_session::get_provider_cookie("netease").await
+        auth_session::get_provider_cookie(&ProviderId::Netease).await
     }
 
     pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
@@ -64,7 +64,7 @@ impl NeteaseClient {
         {
             return Err(ProviderError {
                 code: ProviderErrorCode::LoginRequired,
-                provider: "netease".to_owned(),
+                provider: ProviderId::Netease,
                 message: "netease login required".to_owned(),
                 retryable: true,
                 action: Some("login".to_owned()),
@@ -503,7 +503,7 @@ impl NeteaseClient {
         let raw_message = body.to_string();
         serde_json::from_value(body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             message: format!("decode netease {action} response: {err}"),
             retryable: false,
             action: Some(action.to_owned()),
@@ -629,7 +629,7 @@ impl NeteaseClient {
                 401 => ProviderErrorCode::LoginRequired,
                 _ => ProviderErrorCode::Unavailable,
             },
-            provider: "netease".to_owned(),
+            provider: ProviderId::Netease,
             message: body
                 .get("message")
                 .and_then(Value::as_str)
@@ -810,7 +810,7 @@ fn unix_ms() -> u128 {
 fn internal_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Internal,
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         message: err.to_string(),
         retryable: false,
         action: None,
@@ -821,7 +821,7 @@ fn internal_error(err: impl std::fmt::Display) -> ProviderError {
 fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::Unavailable,
-        provider: "netease".to_owned(),
+        provider: ProviderId::Netease,
         message: err.to_string(),
         retryable: true,
         action: None,
