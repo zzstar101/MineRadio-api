@@ -1,9 +1,9 @@
 use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
-    SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption, VipLevel,
-    ProviderId
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
+    ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
+    TrackQualityOption, VipLevel,
 };
 
 #[derive(Deserialize)]

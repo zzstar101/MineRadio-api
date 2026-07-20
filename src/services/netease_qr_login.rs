@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::{
     providers::netease::client::{NeteaseClient, NeteaseClientResponse},
     services::auth_session::set_runtime_provider_cookie,
-    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey, ProviderId},
+    types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
 };
 
 #[derive(Clone, Debug, Default)]

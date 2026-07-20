@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::providers::{
-    ProviderResult, ProviderId,
+    ProviderId, ProviderResult,
     error::{ProviderError, ProviderErrorCode},
     soda::model::{
         SodaCollectionResp, SodaLoginStatusResp, SodaPLaylistDetailResp, SodaPlaylistListResp,

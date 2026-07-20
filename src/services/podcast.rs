@@ -285,7 +285,10 @@ impl PodcastService {
     }
 
     async fn login_status(&self) -> anyhow::Result<PodcastLoginInfo> {
-        if auth_session::get_provider_cookie(&ProviderId::Netease).await.is_none() {
+        if auth_session::get_provider_cookie(&ProviderId::Netease)
+            .await
+            .is_none()
+        {
             return Ok(PodcastLoginInfo {
                 logged_in: false,
                 user_id: None,

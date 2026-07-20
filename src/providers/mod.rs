@@ -9,8 +9,8 @@ use async_trait::async_trait;
 
 use crate::types::{
     AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-    ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
-    Track, TrackQualityAvailability,
+    ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
+    TrackQualityAvailability,
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;

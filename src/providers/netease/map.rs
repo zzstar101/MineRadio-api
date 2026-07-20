@@ -2,7 +2,9 @@ use serde_json::Value;
 
 use crate::{
     parsers::{lrc, netease},
-    types::{LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, Track, ProviderId},
+    types::{
+        LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
+    },
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {

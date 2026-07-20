@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, Track, ProviderId};
+use crate::types::{PlayableState, ProviderId, Track};
 
 pub fn map_kugou_song_to_track(raw: &Value) -> Track {
     let hash = first_string(raw, &["FileHash", "hash", "Hash"]);

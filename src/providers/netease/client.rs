@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::{
     providers::{
-        ProviderResult, ProviderId,
+        ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     services::auth_session,

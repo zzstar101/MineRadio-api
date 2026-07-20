@@ -9,7 +9,7 @@ use reqwest::{
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
-    types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey, ProviderId},
+    types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{gtk_from_pskey, hash33},
 };
 

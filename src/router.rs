@@ -961,7 +961,10 @@ fn build_cross_source_resolver(
 }
 
 fn is_known_provider(provider: ProviderId) -> bool {
-    matches!(provider, ProviderId::Netease | ProviderId::Qq | ProviderId::Soda)
+    matches!(
+        provider,
+        ProviderId::Netease | ProviderId::Qq | ProviderId::Soda
+    )
 }
 
 fn unknown_provider(raw: &str) -> Response {

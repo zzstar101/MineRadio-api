@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track, ProviderId};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, ProviderId, Track};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -7,7 +7,7 @@ use reqwest::{Client, Method, Response};
 use serde_json::Value;
 
 use crate::providers::{
-    ProviderResult, ProviderId,
+    ProviderId, ProviderResult,
     error::{ProviderError, ProviderErrorCode},
 };
 use crate::services::auth_session;

@@ -757,7 +757,10 @@ mod tests {
         }
     }
 
-    fn resolver(providers: Vec<MockProvider>, provider_order: Vec<ProviderId>) -> CrossSourceResolver {
+    fn resolver(
+        providers: Vec<MockProvider>,
+        provider_order: Vec<ProviderId>,
+    ) -> CrossSourceResolver {
         let providers = providers
             .into_iter()
             .map(|provider| {
@@ -783,12 +786,8 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resolver = resolver(
             vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(vec![track(
-                    ProviderId::Netease,
-                    "n-1",
-                    "夜航",
-                    &["星野"],
-                )]),
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                    .with_search(vec![track(ProviderId::Netease, "n-1", "夜航", &["星野"])]),
                 MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
             ],
             vec![ProviderId::Netease, ProviderId::Qq],
@@ -957,12 +956,22 @@ mod tests {
     #[tokio::test]
     async fn resolve_song_url_searches_import_only_tracks_instead_of_direct_id() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut import_track = track(ProviderId::Netease, "import:apple-music:1", "夜航", &["星野"]);
+        let mut import_track = track(
+            ProviderId::Netease,
+            "import:apple-music:1",
+            "夜航",
+            &["星野"],
+        );
         import_track.source_id = "import:apple-music:1".to_owned();
         let resolver = resolver(
             vec![
                 MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
-                    .with_search(vec![track(ProviderId::Netease, "n-match", "夜航", &["星野"])])
+                    .with_search(vec![track(
+                        ProviderId::Netease,
+                        "n-match",
+                        "夜航",
+                        &["星野"],
+                    )])
                     .with_song_url("https://n.example/match.m4a"),
             ],
             vec![ProviderId::Netease],
