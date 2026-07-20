@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, Track, ProviderId};
+use crate::types::{PlayableState, PlaylistSummary, ProviderId, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -139,122 +139,6 @@ pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> Playlis
     }
 }
 
-pub fn map_qq_playlist_to_detail_official(
-    raw: Option<&Value>,
-    id_hint: Option<&str>,
-) -> PlaylistDetail {
-    let dirinfo = raw.and_then(|d| d.get("dirinfo")).unwrap_or(&Value::Null);
-    let songs = raw
-        .and_then(|d| d.get("songlist"))
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    let mut track_ids = Vec::with_capacity(songs.len());
-    let mut tracks = Vec::with_capacity(songs.len());
-
-    for song in songs {
-        let id = song
-            .get("id")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .to_string();
-        let album = song.get("album");
-        let album_name = album
-            .and_then(|value| value.get("name"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let album_mid = album
-            .and_then(|value| value.get("mid"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let singers = song
-            .get("singer")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let mut artists = Vec::with_capacity(singers.len());
-        for singer in singers {
-            if let Some(name) = singer.get("name").and_then(Value::as_str) {
-                artists.push(name.to_owned());
-            }
-        }
-
-        track_ids.push(id.clone());
-        tracks.push(Track {
-            id: id.clone(),
-            source_id: id,
-            provider: ProviderId::Qq,
-            media_mid: song
-                .get("songlist")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            title: song
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            artists,
-            album: album_name,
-            cover_url: format!(
-                "http://y.gtimg.cn/music/photo_new/T002R500x500M000{album_mid}.jpg?n=1"
-            ),
-            quality_hints: vec!["standard".to_owned()],
-            playable_state: PlayableState::Unknown,
-            duration_ms: song
-                .get("interval")
-                .and_then(Value::as_u64)
-                .map(|value| value * 1_000),
-            artwork_url: None,
-        });
-    }
-
-    PlaylistDetail {
-        provider: ProviderId::Qq,
-        id: dirinfo
-            .get("id")
-            .and_then(Value::as_u64)
-            .map(|i| i.to_string())
-            .unwrap_or(id_hint.unwrap_or("").to_string()),
-        name: dirinfo
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        cover_url: dirinfo
-            .get("picurl")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        collected: Some(false),
-        track_count: Some(dirinfo.get("songnum").and_then(Value::as_u64).unwrap_or(0) as u32),
-        track_ids: track_ids,
-        tracks,
-    }
-}
-
-pub fn map_qq_playlist_to_detail(raw: Option<&Value>, id_hint: Option<&str>) -> PlaylistDetail {
-    let summary = map_qq_playlist_to_summary(raw.unwrap_or(&Value::Null), id_hint);
-    let tracks = raw
-        .and_then(|value| value.get("songlist"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(map_qq_song_to_track)
-        .collect::<Vec<_>>();
-
-    PlaylistDetail {
-        provider: summary.provider,
-        id: summary.id,
-        name: summary.name,
-        cover_url: summary.cover_url,
-        track_count: summary.track_count,
-        track_ids: summary.track_ids,
-        collected: summary.collected,
-        tracks,
-    }
-}
-
 fn first_string(values: &[Option<&Value>]) -> String {
     values
         .iter()
@@ -292,53 +176,4 @@ fn split_artist_text(text: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::map_qq_playlist_to_detail_official;
-
-    #[test]
-    fn official_playlist_maps_tracks_and_track_ids_in_songlist_order() {
-        let raw = json!({
-            "dirinfo": {
-                "id": 123,
-                "title": "官方歌单",
-                "picurl": "https://example.com/playlist.jpg",
-                "songnum": 2
-            },
-            "songlist": [
-                {
-                    "id": 1,
-                    "songlist": "media-one",
-                    "title": "歌曲一",
-                    "singer": [{ "name": "歌手一" }],
-                    "album": { "name": "专辑一", "mid": "album-one" },
-                    "interval": 180
-                },
-                {
-                    "id": 2,
-                    "title": "歌曲二",
-                    "singer": [],
-                    "album": { "name": "专辑二", "mid": "album-two" }
-                }
-            ]
-        });
-
-        let detail = map_qq_playlist_to_detail_official(Some(&raw), Some("fallback"));
-
-        assert_eq!(detail.id, "123");
-        assert_eq!(detail.track_ids, ["1", "2"]);
-        assert_eq!(detail.tracks.len(), 2);
-        assert_eq!(detail.tracks[0].source_id, "1");
-        assert_eq!(detail.tracks[0].media_mid.as_deref(), Some("media-one"));
-        assert_eq!(detail.tracks[0].artists, ["歌手一"]);
-        assert_eq!(detail.tracks[0].duration_ms, Some(180_000));
-        assert_eq!(
-            detail.tracks[1].cover_url,
-            "http://y.gtimg.cn/music/photo_new/T002R500x500M000album-two.jpg?n=1"
-        );
-    }
 }

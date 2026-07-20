@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, Track, ProviderId};
+use crate::types::{
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, ProviderId, Track,
+    TrackQualityAvailability, TrackQualityOption,
+};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct QqSearchResp {
@@ -25,7 +28,7 @@ struct QqSearchSong {
     albummid: String,
     albumname: String,
     interval: i32,
-    singer: Vec<Singer>,
+    singer: Vec<Identified>,
     songmid: String,
     songname: String,
 }
@@ -58,69 +61,44 @@ impl QqSearchResp {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct QqTrackDetailResp {
+pub(super) struct QqTrackDetailResp {
     req_0: QqTrackDetailReq,
 }
 
+impl QqTrackDetailResp {
+    pub fn standardize(self) -> Option<TrackQualityAvailability> {
+        let t = self.req_0.data.track_info;
+        let qualities = t.file.standardize(Some(t.mid.clone()));
+        if qualities.is_empty() {
+            None
+        } else {
+            Some(TrackQualityAvailability {
+                provider: ProviderId::Qq,
+                track_id: t.mid,
+                default_quality: qualities.first().map(|item| item.request_quality.clone()),
+                qualities,
+            })
+        }
+    }
+}
 #[derive(Debug, Deserialize)]
-pub struct QqTrackDetailReq {
+struct QqTrackDetailReq {
     data: QqTrackDetailData,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct QqTrackDetailData {
+struct QqTrackDetailData {
     track_info: QqTrackDetailInfo,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct QqTrackDetailInfo {
-    id: i64,
-    #[serde(rename = "type")]
-    track_info_type: i64,
+struct QqTrackDetailInfo {
     mid: String,
-    name: String,
-    title: String,
-    subtitle: String,
-    singer: Vec<Singer>,
-    album: Album,
-    interval: i64,
     file: File,
-    pay: Pay,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct File {
-    //HQ旧值
-    size_320mp3: i64,
-    size_ape: i64,
-    //SQ无损
-    size_flac: i64,
-
-    size_dts: i64,
-    size_try: i64,
-
-    b_30s: i64,
-    e_30s: i64,
-    //两个同时作为标准音质判断
-    size_96ogg: i64,
-    size_96aac: i64,
-    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效
-    size_new: Vec<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Pay {
-    pay_month: i64,
-    price_track: i64,
-    price_album: i64,
-    pay_play: i64,
-    pay_down: i64,
-    pay_status: i64,
-    time_free: i64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct QqLyricResp {
+pub(super) struct QqLyricResp {
     req_0: QqLyricReq,
 }
 
@@ -132,16 +110,99 @@ impl QqLyricResp {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct QqLyricReq {
+struct QqLyricReq {
     data: QqLyricData,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QqLyricData {
+struct QqLyricData {
     //crypt: i64,
     lyric: Option<String>,
     trans: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqPlaylistDetailResp {
+    req_0: QqPlaylistDetailRespReq,
+}
+
+impl QqPlaylistDetailResp {
+    pub fn standardize(self) -> PlaylistDetail {
+        let data = self.req_0.data;
+        let info = data.dirinfo;
+        let songlist = data.songlist;
+        let mut track_ids = Vec::new();
+        let tracks = songlist
+            .into_iter()
+            .map(|t| {
+                track_ids.push(t.mid.clone());
+                Track {
+                    id: t.mid.clone(),
+                    provider: ProviderId::Qq,
+                    source_id: t.mid.clone(),
+                    media_mid: Some(t.mid),
+                    title: t.title,
+                    artists: t.singer.into_iter().map(|s| s.name).collect(),
+                    album: t.album.name,
+                    cover_url: format!(
+                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                        t.album.mid
+                    ),
+                    quality_hints: vec!["standard".to_owned()],
+                    playable_state: PlayableState::Unknown,
+                    duration_ms: Some(t.interval as u64 * 1000),
+                    artwork_url: None,
+                }
+            })
+            .collect();
+        PlaylistDetail {
+            provider: ProviderId::Qq,
+            id: info.id.to_string(),
+            name: info.title,
+            cover_url: info.picurl,
+            track_count: Some(info.songnum),
+            track_ids,
+            collected: None,
+            tracks,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct QqPlaylistDetailRespReq {
+    data: QqPlaylistDetailData,
+}
+
+#[derive(Deserialize)]
+struct QqPlaylistDetailData {
+    dirinfo: Dirinfo,
+
+    songlist: Vec<Songlist>,
+}
+
+#[derive(Deserialize)]
+struct Dirinfo {
+    id: i64,
+
+    title: String,
+
+    picurl: String,
+
+    songnum: u32,
+}
+
+#[derive(Deserialize)]
+struct Songlist {
+    mid: String,
+    //name: String,
+    title: String,
+    //subtitle: String,
+    interval: i64,
+
+    singer: Vec<Identified>,
+
+    album: Identified,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,7 +341,7 @@ struct QqAlbumDetailTrack {
 
     title: String,
 
-    singer: Vec<Singer>,
+    singer: Vec<Identified>,
 
     interval: i64,
 
@@ -315,10 +376,71 @@ struct QqAlbumDetailInfo {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailArtists {
-    singer_list: Vec<Singer>,
+    singer_list: Vec<Identified>,
 }
 
 //Reusable Struct
+#[derive(Debug, Deserialize)]
+struct File {
+    //HQ旧值
+    size_320mp3: i64,
+
+    size_ape: i64,
+    //SQ无损
+    size_flac: i64,
+
+    size_128mp3: i64,
+    //两个同时作为标准音质判断
+    size_96ogg: i64,
+
+    size_96aac: i64,
+    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效, 待其他迁移后检查音质具体标签
+    //size_new: Vec<i64>,
+}
+
+impl File {
+    fn standardize(self, id: Option<String>) -> Vec<TrackQualityOption> {
+        let mut v: Vec<String> = Vec::new();
+        if self.size_flac != 0 {
+            v.push("flac".to_string());
+        }
+        if self.size_320mp3 != 0 {
+            v.push("320".to_string());
+        }
+        if self.size_ape != 0 {
+            v.push("ape".to_string());
+        }
+        if self.size_128mp3 != 0 {
+            v.push("128".to_string());
+        }
+        if self.size_96aac != 0 || self.size_96ogg != 0 {
+            v.push("aac".to_string());
+        }
+        v.into_iter()
+            .map(|quality| TrackQualityOption {
+                provider: ProviderId::Qq,
+                label: qq_quality_label(&quality).to_owned(),
+                id: id.clone().unwrap_or(quality.clone()),
+                request_quality: quality.clone(),
+                level: Some(quality.clone()),
+                source: "declared".to_owned(),
+                ..Default::default()
+            })
+            .collect()
+    }
+}
+
+fn qq_quality_label(quality: &str) -> &'static str {
+    match quality {
+        "flac" => "FLAC",
+        "ape" => "APE",
+        "320" => "320k MP3",
+        "128" => "128k MP3",
+        "m4a" => "AAC",
+        _ => "QQ",
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Album {
     //id: i64,
@@ -326,12 +448,22 @@ struct Album {
     name: String,
     songnum: Option<u32>,
     #[serde(alias = "v_singer")]
-    singer: Vec<Singer>,
+    singer: Vec<Identified>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Singer {
-    //id: String,
-    //mid: String,
-    name: String,
+pub struct Identified {
+    pub mid: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Pay {
+    pay_month: i64,
+    price_track: i64,
+    price_album: i64,
+    pay_play: i64,
+    pay_down: i64,
+    pay_status: i64,
+    time_free: i64,
 }

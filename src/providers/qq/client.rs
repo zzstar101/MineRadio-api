@@ -11,9 +11,12 @@ use tokio::sync::RwLock;
 
 use crate::{
     providers::{
-        ProviderResult, ProviderId,
+        ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
-        qq::model::{QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqSearchResp},
+        qq::model::{
+            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqPlaylistDetailResp, QqSearchResp,
+            QqTrackDetailResp,
+        },
     },
     services::auth_session,
     utils::cryptors::qq::sign,
@@ -160,21 +163,18 @@ impl QqClient {
         Ok(list)
     }
 
-    pub async fn song_detail(&self, song_mid: &str) -> ProviderResult<Value> {
-        self.post_form(
-            "http://u.y.qq.com/cgi-bin/musicu.fcg",
+    pub(super) async fn song_detail(&self, song_mid: &str) -> ProviderResult<QqTrackDetailResp> {
+        self.post_json_with_sign(
             &json!({
-                "data": serde_json::to_string(&json!({
-                    "songinfo": {
-                        "method": "get_song_detail_yqq",
-                        "module": "music.pf_song_detail_svr",
-                        "param": { "song_mid": song_mid }
-                    }
-                })).unwrap_or_default()
+                "req_0": {
+                    "method": "get_song_detail_yqq",
+                    "module": "music.pf_song_detail_svr",
+                    "param": { "song_mid": song_mid }
+                }
             }),
             None,
             self.current_cookie().await.as_deref(),
-            None,
+            "song_detail",
         )
         .await
     }
@@ -232,7 +232,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
+    pub(super) async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
         self.post_json_with_sign(
             &json!({"req_0": {
                 "method": "GetPlayLyricInfo",
@@ -355,30 +355,14 @@ impl QqClient {
         .await
     }
 
-    pub async fn playlist_detail(&self, playlist_id: &str) -> ProviderResult<Value> {
-        self.get_json(
-            "http://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
-            &[
-                ("type", "1".to_owned()),
-                ("utf8", "1".to_owned()),
-                ("disstid", playlist_id.to_owned()),
-                ("loginUin", "0".to_owned()),
-            ],
-            Some("https://y.qq.com/n/yqq/playlist"),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-    //实测过后官方歌单需走该接口获取, 后续会接入待sign校验版本
-    pub async fn official_playlist_detail(
+    pub(super) async fn official_playlist_detail(
         &self,
         playlist_id: &str,
         limit: u32,
-    ) -> ProviderResult<Value> {
+    ) -> ProviderResult<QqPlaylistDetailResp> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
         let song_num = limit.clamp(1, 500);
-        self.post_json(
-            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+        self.post_json_with_sign(
             &json!({
                 "req_0": {
                     "module": "music.srfDissInfo.DissInfoForPc",
@@ -397,7 +381,7 @@ impl QqClient {
             }),
             Some("https://y.qq.com/"),
             self.current_cookie().await.as_deref(),
-            None,
+            "playlist_detail",
         )
         .await
     }
@@ -602,7 +586,7 @@ impl QqClient {
             .await
             .context("read qq upstream post response")
             .map_err(unavailable_error)?;
-
+        println!("{text}");
         serde_json::from_str(&text).map_err(internal_error)
     }
 

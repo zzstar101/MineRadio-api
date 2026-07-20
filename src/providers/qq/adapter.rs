@@ -13,7 +13,7 @@ use crate::{
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, TrackQualityOption, VipLevel,
+        TrackQualityAvailability, VipLevel,
     },
     utils::decrypt_qrc,
 };
@@ -22,10 +22,7 @@ use serde_json::Value;
 
 use super::{
     client::QqClient,
-    map::{
-        map_qq_playlist_to_detail, map_qq_playlist_to_detail_official, map_qq_playlist_to_summary,
-        map_qq_song_to_track, normalize_provider_image_url,
-    },
+    map::{map_qq_playlist_to_summary, map_qq_song_to_track, normalize_provider_image_url},
 };
 
 const QQ_QUALITIES: [&str; 5] = ["flac", "ape", "320", "128", "m4a"];
@@ -142,27 +139,11 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
-        let body = self.client.song_detail(&track.source_id).await?;
-        let file = find_file_object(&body);
-        let qualities: Vec<TrackQualityOption> = QQ_QUALITIES
-            .into_iter()
-            .filter(|quality| file_supports_quality(file, quality))
-            .map(|quality| TrackQualityOption {
-                provider: ProviderId::Qq,
-                id: quality.to_owned(),
-                label: qq_quality_label(quality).to_owned(),
-                request_quality: quality.to_owned(),
-                level: Some(quality.to_owned()),
-                source: "declared".to_owned(),
-                ..Default::default()
-            })
-            .collect();
-        Ok(TrackQualityAvailability {
-            provider: ProviderId::Qq,
-            track_id: track.source_id.clone(),
-            default_quality: qualities.first().map(|item| item.request_quality.clone()),
-            qualities,
-        })
+        self.client
+            .song_detail(&track.source_id)
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("track_qualities"))
     }
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
@@ -280,43 +261,11 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
-        let official = self
+        Ok(self
             .client
             .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
-            .await?;
-        let fallback = official
-            .get("req_0")
-            .and_then(|value| value.get("data"))
-            .filter(|value| {
-                value
-                    .get("songlist")
-                    .and_then(Value::as_array)
-                    .map(|items| !items.is_empty())
-                    .unwrap_or(false)
-            });
-        if let Some(fallback) = fallback {
-            let q = map_qq_playlist_to_detail_official(Some(fallback), Some(id));
-            return Ok(q);
-        }
-        //后续将移除老接口调用
-        let body = self.client.playlist_detail(id).await?;
-        let first = body
-            .get("cdlist")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first());
-
-        let Some(first) = first else {
-            return Err(ProviderError {
-                code: ProviderErrorCode::NoPlaylist,
-                provider: ProviderId::Qq,
-                message: format!("qq playlist {id} missing payload"),
-                retryable: false,
-                action: None,
-                raw_message: Some(body.to_string()),
-            });
-        };
-
-        Ok(map_qq_playlist_to_detail(Some(first), Some(id)))
+            .await?
+            .standardize())
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -609,41 +558,6 @@ fn qq_song_url_restriction(
     }
 
     None
-}
-
-fn find_file_object(body: &Value) -> Option<&Value> {
-    if let Some(file) = body
-        .get("songinfo")
-        .and_then(|value| value.get("data"))
-        .and_then(|value| value.get("track_info"))
-        .and_then(|value| value.get("file"))
-    {
-        return Some(file);
-    }
-    body.get("songinfo")
-        .and_then(|value| value.get("data"))
-        .and_then(|value| value.get("file"))
-        .or_else(|| body.get("file"))
-}
-
-fn file_supports_quality(file: Option<&Value>, quality: &str) -> bool {
-    let Some(file) = file else {
-        return false;
-    };
-    let fields = match quality {
-        "flac" => &["size_flac"][..],
-        "ape" => &["size_ape"][..],
-        "320" => &["size_320mp3"][..],
-        "128" => &["size_128mp3"][..],
-        "m4a" => &["size_96aac", "size_192aac", "size_48aac"][..],
-        _ => &[][..],
-    };
-    fields.iter().any(|field| {
-        file.get(*field)
-            .and_then(Value::as_u64)
-            .map(|value| value > 0)
-            .unwrap_or(false)
-    })
 }
 
 #[cfg(test)]
@@ -1327,7 +1241,7 @@ mod tests {
     };
     use crate::{
         providers::error::ProviderErrorCode,
-        types::{PlaylistSummary, VipLevel, ProviderId},
+        types::{PlaylistSummary, ProviderId, VipLevel},
     };
 
     #[test]
