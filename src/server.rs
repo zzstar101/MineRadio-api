@@ -21,6 +21,9 @@ use crate::{
         netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
         qq_qr_login::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
+        qq_qr_login_mqtt::{
+            QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
+        },
         sidecar_log,
         soda_audio_proxy::{SodaAudioProxy, SodaAudioProxyDeps, create_soda_audio_proxy},
         soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
@@ -36,6 +39,7 @@ pub struct AppServices {
     pub netease_qr_login: Arc<NeteaseQrLoginService>,
     pub podcast: PodcastService,
     pub qq_qr_login: Arc<QqQrLoginService>,
+    pub qqmusic_qr_login: Arc<QqMusicQrLoginService>,
     pub soda_audio_proxy: SodaAudioProxy,
     pub soda_qr_login: Arc<SodaQrLoginService>,
     pub weather_radio: WeatherRadioService,
@@ -68,6 +72,9 @@ impl AppState {
                 audio_proxy: create_audio_proxy(AudioProxyDeps::default()),
                 image_proxy: create_image_proxy(ImageProxyDeps::default()),
                 qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps::default())),
+                qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(
+                    QqMusicQrLoginDeps::default(),
+                )),
                 soda_audio_proxy: create_soda_audio_proxy(SodaAudioProxyDeps::default()),
                 soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps::default())),
                 weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),

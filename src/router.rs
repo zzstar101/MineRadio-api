@@ -542,6 +542,10 @@ async fn provider_login_qr_key(State(state): State<AppState>, Path(pid): Path<St
             Ok(data) => ok(data),
             Err(err) => internal_error(err.to_string()),
         },
+        "qqmusic" => match state.services.qqmusic_qr_login.create_key().await {
+            Ok(data) => ok(data),
+            Err(err) => internal_error(err.to_string()),
+        },
         "soda" => match state.services.soda_qr_login.create_image(None).await {
             Ok(image) => ok(crate::types::ProviderLoginQrKey {
                 provider: image.provider,
@@ -568,6 +572,10 @@ async fn provider_login_qr_create(
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
         },
+        "qqmusic" => match state.services.qqmusic_qr_login.create_image(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
         "soda" => match state.services.soda_qr_login.create_image(Some(&key)).await {
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
@@ -588,6 +596,10 @@ async fn provider_login_qr_check(
     let key = query.key.unwrap_or_default();
     match pid.as_str() {
         "qq" => match state.services.qq_qr_login.check(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
+        "qqmusic" => match state.services.qqmusic_qr_login.check(&key).await {
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
         },

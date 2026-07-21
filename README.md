@@ -56,6 +56,10 @@ Invoke-RestMethod http://127.0.0.1:11451/health
 - 播客、天气电台、发现页和分享歌单导入。
 - 酷狗核心请求与签名客户端；尚未作为 HTTP provider 注册。
 
+## 鸣谢
+
+- QQ 音乐 MQTT 扫码登录和 sign 计算实现参考于 [AstronW/netease-qq-music-api](https://github.com/AstronW/netease-qq-music-api), 相关移植代码遵循其 MIT 许可证。
+
 ## API 文档
 
 - [完整路由、参数与响应示例](docs/PROVIDERS_API.md)
