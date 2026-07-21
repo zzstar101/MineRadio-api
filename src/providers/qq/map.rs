@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, PlaylistSummary, ProviderId, Track};
+use crate::types::{PlayableState, ProviderId, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -88,56 +88,6 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
     }
 }
 
-pub fn map_qq_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
-    PlaylistSummary {
-        provider: ProviderId::Qq,
-        id: {
-            let id = first_string(&[
-                raw.get("disstid"),
-                raw.get("dissid"),
-                raw.get("dirid"),
-                raw.get("tid"),
-                raw.get("id"),
-            ]);
-            if id.is_empty() {
-                id_hint.unwrap_or_default().to_owned()
-            } else {
-                id
-            }
-        },
-        name: first_string(&[
-            raw.get("dissname"),
-            raw.get("diss_name"),
-            raw.get("name"),
-            raw.get("title"),
-        ]),
-        cover_url: normalize_provider_image_url(&first_string(&[
-            raw.get("logo"),
-            raw.get("picurl"),
-        ])),
-        track_count: first_u32(&[
-            raw.get("total_song_num"),
-            raw.get("song_cnt"),
-            raw.get("songnum"),
-            raw.get("song_count"),
-        ]),
-        track_ids: raw
-            .get("songlist")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        item.get("songmid")
-                            .or_else(|| item.get("mid"))
-                            .and_then(value_to_string)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        collected: Some(false),
-    }
-}
 
 fn first_string(values: &[Option<&Value>]) -> String {
     values
@@ -148,19 +98,6 @@ fn first_string(values: &[Option<&Value>]) -> String {
         .unwrap_or_default()
 }
 
-fn first_u32(values: &[Option<&Value>]) -> Option<u32> {
-    values.iter().copied().flatten().find_map(|value| {
-        value
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .or_else(|| {
-                value
-                    .as_i64()
-                    .and_then(|value| u64::try_from(value).ok())
-                    .and_then(|value| u32::try_from(value).ok())
-            })
-    })
-}
 
 fn value_to_string(value: &Value) -> Option<String> {
     match value {

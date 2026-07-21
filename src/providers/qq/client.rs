@@ -14,8 +14,8 @@ use crate::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         qq::model::{
-            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqPlaylistDetailResp, QqSearchResp,
-            QqTrackDetailResp,
+            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqPlaylistDetailResp,
+            QqPlaylistList1Resp, QqPlaylistList2Resp, QqSearchResp, QqTrackDetailResp,
         },
     },
     services::auth_session,
@@ -27,6 +27,7 @@ const UA: &str = "Mozilla/5.0";
 #[derive(Clone, Default)]
 pub struct QqClient {
     http: Client,
+    uin: Arc<RwLock<Option<String>>>,
     euin: Arc<RwLock<Option<String>>>,
 }
 
@@ -34,6 +35,7 @@ impl QqClient {
     pub fn new() -> Self {
         Self {
             http: Client::new(),
+            uin: Arc::new(RwLock::new(None)),
             euin: Arc::new(RwLock::new(None)),
         }
     }
@@ -63,13 +65,25 @@ impl QqClient {
         Ok(())
     }
 
+    pub async fn uin(&self) -> Option<String> {
+        if let Some(uin) = self.uin.read().await.clone() {
+            return Some(uin);
+        }
+
+        let cookie = self.current_cookie().await?;
+        let uin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
+
+        *self.uin.write().await = Some(uin.clone());
+        Some(uin)
+    }
+
     pub async fn euin(&self) -> Option<String> {
         if let Some(euin) = self.euin.read().await.clone() {
             return Some(euin);
         }
 
         let cookie = self.current_cookie().await?;
-        let uin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
+        let uin = self.uin().await?;
 
         let _ = self.login_status_with_cookie(&uin, &cookie).await;
         if let Some(euin) = self.euin.read().await.clone() {
@@ -187,7 +201,7 @@ impl QqClient {
     ) -> ProviderResult<Value> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
-        let uin = self.euin().await.unwrap_or_else(|| "0".to_owned());
+        let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
         let auth = qq_playback_key_from_cookie_map(&cookie_map);
         self.post_form(
             "https://u.y.qq.com/cgi-bin/musicu.fcg",
@@ -319,38 +333,38 @@ impl QqClient {
             .is_empty()
     }
 
-    pub async fn user_songlists(&self, uin: &str) -> ProviderResult<Value> {
-        self.post_json(
-            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+    pub(super) async fn user_songlists(&self, euin: &str) -> ProviderResult<QqPlaylistList1Resp> {
+        self.post_json_with_sign(
             &json!({
-                "music.musicasset.PlaylistBaseRead.GetPlaylistByUin": {
+                "req_0": {
                     "method": "GetPlaylistByUin",
                     "module": "music.musicasset.PlaylistBaseRead",
+                    "param": {
+                        "euin": euin
+                    }
+                }
+            }),
+            None,
+            self.current_cookie().await.as_deref(),
+            "playlist_list",
+        )
+        .await
+    }
+
+    pub async fn user_collect_songlists(&self, uin: &str) -> ProviderResult<QqPlaylistList2Resp> {
+        self.post_json_with_sign(
+            &json!({
+                "req_0": {
+                    "method": "GetPlaylistFavInfo",
+                    "module": "music.musicasset.PlaylistFavRead",
                     "param": {
                         "uin": uin
                     }
                 }
             }),
-            None,
-            None,
-            None,
-        )
-        .await
-    }
-
-    pub async fn user_collect_songlists(&self, user_id: &str) -> ProviderResult<Value> {
-        self.get_json(
-            "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg",
-            &[
-                ("ct", "20".to_owned()),
-                ("cid", "205360956".to_owned()),
-                ("userid", user_id.to_owned()),
-                ("reqtype", "3".to_owned()),
-                ("sin", "0".to_owned()),
-                ("ein", "79".to_owned()),
-            ],
-            None,
+            Some("https://y.qq.com/"),
             self.current_cookie().await.as_deref(),
+            "playlist_detail",
         )
         .await
     }
@@ -557,37 +571,6 @@ impl QqClient {
             .context("read qq upstream post response")
             .map_err(unavailable_error)?;
         parse_json_like(&text)
-    }
-
-    async fn post_json(
-        &self,
-        url: &str,
-        body: &Value,
-        referer: Option<&str>,
-        cookie: Option<&str>,
-        content_type: Option<&str>,
-    ) -> ProviderResult<Value> {
-        let headers = build_headers(referer, cookie, true)?;
-        let mut request = self.http.post(url).headers(headers);
-
-        if let Some(content_type) = content_type {
-            request = request.header(CONTENT_TYPE, content_type);
-        }
-
-        let response = request
-            .json(body)
-            .send()
-            .await
-            .context("send qq upstream post request")
-            .map_err(unavailable_error)?;
-
-        let text = response
-            .text()
-            .await
-            .context("read qq upstream post response")
-            .map_err(unavailable_error)?;
-        println!("{text}");
-        serde_json::from_str(&text).map_err(internal_error)
     }
 
     async fn get_model<T: DeserializeOwned>(

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, ProviderId, Track,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
     TrackQualityAvailability, TrackQualityOption,
 };
 
@@ -120,6 +120,101 @@ struct QqLyricData {
     //crypt: i64,
     lyric: Option<String>,
     trans: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqPlaylistList1Resp {
+    req_0: QqPlaylistList1Req,
+}
+impl QqPlaylistList1Resp {
+    pub fn standardize(self) -> Option<Vec<PlaylistSummary>> {
+        let v: Vec<PlaylistSummary> = self
+            .req_0
+            .data
+            .v_playlist
+            .into_iter()
+            .map(|l| PlaylistSummary {
+                provider: ProviderId::Qq,
+                id: l.tid.to_string(),
+                name: l.dir_name,
+                cover_url: l.pic_url,
+                track_count: l.song_num,
+                track_ids: vec![],
+                collected: Some(true),
+            })
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    }
+}
+#[derive(Deserialize)]
+struct QqPlaylistList1Req {
+    data: QqPlaylistList1Data,
+}
+
+#[derive(Deserialize)]
+struct QqPlaylistList1Data {
+    v_playlist: Vec<QqPlaylistList1Playlist>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QqPlaylistList1Playlist {
+    //dir_id: i64, //观察到收藏需要知道'我喜欢'歌单的dir_id
+    dir_name: String,
+
+    tid: i64,
+
+    song_num: Option<u32>,
+
+    pic_url: String,
+}
+
+#[derive(Deserialize)]
+pub struct QqPlaylistList2Resp {
+    req_0: QqPlaylistList2Req,
+}
+
+impl QqPlaylistList2Resp {
+    pub fn standardize(self) -> Option<Vec<PlaylistSummary>> {
+        let v: Vec<PlaylistSummary> = self
+            .req_0
+            .data
+            .v_list
+            .into_iter()
+            .map(|l| PlaylistSummary {
+                provider: ProviderId::Qq,
+                id: l.tid.to_string(),
+                name: l.name,
+                cover_url: l.logo,
+                track_count: l.songnum,
+                track_ids: vec![],
+                collected: Some(true),
+            })
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct QqPlaylistList2Req {
+    data: QqPlaylistList2Data,
+}
+
+#[derive(Deserialize)]
+pub struct QqPlaylistList2Data {
+    //number: i64,
+    //hasmore: i64,
+    v_list: Vec<QqPlaylistList2Playlist>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QqPlaylistList2Playlist {
+    tid: i64,
+    //dir_id: i64,
+    name: String,
+    songnum: Option<u32>,
+    logo: String,
 }
 
 #[derive(Deserialize)]
@@ -457,7 +552,7 @@ pub struct Identified {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+/* #[derive(Debug, Deserialize)]
 struct Pay {
     pay_month: i64,
     price_track: i64,
@@ -467,3 +562,4 @@ struct Pay {
     pay_status: i64,
     time_free: i64,
 }
+*/
