@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, time::SystemTime};
 
 use md5::{Digest, Md5};
 use reqwest::{Client, Method, Response};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::providers::{
@@ -11,6 +12,8 @@ use crate::providers::{
     error::{ProviderError, ProviderErrorCode},
 };
 use crate::services::auth_session;
+
+use super::model::{KugouLyricResp, KugouLyricSearchResp};
 
 const GATEWAY_URL: &str = "https://gateway.kugou.com";
 const APP_ID: &str = "1005";
@@ -180,7 +183,7 @@ impl KugouClient {
         Ok(self.request(request).await?.body)
     }
 
-    pub async fn lyric_search(&self, hash: &str) -> ProviderResult<Value> {
+    pub(super) async fn lyric_search(&self, hash: &str) -> ProviderResult<KugouLyricSearchResp> {
         let mut request = KugouRequest::new(Method::GET, "/v1/search");
         request.base_url = Some("https://lyrics.kugou.com".to_owned());
         request.clear_default_params = true;
@@ -196,10 +199,10 @@ impl KugouClient {
             ("man".to_owned(), Value::String("no".to_owned())),
         ]);
         request.cookie = self.current_cookie().await;
-        Ok(self.request(request).await?.body)
+        self.request_model(request, "lyric_search").await
     }
 
-    pub async fn lyric(&self, id: u64, access_key: &str) -> ProviderResult<Value> {
+    pub(super) async fn lyric(&self, id: u64, access_key: &str) -> ProviderResult<KugouLyricResp> {
         let mut request = KugouRequest::new(Method::GET, "/download");
         request.base_url = Some("https://lyrics.kugou.com".to_owned());
         request.params = KugouParams::from([
@@ -211,7 +214,39 @@ impl KugouClient {
             ("ver".to_owned(), Value::from(1)),
         ]);
         request.cookie = self.current_cookie().await;
-        Ok(self.request(request).await?.body)
+        self.request_model(request, "lyric").await
+    }
+
+    pub(super) async fn lyric_krc(&self, id: u64, access_key: &str) -> ProviderResult<KugouLyricResp> {
+        let mut request = KugouRequest::new(Method::GET, "/download");
+        request.base_url = Some("https://lyrics.kugou.com".to_owned());
+        request.params = KugouParams::from([
+            ("accesskey".to_owned(), Value::String(access_key.to_owned())),
+            ("charset".to_owned(), Value::String("utf8".to_owned())),
+            ("client".to_owned(), Value::String("android".to_owned())),
+            ("fmt".to_owned(), Value::String("krc".to_owned())),
+            ("id".to_owned(), Value::from(id)),
+            ("ver".to_owned(), Value::from(1)),
+        ]);
+        request.cookie = self.current_cookie().await;
+        self.request_model(request, "lyric_krc").await
+    }
+
+    async fn request_model<T: DeserializeOwned>(
+        &self,
+        request: KugouRequest,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let response = self.request(request).await?;
+        let raw = response.body.to_string();
+        serde_json::from_value(response.body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: ProviderId::Kugou,
+            message: format!("decode kugou {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(raw),
+        })
     }
 
     pub async fn request(&self, request: KugouRequest) -> ProviderResult<KugouResponse> {

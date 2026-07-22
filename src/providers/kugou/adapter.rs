@@ -7,7 +7,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::Value;
 
 use crate::{
-    parsers::lrc::{LrcParser, UniversalLrcParser},
+    parsers::{
+        kugou::KugouParser,
+        lrc::{LrcParser, UniversalLrcParser},
+    },
     providers::{ProviderAdapter, ProviderResult, error::ProviderError},
     types::{
         LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
@@ -103,22 +106,16 @@ impl ProviderAdapter for KugouAdapter {
     }
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
-        let candidates = self.client.lyric_search(&track.source_id).await?;
-        let Some(candidate) = lyric_candidates(&candidates).first() else {
+        let search_resp = self.client.lyric_search(&track.source_id).await?;
+        let Some(candidate) = search_resp.first_candidate() else {
             return Ok(LyricPayload {
                 provider: ProviderId::Kugou,
                 track_id: track.id.clone(),
                 ..Default::default()
             });
         };
-        let id = candidate
-            .get("id")
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        let access_key = candidate
-            .get("accesskey")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let id: u64 = candidate.id.parse().unwrap_or_default();
+        let access_key = candidate.access_key.as_str();
         if id == 0 || access_key.is_empty() {
             return Ok(LyricPayload {
                 provider: ProviderId::Kugou,
@@ -126,12 +123,29 @@ impl ProviderAdapter for KugouAdapter {
                 ..Default::default()
             });
         }
+
+        // Prefer KRC (word-level lyrics), fall back to LRC
+        if let Ok(body) = self.client.lyric_krc(id, access_key).await {
+            if let Ok(lines) = KugouParser.decrypt_and_parse(body.content.clone()) {
+                let is_word_by_word = lines.iter().any(|line| {
+                    line.words
+                        .as_ref()
+                        .map(|words| !words.is_empty())
+                        .unwrap_or(false)
+                });
+                return Ok(LyricPayload {
+                    provider: ProviderId::Kugou,
+                    track_id: track.id.clone(),
+                    lines,
+                    has_translation: false,
+                    is_word_by_word,
+                });
+            }
+        }
+
+        // Fallback: plain LRC
         let body = self.client.lyric(id, access_key).await?;
-        let text = body
-            .get("content")
-            .and_then(Value::as_str)
-            .and_then(decode_base64_text)
-            .unwrap_or_default();
+        let text = decode_base64_text(&body.content).unwrap_or_default();
         Ok(LyricPayload {
             provider: ProviderId::Kugou,
             track_id: track.id.clone(),
@@ -166,14 +180,6 @@ fn search_items(body: &Value) -> &[Value] {
     body.get("data")
         .and_then(|value| value.get("lists"))
         .or_else(|| body.get("lists"))
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-}
-
-fn lyric_candidates(body: &Value) -> &[Value] {
-    body.get("candidates")
-        .or_else(|| body.get("data").and_then(|value| value.get("candidates")))
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
