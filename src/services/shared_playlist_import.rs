@@ -1642,6 +1642,7 @@ mod tests {
         async fn search(
             &self,
             _keyword: &str,
+            _offset: u32,
             _limit: u32,
         ) -> providers::ProviderResult<Vec<Track>> {
             Ok(Vec::new())
@@ -1669,7 +1670,7 @@ mod tests {
         async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Ok(Vec::new())
         }
-        async fn playlist_detail(&self, id: &str) -> providers::ProviderResult<PlaylistDetail> {
+        async fn playlist_detail(&self, id: &str, _offset: u32, _limit: u32) -> providers::ProviderResult<PlaylistDetail> {
             Ok(PlaylistDetail {
                 provider: self.provider.clone(),
                 id: id.to_owned(),

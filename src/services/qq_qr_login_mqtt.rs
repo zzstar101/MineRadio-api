@@ -401,7 +401,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             cookie,
-            "uin=10001; qqmusic_key=login-key; qm_keyst=login-key; tmeLoginType=6"
+            "uin=10001; qqmusic_key=login-key; qm_keyst=login-key; tmeLoginType=6; login_type=6"
         );
     }
 }

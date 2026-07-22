@@ -650,7 +650,7 @@ mod tests {
             self.id.clone()
         }
 
-        async fn search(&self, keyword: &str, limit: u32) -> providers::ProviderResult<Vec<Track>> {
+        async fn search(&self, keyword: &str, _offset: u32, limit: u32) -> providers::ProviderResult<Vec<Track>> {
             self.calls
                 .lock()
                 .unwrap()
@@ -706,7 +706,7 @@ mod tests {
             ))
         }
 
-        async fn playlist_detail(&self, _id: &str) -> providers::ProviderResult<PlaylistDetail> {
+        async fn playlist_detail(&self, _id: &str, _offset: u32, _limit: u32) -> providers::ProviderResult<PlaylistDetail> {
             Err(provider_error(
                 self.id,
                 ProviderErrorCode::NoPlaylist,
