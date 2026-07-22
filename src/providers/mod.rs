@@ -69,7 +69,7 @@ pub use crate::types::ProviderId;
 pub trait ProviderAdapter: Send + Sync {
     fn id(&self) -> ProviderId;
 
-    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>>;
+    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>>;
     async fn song_url(
         &self,
         track: &Track,
@@ -78,7 +78,7 @@ pub trait ProviderAdapter: Send + Sync {
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability>;
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload>;
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>>;
-    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail>;
+    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail>;
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus>;
     async fn logout(&self) -> ProviderResult<()>;
 
@@ -111,7 +111,7 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn album_detail(&self, _id: &str) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, _id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",

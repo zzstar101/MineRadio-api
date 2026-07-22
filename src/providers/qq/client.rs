@@ -111,12 +111,13 @@ impl QqClient {
         Ok(sign(&payload))
     }
 
-    pub(super) async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<QqSearchResp> {
+    pub(super) async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<QqSearchResp> {
         let url = "https://shc.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
+        let page = (offset / limit.max(1) + 1).to_string();
         let query = [
             ("format", "json".to_owned()),
             ("n", limit.to_string()),
-            ("p", "1".to_owned()),
+            ("p", page),
             ("w", keyword.to_owned()),
             ("cr", "1".to_owned()),
             ("g_tk", "5381".to_owned()),
@@ -425,15 +426,15 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn album_detail(&self, mid: &str) -> ProviderResult<QqAlbumDetailResp> {
+    pub(super) async fn album_detail(&self, mid: &str, offset: u32, limit: u32) -> ProviderResult<QqAlbumDetailResp> {
         let body = json!({
             "req_0": {
                 "module": "music.musichallAlbum.AlbumSongList",
                 "method": "GetAlbumSongList",
                 "param": {
                     "albumMid": mid,
-                    "begin": 0,
-                    "num": 1000,
+                    "begin": offset,
+                    "num": limit,
                     "order": 2
                 }
             },

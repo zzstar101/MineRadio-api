@@ -78,7 +78,7 @@ impl CrossSourceResolver {
             let Some(adapter) = self.provider(&provider_id) else {
                 continue;
             };
-            match adapter.search(&query.keyword, query.limit).await {
+            match adapter.search(&query.keyword, 0, query.limit).await {
                 Ok(tracks) if !tracks.is_empty() => return Ok(tracks),
                 Ok(_) => {
                     if first_error.is_none() {
@@ -132,7 +132,7 @@ impl CrossSourceResolver {
             }
 
             let keyword = build_switch_keyword(&track);
-            match adapter.search(&keyword, 5).await {
+            match adapter.search(&keyword, 0, 5).await {
                 Ok(candidates) => {
                     for candidate in candidates {
                         match adapter.song_url(&candidate, Some(opts.clone())).await {
@@ -174,7 +174,7 @@ impl CrossSourceResolver {
                     let keyword = query.keyword.clone();
                     let limit = merged_provider_limit(provider_id, query.limit);
                     Some(async move {
-                        let result = adapter.search(&keyword, limit).await;
+                        let result = adapter.search(&keyword, 0, limit).await;
                         (provider_index, result)
                     })
                 });

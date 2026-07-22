@@ -458,6 +458,7 @@ impl PodcastRequester for NeteasePodcastRequester {
             .client
             .cloudsearch(
                 &string_value(params.get("keywords")),
+                number_u32(params.get("offset")).unwrap_or(0),
                 number_u32(params.get("limit")).unwrap_or(18),
             )
             .await?)

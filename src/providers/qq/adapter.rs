@@ -49,8 +49,8 @@ impl ProviderAdapter for QqAdapter {
         ProviderId::Qq
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
-        let tracks = self.client.search(keyword, limit).await?.standardize();
+    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+        let tracks = self.client.search(keyword, offset, limit).await?.standardize();
         if !tracks.is_empty() {
             return Ok(tracks);
         }
@@ -236,7 +236,7 @@ impl ProviderAdapter for QqAdapter {
         Ok(out)
     }
 
-    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<PlaylistDetail> {
         Ok(self
             .client
             .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
@@ -248,8 +248,8 @@ impl ProviderAdapter for QqAdapter {
         Ok(self.client.album_list().await?.standardize())
     }
 
-    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
-        Ok(self.client.album_detail(id).await?.standardize())
+    async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
+        Ok(self.client.album_detail(id, offset, limit).await?.standardize())
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {

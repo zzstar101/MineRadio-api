@@ -191,6 +191,13 @@ struct SearchQuery {
     keyword: Option<String>,
     q: Option<String>,
     provider: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OffsetLimitQuery {
+    offset: Option<u32>,
     limit: Option<u32>,
 }
 
@@ -658,7 +665,7 @@ async fn provider_search(
         return unavailable_provider(provider_id);
     };
     match provider
-        .search(&keyword, query.limit.unwrap_or(20).max(1))
+        .search(&keyword, query.offset.unwrap_or(0), query.limit.unwrap_or(20).max(1))
         .await
     {
         Ok(tracks) => ok(tracks),
@@ -742,6 +749,7 @@ async fn provider_playlists(State(state): State<AppState>, Path(pid): Path<Strin
 async fn provider_playlist_detail(
     State(state): State<AppState>,
     Path((pid, id)): Path<(String, String)>,
+    Query(query): Query<OffsetLimitQuery>,
 ) -> Response {
     let Ok(provider_id) = pid.parse::<ProviderId>() else {
         return unknown_provider(&pid);
@@ -749,7 +757,10 @@ async fn provider_playlist_detail(
     let Some(provider) = state.providers.get(&provider_id) else {
         return unavailable_provider(provider_id);
     };
-    match provider.playlist_detail(&id).await {
+    match provider
+        .playlist_detail(&id, query.offset.unwrap_or(0), query.limit.unwrap_or(100))
+        .await
+    {
         Ok(result) => ok(result),
         Err(err) => provider_error_response(err),
     }
@@ -771,6 +782,7 @@ async fn provider_albums(State(state): State<AppState>, Path(pid): Path<String>)
 async fn provider_album_detail(
     State(state): State<AppState>,
     Path((pid, id)): Path<(String, String)>,
+    Query(query): Query<OffsetLimitQuery>,
 ) -> Response {
     let Ok(provider_id) = pid.parse::<ProviderId>() else {
         return unknown_provider(&pid);
@@ -778,7 +790,10 @@ async fn provider_album_detail(
     let Some(provider) = state.providers.get(&provider_id) else {
         return unavailable_provider(provider_id);
     };
-    match provider.album_detail(&id).await {
+    match provider
+        .album_detail(&id, query.offset.unwrap_or(0), query.limit.unwrap_or(100))
+        .await
+    {
         Ok(result) => ok(result),
         Err(err) => provider_error_response(err),
     }

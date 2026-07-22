@@ -42,7 +42,7 @@ impl ProviderAdapter for SodaAdapter {
         ProviderId::Soda
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(&self, keyword: &str, _offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let mut t = self.client.search(keyword).await?.standardize();
         t.truncate(limit as usize);
         Ok(t)
@@ -133,9 +133,9 @@ impl ProviderAdapter for SodaAdapter {
             .ok_or_else(|| no_result("playlist_list"))
     }
 
-    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail> {
         self.client
-            .playlist_detail(id)
+            .playlist_detail(id, offset, limit)
             .await?
             .standardize()
             .ok_or_else(|| no_result("playlist_detail"))
@@ -145,7 +145,7 @@ impl ProviderAdapter for SodaAdapter {
         Ok(self.client.album_list().await?.standardize())
     }
 
-    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
         Ok(self.client.album_detail(id).await?.standardize())
     }
 

@@ -120,13 +120,15 @@ impl SodaClient {
     pub(super) async fn playlist_detail(
         &self,
         playlist_id: &str,
+        offset: u32,
+        limit: u32,
     ) -> ProviderResult<SodaPLaylistDetailResp> {
         let cookie = self.current_cookie().await;
         let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
         url.query_pairs_mut()
             .append_pair("playlist_id", playlist_id)
-            .append_pair("cursor", &0.to_string())
-            .append_pair("count", &20.to_string());
+            .append_pair("cursor", &offset.to_string())
+            .append_pair("count", &limit.to_string());
         self.get_model(url.to_string(), cookie.as_deref(), "playlist_detail")
             .await
     }

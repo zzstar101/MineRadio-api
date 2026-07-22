@@ -332,7 +332,7 @@ async fn first_playlist_tracks(
         let Some(adapter) = adapters.get(&provider) else {
             continue;
         };
-        if let Ok(detail) = adapter.playlist_detail(&id).await {
+        if let Ok(detail) = adapter.playlist_detail(&id, 0, 100).await {
             let tracks = detail
                 .tracks
                 .into_iter()
@@ -356,7 +356,7 @@ async fn first_search_tracks(
         let Some(adapter) = adapters.get(provider) else {
             continue;
         };
-        if let Ok(tracks) = adapter.search("每日推荐", 12).await {
+        if let Ok(tracks) = adapter.search("每日推荐", 0, 12).await {
             let tracks = tracks
                 .into_iter()
                 .map(|track| serde_json::to_value(track).unwrap_or(Value::Null))

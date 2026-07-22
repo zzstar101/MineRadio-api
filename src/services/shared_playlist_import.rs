@@ -127,7 +127,7 @@ pub async fn import_shared_playlist(
             message: "unsupported shared playlist provider".to_owned(),
         })?;
 
-    let detail = adapter.playlist_detail(&candidate.id).await?;
+    let detail = adapter.playlist_detail(&candidate.id, 0, 500).await?;
     let tracks = detail.tracks;
     let loaded_count = tracks.len();
     let track_ids = tracks

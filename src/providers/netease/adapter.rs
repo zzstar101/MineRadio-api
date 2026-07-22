@@ -161,8 +161,8 @@ impl ProviderAdapter for NeteaseAdapter {
         ProviderId::Netease
     }
 
-    async fn search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
-        let body = self.client.cloudsearch(keyword, limit).await?;
+    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+        let body = self.client.cloudsearch(keyword, offset, limit).await?;
         let songs = body
             .get("result")
             .and_then(|value| value.get("songs"))
@@ -476,8 +476,8 @@ impl ProviderAdapter for NeteaseAdapter {
             .unwrap_or_default())
     }
 
-    async fn playlist_detail(&self, id: &str) -> ProviderResult<PlaylistDetail> {
-        let body = self.client.playlist_detail(id).await?;
+    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail> {
+        let body = self.client.playlist_detail(id, offset, limit).await?;
         let Some(playlist) = body.get("playlist") else {
             return Err(ProviderError {
                 code: ProviderErrorCode::NoPlaylist,
@@ -496,7 +496,7 @@ impl ProviderAdapter for NeteaseAdapter {
         Ok(self.client.album_list().await?.standardize())
     }
 
-    async fn album_detail(&self, id: &str) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
         Ok(self.client.album_detail(id).await?.standardize())
     }
 
