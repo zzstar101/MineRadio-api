@@ -259,6 +259,7 @@ impl QqPlaylistDetailResp {
             track_count: Some(info.songnum),
             track_ids,
             collected: None,
+            has_more: None,
             tracks,
         }
     }
@@ -403,6 +404,7 @@ impl QqAlbumDetailResp {
             track_count: Some(song_list.total_num as u32),
             track_ids,
             collected: None,
+            has_more: None,
             tracks,
         }
     }

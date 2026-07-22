@@ -158,6 +158,7 @@ pub fn map_hana_playlist_to_detail(raw: &Value, id_hint: Option<&str>) -> Playli
         track_count: summary.track_count,
         track_ids: summary.track_ids,
         collected: summary.collected,
+        has_more: None,
         tracks,
     }
 }

@@ -321,6 +321,9 @@ pub struct PlaylistDetail {
     pub collected: Option<bool>,
     #[serde(default)]
     pub tracks: Vec<Track>,
+    /// 是否还有更多数据未拉取
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -359,6 +362,8 @@ pub struct AlbumDetail {
     pub collected: Option<bool>,
     #[serde(default)]
     pub tracks: Vec<Track>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]

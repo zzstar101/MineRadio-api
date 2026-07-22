@@ -170,6 +170,7 @@ impl SodaPLaylistDetailResp {
                 track_count: p.count_tracks,
                 track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
                 collected: p.state.and_then(|s| s.is_collected),
+                has_more: None,
                 tracks,
             })
         }
@@ -297,6 +298,7 @@ impl SodaAlbumDetailResp {
             track_count: album.track_count,
             track_ids,
             collected: album.collected,
+            has_more: None,
             tracks,
         }
     }

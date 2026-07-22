@@ -1669,7 +1669,6 @@ mod tests {
         async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Ok(Vec::new())
         }
-
         async fn playlist_detail(&self, id: &str) -> providers::ProviderResult<PlaylistDetail> {
             Ok(PlaylistDetail {
                 provider: self.provider.clone(),
@@ -1679,6 +1678,7 @@ mod tests {
                 track_count: None,
                 track_ids: Vec::new(),
                 collected: Some(false),
+                has_more: None,
                 tracks: vec![track(self.provider)],
             })
         }

@@ -687,7 +687,7 @@ mod tests {
         async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
             Ok(self.playlists.clone())
         }
-
+        
         async fn playlist_detail(&self, _id: &str) -> ProviderResult<PlaylistDetail> {
             Ok(self.playlist_detail.clone().unwrap_or_default())
         }

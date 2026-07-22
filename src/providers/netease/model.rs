@@ -114,6 +114,7 @@ impl NeteaseAlbumDetailResp {
             track_count: a.size,
             track_ids,
             collected: None,
+            has_more: None,
             tracks,
         }
     }
