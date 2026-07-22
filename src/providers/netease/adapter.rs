@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::{
-    parsers2::{
+    parsers::{
         MemchrParsers,
         lrc::LrcParser,
         netease::{NeteaseLrcParser, NeteaseParser},

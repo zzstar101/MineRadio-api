@@ -7,7 +7,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::Value;
 
 use crate::{
-    parsers::lrc,
+    parsers::lrc::{LrcParser, UniversalLrcParser},
     providers::{ProviderAdapter, ProviderResult, error::ProviderError},
     types::{
         LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
@@ -135,7 +135,7 @@ impl ProviderAdapter for KugouAdapter {
         Ok(LyricPayload {
             provider: ProviderId::Kugou,
             track_id: track.id.clone(),
-            lines: lrc::parse_lrc(&text),
+            lines: UniversalLrcParser.parse(text).unwrap_or_default(),
             has_translation: false,
             is_word_by_word: false,
         })

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::client::SodaClient;
-use crate::parsers2::{
+use crate::parsers::{
     MemchrParsers,
     lrc::{LrcParser, UniversalLrcParser},
     soda_music::SodaParser,

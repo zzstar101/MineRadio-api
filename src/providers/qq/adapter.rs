@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    parsers2::{
+    parsers::{
         lrc::{LrcParser, UniversalLrcParser},
         qqmusic::QQMusicParser,
     },
