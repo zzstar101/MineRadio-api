@@ -1,10 +1,7 @@
 use serde_json::Value;
 
-use crate::{
-    parsers::{lrc, netease},
-    types::{
-        LyricLine, LyricPayload, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
-    },
+use crate::types::{
+    PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
 };
 
 pub fn normalize_provider_image_url(url: &str) -> String {
@@ -96,54 +93,6 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
     }
 }
 
-pub fn parse_lrc(text: &str) -> Vec<LyricLine> {
-    lrc::parse_lrc(text)
-}
-
-pub fn parse_yrc_text(text: &str) -> Vec<LyricLine> {
-    netease::parse_yrc_text(text)
-}
-
-pub fn map_hana_lyric_to_payload(
-    track_id: &str,
-    lrc: &str,
-    tlyric: &str,
-    klyric: Option<&str>,
-    yrc: Option<&str>,
-) -> LyricPayload {
-    let base_lines = yrc
-        .map(parse_yrc_text)
-        .filter(|lines| !lines.is_empty())
-        .unwrap_or_else(|| parse_lrc(lrc));
-    let translation_lines = parse_lrc(tlyric);
-    let translation_map = translation_lines
-        .into_iter()
-        .map(|line| (line.time_ms, line.text))
-        .collect::<std::collections::HashMap<_, _>>();
-
-    let lines: Vec<LyricLine> = base_lines
-        .into_iter()
-        .map(|mut line| {
-            line.translation = translation_map.get(&line.time_ms).cloned();
-            line
-        })
-        .collect();
-    let is_word_by_word = lines.iter().any(|line| {
-        line.words
-            .as_ref()
-            .map(|words| !words.is_empty())
-            .unwrap_or(false)
-    }) || !klyric.unwrap_or_default().trim().is_empty();
-
-    LyricPayload {
-        provider: ProviderId::Netease,
-        track_id: track_id.to_owned(),
-        lines,
-        has_translation: !tlyric.trim().is_empty() && !translation_map.is_empty(),
-        is_word_by_word,
-    }
-}
-
 pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
     let id = raw
         .get("id")
@@ -226,27 +175,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn parses_lrc_lines() {
-        let lines = parse_lrc("[00:01.20]hello\n[00:02.30]world");
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].time_ms, 1_200);
-        assert_eq!(lines[0].text, "hello");
-    }
-
-    #[test]
-    fn prefers_yrc_when_available() {
-        let payload = map_hana_lyric_to_payload(
-            "1",
-            "[00:01.00]fallback",
-            "",
-            None,
-            Some("[1000,300](1000,100,0)hel(1100,100,0)lo"),
-        );
-        assert_eq!(payload.lines[0].text, "hello");
-        assert_eq!(payload.lines[0].time_ms, 1_000);
-    }
 
     #[test]
     fn maps_song_to_track() {

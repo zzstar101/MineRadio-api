@@ -1,9 +1,14 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::{
+    parsers2::{
+        MemchrParsers,
+        lrc::LrcParser,
+        netease::{NeteaseLrcParser, NeteaseParser},
+    },
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
@@ -20,8 +25,8 @@ use crate::{
 use super::{
     client::NeteaseClient,
     map::{
-        map_hana_lyric_to_payload, map_hana_playlist_to_detail, map_hana_playlist_to_summary,
-        map_hana_song_to_track, map_playable, normalize_provider_image_url,
+        map_hana_playlist_to_detail, map_hana_playlist_to_summary, map_hana_song_to_track,
+        map_playable, normalize_provider_image_url,
     },
 };
 
@@ -384,27 +389,67 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
-        let body = match self.client.lyric_new(&track.source_id).await {
-            Ok(body) => body,
+        let resp = match self.client.lyric_new(&track.source_id).await {
+            Ok(resp) => resp,
             Err(_) => self.client.lyric(&track.source_id).await?,
         };
-        let lrc = body.get("lrc");
-        Ok(map_hana_lyric_to_payload(
-            &track.source_id,
-            lrc.and_then(|value| value.get("lyric"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            lrc.and_then(|value| value.get("tlyric"))
-                .and_then(|value| value.get("lyric"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            lrc.and_then(|value| value.get("klyric"))
-                .and_then(|value| value.get("lyric"))
-                .and_then(Value::as_str),
-            lrc.and_then(|value| value.get("yrc"))
-                .and_then(|value| value.get("lyric"))
-                .and_then(Value::as_str),
-        ))
+
+        let lrc_text = resp.lrc.lyric.unwrap_or_default();
+        let tlyric_text = resp.tlyric.lyric.unwrap_or_default();
+        let yrc_text = resp.yrc.lyric.unwrap_or_default();
+
+        let trans = (!tlyric_text.is_empty())
+            .then(|| NeteaseLrcParser { version: 0 }.parse(tlyric_text).ok())
+            .flatten()
+            .map(|t| {
+                t.into_iter()
+                    .map(|line| (line.time_ms, line.text))
+                    .collect::<HashMap<_, _>>()
+            });
+
+        let (lines, has_translation) = {
+            let base_lines = if !yrc_text.is_empty() {
+                NeteaseParser
+                    .parse(yrc_text)
+                    .map_err(|e| invalid_response(e))?
+            } else {
+                NeteaseLrcParser { version: 0 }
+                    .parse(lrc_text)
+                    .map_err(|e| invalid_response(e))?
+            };
+
+            match trans {
+                Some(trans) => (
+                    base_lines
+                        .into_iter()
+                        .map(|mut line| {
+                            line.translation = trans
+                                .get(&line.time_ms)
+                                .cloned()
+                                .filter(|v| !v.is_empty());
+                            line
+                        })
+                        .collect(),
+                    true,
+                ),
+                None => (base_lines, false),
+            }
+        };
+
+        let is_word_by_word = lines.iter().any(|line| {
+            line.words
+                .as_ref()
+                .map(|words| !words.is_empty())
+                .unwrap_or(false)
+        });
+
+        Ok(LyricPayload {
+            provider: ProviderId::Netease,
+            track_id: track.id.clone(),
+            lines,
+            has_translation,
+            is_word_by_word,
+        })
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
@@ -699,6 +744,17 @@ fn song_like_check_ack(ids: &[String], liked_ids: &[String]) -> SongLikeCheckAck
             .iter()
             .map(|id| (id.clone(), liked_set.contains(id)))
             .collect(),
+    }
+}
+
+fn invalid_response(message: String) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::InvalidResponse,
+        provider: ProviderId::Netease,
+        message,
+        retryable: false,
+        action: None,
+        raw_message: None,
     }
 }
 

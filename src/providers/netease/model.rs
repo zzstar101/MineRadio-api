@@ -6,32 +6,53 @@ use crate::types::{AlbumDetail, AlbumSummary, PlayableState, ProviderId, Track};
 #[serde(rename_all = "camelCase")]
 pub struct NeteaseLyricResp {
     //lrc歌词
-    lrc: NeteaseLyric,
+    pub(super) lrc: NeteaseLyric,
     //逐字歌词
-    yrc: NeteaseLyric,
+    pub(super) yrc: NeteaseLyric,
     //lrc翻译歌词
-    tlyric: NeteaseLyric,
+    pub(super) tlyric: NeteaseLyric,
 }
 
-impl NeteaseLyricResp {
-    pub fn standardize(self) -> (Option<String>, Option<String>) {
-        (self.yrc.lyric.or(self.lrc.lyric), self.tlyric.lyric)
+/// lyric/v1 wraps everything under a top-level `lrc` key.
+/// Converted to [`NeteaseLyricResp`] for a unified model.
+#[derive(Deserialize)]
+pub(super) struct NeteaseLyricV1Resp {
+    lrc: NeteaseLyricV1Inner,
+}
+
+#[derive(Deserialize)]
+struct NeteaseLyricV1Inner {
+    #[serde(default)]
+    lyric: String,
+    #[serde(default)]
+    tlyric: Option<NeteaseLyric>,
+    #[serde(default)]
+    yrc: Option<NeteaseLyric>,
+}
+
+impl From<NeteaseLyricV1Resp> for NeteaseLyricResp {
+    fn from(v1: NeteaseLyricV1Resp) -> Self {
+        let inner = v1.lrc;
+        Self {
+            lrc: NeteaseLyric {
+                lyric: if inner.lyric.is_empty() { None } else { Some(inner.lyric) },
+            },
+            tlyric: inner.tlyric.unwrap_or(NeteaseLyric { lyric: None }),
+            yrc: inner.yrc.unwrap_or(NeteaseLyric { lyric: None }),
+        }
     }
 }
+
 #[derive(Deserialize)]
 pub struct NeteaseLyric {
-    version: i64,
-
-    lyric: Option<String>,
+    pub(super) lyric: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseAlbumListResp {
     data: Vec<Album>,
-    count: i64,
     has_more: bool,
-    paid_count: i64,
 }
 
 impl NeteaseAlbumListResp {
@@ -112,7 +133,6 @@ fn get_playable(fee: u8) -> PlayableState {
 #[serde(rename_all = "camelCase")]
 pub struct Song {
     ar: Vec<Artist>,
-    al: Al,
     fee: u8,
     /*h: H,
     sq: H,
@@ -122,11 +142,6 @@ pub struct Song {
     name: String,
     id: i64,
     dt: Option<u64>,
-}
-
-#[derive(Deserialize)]
-pub struct Al {
-    name: String,
 }
 
 /*#[derive(Deserialize)]

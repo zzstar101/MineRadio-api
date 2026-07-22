@@ -20,7 +20,9 @@ use crate::{
     utils::{encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
 
-use super::model::{NeteaseAlbumDetailResp, NeteaseAlbumListResp};
+use super::model::{
+    NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLyricResp, NeteaseLyricV1Resp,
+};
 
 const API_DOMAIN: &str = "https://interface.music.163.com";
 const DOMAIN: &str = "https://music.163.com";
@@ -121,28 +123,31 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn lyric_new(&self, id: &str) -> ProviderResult<Value> {
-        self.request_eapi(
-            "/api/song/lyric/v1",
-            json!({
-                "id": id,
-                "cp": false,
-                "tv": 0,
-                "lv": 0,
-                "rv": 0,
-                "kv": 0,
-                "yv": 0,
-                "ytv": 0,
-                "yrv": 0,
-                "e_r": false
-            }),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
+    pub async fn lyric_new(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
+        let v1: NeteaseLyricV1Resp = self
+            .eapi_model(
+                "/api/song/lyric/v1",
+                json!({
+                    "id": id,
+                    "cp": false,
+                    "tv": 0,
+                    "lv": 0,
+                    "rv": 0,
+                    "kv": 0,
+                    "yv": 0,
+                    "ytv": 0,
+                    "yrv": 0,
+                    "e_r": false
+                }),
+                self.current_cookie().await.as_deref(),
+                "lyric_new",
+            )
+            .await?;
+        Ok(v1.into())
     }
 
-    pub async fn lyric(&self, id: &str) -> ProviderResult<Value> {
-        self.request_eapi(
+    pub async fn lyric(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
+        self.eapi_model(
             "/api/song/lyric",
             json!({
                 "id": id,
@@ -154,6 +159,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "lyric",
         )
         .await
     }
@@ -189,7 +195,7 @@ impl NeteaseClient {
 
     pub(super) async fn album_list(&self) -> ProviderResult<NeteaseAlbumListResp> {
         let cookie = self.current_cookie().await;
-        self.get_model(
+        self.weapi_model(
             "/api/album/sublist",
             json!({
                 "limit": 1000,
@@ -204,7 +210,7 @@ impl NeteaseClient {
 
     pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<NeteaseAlbumDetailResp> {
         let cookie = self.current_cookie().await;
-        self.get_model(
+        self.weapi_model(
             &format!("/api/v1/album/{id}"),
             json!({}),
             cookie.as_deref(),
@@ -492,7 +498,26 @@ impl NeteaseClient {
             .body)
     }
 
-    async fn get_model<T: DeserializeOwned>(
+    async fn eapi_model<T: DeserializeOwned>(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let body = self.request_eapi(uri, payload, cookie).await?;
+        let raw_message = body.to_string();
+        serde_json::from_value(body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: ProviderId::Netease,
+            message: format!("decode netease {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(raw_message),
+        })
+    }
+
+    async fn weapi_model<T: DeserializeOwned>(
         &self,
         uri: &str,
         payload: Value,
