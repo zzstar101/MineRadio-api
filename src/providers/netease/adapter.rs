@@ -16,7 +16,7 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
         VipLevel,
     },
@@ -161,7 +161,7 @@ impl ProviderAdapter for NeteaseAdapter {
         ProviderId::Netease
     }
 
-    async fn search(&self, keyword: &str, _search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let body = self.client.cloudsearch(keyword, offset, limit).await?;
         let songs = body
             .get("result")
@@ -171,6 +171,14 @@ impl ProviderAdapter for NeteaseAdapter {
             .unwrap_or_default();
 
         Ok(songs.iter().map(map_hana_song_to_track).collect())
+    }
+
+    async fn search_album(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<AlbumSummary>> {
+        Ok(self.client.search_album(keyword, offset, limit).await?.standardize())
+    }
+
+    async fn search_playlist(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<PlaylistSummary>> {
+        Ok(self.client.search_playlist(keyword, offset, limit).await?.standardize())
     }
 
     async fn song_url(

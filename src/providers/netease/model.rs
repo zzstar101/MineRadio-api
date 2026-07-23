@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, ProviderId, Track};
+use crate::types::{AlbumDetail, AlbumSummary, PlayableState, PlaylistSummary, ProviderId, Track};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +117,94 @@ impl NeteaseAlbumDetailResp {
             has_more: None,
             tracks,
         }
+    }
+}
+
+// ── 搜索响应模型（参考 netease-qq-music-api）──
+
+/// `/api/v1/search/album/get` 专辑搜索响应
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NeteaseSearchAlbumResp {
+    result: NeteaseSearchAlbumData,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchAlbumData {
+    albums: Vec<NeteaseSearchAlbum>,
+    #[serde(rename = "albumCount")]
+    album_count: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseSearchAlbum {
+    id: u64,
+    name: String,
+    pic_url: String,
+    artist: NeteaseSearchAlbumArtist,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchAlbumArtist {
+    id: u64,
+    name: String,
+}
+
+impl NeteaseSearchAlbumResp {
+    pub(super) fn standardize(self) -> Vec<AlbumSummary> {
+        self.result
+            .albums
+            .into_iter()
+            .map(|a| AlbumSummary {
+                provider: ProviderId::Netease,
+                id: a.id.to_string(),
+                name: a.name,
+                artists: vec![a.artist.name],
+                cover_url: a.pic_url,
+                track_count: None,
+                track_ids: vec![],
+                collected: None,
+            })
+            .collect()
+    }
+}
+
+/// `/api/v1/search/playlist/get` 歌单搜索响应
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NeteaseSearchPlaylistResp {
+    result: NeteaseSearchPlaylistData,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchPlaylistData {
+    playlists: Vec<NeteaseSearchPlaylist>,
+}
+
+#[derive(Deserialize)]
+struct NeteaseSearchPlaylist {
+    id: u64,
+    name: String,
+    #[serde(rename = "coverImgUrl")]
+    cover_img_url: String,
+}
+
+impl NeteaseSearchPlaylistResp {
+    pub(super) fn standardize(self) -> Vec<PlaylistSummary> {
+        self.result
+            .playlists
+            .into_iter()
+            .map(|p| PlaylistSummary {
+                provider: ProviderId::Netease,
+                id: p.id.to_string(),
+                name: p.name,
+                cover_url: p.cover_img_url,
+                track_count: None,
+                track_ids: vec![],
+                collected: None,
+            })
+            .collect()
     }
 }
 

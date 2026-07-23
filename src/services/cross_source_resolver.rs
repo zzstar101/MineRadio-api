@@ -14,7 +14,7 @@ use crate::{
         error::{ProviderError, ProviderErrorCode},
         registry::PROVIDER_IDS,
     },
-    types::{PlayableState, ProviderId, SearchType, SongUrlOptions, SongUrlResult, Track},
+    types::{PlayableState, ProviderId, SongUrlOptions, SongUrlResult, Track},
 };
 
 pub type ProviderMap = HashMap<ProviderId, Arc<dyn ProviderAdapter>>;
@@ -78,7 +78,7 @@ impl CrossSourceResolver {
             let Some(adapter) = self.provider(&provider_id) else {
                 continue;
             };
-            match adapter.search(&query.keyword, SearchType::default(), 0, query.limit).await {
+            match adapter.search_track(&query.keyword, 0, query.limit).await {
                 Ok(tracks) if !tracks.is_empty() => return Ok(tracks),
                 Ok(_) => {
                     if first_error.is_none() {
@@ -132,7 +132,7 @@ impl CrossSourceResolver {
             }
 
             let keyword = build_switch_keyword(&track);
-            match adapter.search(&keyword, SearchType::default(), 0, 5).await {
+            match adapter.search_track(&keyword, 0, 5).await {
                 Ok(candidates) => {
                     for candidate in candidates {
                         match adapter.song_url(&candidate, Some(opts.clone())).await {
@@ -174,7 +174,7 @@ impl CrossSourceResolver {
                     let keyword = query.keyword.clone();
                     let limit = merged_provider_limit(provider_id, query.limit);
                     Some(async move {
-                        let result = adapter.search(&keyword, SearchType::default(), 0, limit).await;
+                        let result = adapter.search_track(&keyword, 0, limit).await;
                         (provider_index, result)
                     })
                 });
@@ -650,7 +650,7 @@ mod tests {
             self.id.clone()
         }
 
-        async fn search(&self, keyword: &str, _search_type: SearchType, _offset: u32, limit: u32) -> providers::ProviderResult<Vec<Track>> {
+        async fn search_track(&self, keyword: &str, _offset: u32, limit: u32) -> providers::ProviderResult<Vec<Track>> {
             self.calls
                 .lock()
                 .unwrap()

@@ -554,14 +554,154 @@ pub struct Identified {
     pub name: String,
 }
 
-/* #[derive(Debug, Deserialize)]
-struct Pay {
-    pay_month: i64,
-    price_track: i64,
-    price_album: i64,
-    pay_play: i64,
-    pay_down: i64,
-    pay_status: i64,
-    time_free: i64,
+// ── DoSearchForQQMusicDesktop 多类型搜索响应（参考 netease-qq-music-api）──
+
+#[derive(Debug, Deserialize)]
+pub(super) struct QqMultiSearchResp {
+    result: QqMultiSearchResult,
 }
-*/
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchResult {
+    data: QqMultiSearchData,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchData {
+    body: QqMultiSearchBody,
+    meta: QqMultiSearchMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchBody {
+    #[serde(default)]
+    song: QqMultiSearchSongSection,
+    #[serde(default)]
+    album: QqMultiSearchAlbumSection,
+    #[serde(default)]
+    songlist: QqMultiSearchSonglistSection,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct QqMultiSearchSongSection {
+    #[serde(default)]
+    list: Vec<QqMultiSearchSong>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct QqMultiSearchAlbumSection {
+    #[serde(default)]
+    list: Vec<QqMultiSearchAlbum>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct QqMultiSearchSonglistSection {
+    #[serde(default)]
+    list: Vec<QqMultiSearchSonglist>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchMeta {
+    #[serde(default)]
+    nextpage: i32,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QqMultiSearchSong {
+    mid: String,
+    name: String,
+    #[serde(default)]
+    singer: Vec<QqMultiSearchSinger>,
+    #[serde(default)]
+    album: QqMultiSearchSongAlbum,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchSinger {
+    mid: String,
+    name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct QqMultiSearchSongAlbum {
+    mid: String,
+    name: String,
+    #[serde(default)]
+    pmid: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QqMultiSearchAlbum {
+    #[serde(rename = "albumMID")]
+    album_mid: String,
+    album_name: String,
+    #[serde(default)]
+    album_pic: String,
+    #[serde(rename = "singerMID", default)]
+    singer_mid: String,
+    #[serde(default)]
+    singer_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QqMultiSearchSonglist {
+    dissid: String,
+    dissname: String,
+    #[serde(default)]
+    imgurl: String,
+}
+
+impl QqMultiSearchResp {
+    pub(super) fn standardize_albums(self) -> Vec<AlbumSummary> {
+        self.result
+            .data
+            .body
+            .album
+            .list
+            .into_iter()
+            .map(|a| AlbumSummary {
+                provider: ProviderId::Qq,
+                id: a.album_mid,
+                name: a.album_name,
+                artists: if a.singer_name.is_empty() {
+                    vec![]
+                } else {
+                    vec![a.singer_name]
+                },
+                cover_url: if a.album_pic.is_empty() {
+                    format!("https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg", "")
+                } else {
+                    a.album_pic
+                },
+                track_count: None,
+                track_ids: vec![],
+                collected: None,
+            })
+            .collect()
+    }
+
+    pub(super) fn standardize_playlists(self) -> Vec<PlaylistSummary> {
+        self.result
+            .data
+            .body
+            .songlist
+            .list
+            .into_iter()
+            .map(|s| PlaylistSummary {
+                provider: ProviderId::Qq,
+                id: s.dissid,
+                name: s.dissname,
+                cover_url: s.imgurl,
+                track_count: None,
+                track_ids: vec![],
+                collected: None,
+            })
+            .collect()
+    }
+
+    pub(super) fn has_more(&self) -> bool {
+        self.result.data.meta.nextpage > 0
+    }
+}

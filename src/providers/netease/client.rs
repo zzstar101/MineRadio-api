@@ -22,6 +22,7 @@ use crate::{
 
 use super::model::{
     NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLyricResp, NeteaseLyricV1Resp,
+    NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp,
 };
 
 const API_DOMAIN: &str = "https://interface.music.163.com";
@@ -88,6 +89,50 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+        )
+        .await
+    }
+
+    /// 搜索专辑（/api/v1/search/album/get）
+    pub(super) async fn search_album(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<NeteaseSearchAlbumResp> {
+        self.eapi_model(
+            "/api/v1/search/album/get",
+            json!({
+                "s": keyword,
+                "limit": limit,
+                "offset": offset,
+                "queryCorrect": true,
+                "e_r": false
+            }),
+            self.current_cookie().await.as_deref(),
+            "search_album",
+        )
+        .await
+    }
+
+    /// 搜索歌单（/api/v1/search/playlist/get）
+    pub(super) async fn search_playlist(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<NeteaseSearchPlaylistResp> {
+        self.eapi_model(
+            "/api/v1/search/playlist/get",
+            json!({
+                "s": keyword,
+                "limit": limit,
+                "offset": offset,
+                "queryCorrect": true,
+                "e_r": false
+            }),
+            self.current_cookie().await.as_deref(),
+            "search_playlist",
         )
         .await
     }

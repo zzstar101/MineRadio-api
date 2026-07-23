@@ -666,12 +666,29 @@ async fn provider_search(
     let Some(provider) = state.providers.get(&provider_id) else {
         return unavailable_provider(provider_id);
     };
-    match provider
-        .search(&keyword, query.search_type.unwrap_or_default(), query.offset.unwrap_or(0), query.limit.unwrap_or(20).max(1))
-        .await
-    {
-        Ok(tracks) => ok(tracks),
-        Err(err) => provider_error_response(err),
+    let search_type = query.search_type.unwrap_or_default();
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(20).max(1);
+
+    match search_type {
+        SearchType::Track | SearchType::Artist => {
+            match provider.search_track(&keyword, offset, limit).await {
+                Ok(tracks) => ok(tracks),
+                Err(err) => provider_error_response(err),
+            }
+        }
+        SearchType::Album => {
+            match provider.search_album(&keyword, offset, limit).await {
+                Ok(albums) => ok(albums),
+                Err(err) => provider_error_response(err),
+            }
+        }
+        SearchType::Playlist => {
+            match provider.search_playlist(&keyword, offset, limit).await {
+                Ok(playlists) => ok(playlists),
+                Err(err) => provider_error_response(err),
+            }
+        }
     }
 }
 

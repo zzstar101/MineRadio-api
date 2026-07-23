@@ -1606,7 +1606,7 @@ mod tests {
         providers,
         types::{
             LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-            ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck, SongUrlOptions,
+            ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions,
             SongUrlResult, Track, TrackQualityAvailability,
         },
     };
@@ -1639,10 +1639,9 @@ mod tests {
             self.provider
         }
 
-        async fn search(
+        async fn search_track(
             &self,
             _keyword: &str,
-            _search_type: SearchType,
             _offset: u32,
             _limit: u32,
         ) -> providers::ProviderResult<Vec<Track>> {

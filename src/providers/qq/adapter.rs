@@ -12,7 +12,7 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SearchType, SongUrlOptions, SongUrlResult,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult,
         Track, TrackQualityAvailability, VipLevel,
     },
     utils::decrypt_qrc,
@@ -49,7 +49,7 @@ impl ProviderAdapter for QqAdapter {
         ProviderId::Qq
     }
 
-    async fn search(&self, keyword: &str, _search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let tracks = self.client.search(keyword, offset, limit).await?.standardize();
         if !tracks.is_empty() {
             return Ok(tracks);
@@ -57,6 +57,14 @@ impl ProviderAdapter for QqAdapter {
 
         let list = self.client.smartbox_search(keyword, limit).await?;
         Ok(list.iter().map(map_qq_song_to_track).collect())
+    }
+
+    async fn search_album(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<AlbumSummary>> {
+        Ok(self.client.search_album(keyword, offset, limit).await?.standardize_albums())
+    }
+
+    async fn search_playlist(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<PlaylistSummary>> {
+        Ok(self.client.search_playlist(keyword, offset, limit).await?.standardize_playlists())
     }
 
     async fn song_url(

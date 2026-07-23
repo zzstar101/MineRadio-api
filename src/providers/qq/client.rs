@@ -14,8 +14,9 @@ use crate::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         qq::model::{
-            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqPlaylistDetailResp,
-            QqPlaylistList1Resp, QqPlaylistList2Resp, QqSearchResp, QqTrackDetailResp,
+            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqMultiSearchResp,
+            QqPlaylistDetailResp, QqPlaylistList1Resp, QqPlaylistList2Resp, QqSearchResp,
+            QqTrackDetailResp,
         },
     },
     services::auth_session,
@@ -176,6 +177,66 @@ impl QqClient {
             .take(limit as usize)
             .collect();
         Ok(list)
+    }
+
+    /// 搜索专辑（DoSearchForQQMusicDesktop, search_type=2）
+    pub(super) async fn search_album(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<QqMultiSearchResp> {
+        let page_num = (offset / limit.max(1) + 1).to_string();
+        self.post_json_with_sign(
+            &serde_json::json!({
+                "result": {
+                    "method": "DoSearchForQQMusicDesktop",
+                    "module": "music.search.SearchCgiService",
+                    "param": {
+                        "grp": 0,
+                        "num_per_page": limit,
+                        "page_num": page_num,
+                        "query": keyword,
+                        "search_type": 2,
+                        "searchid": ""
+                    }
+                }
+            }),
+            Some("https://y.qq.com/"),
+            self.current_cookie().await.as_deref(),
+            "search_album",
+        )
+        .await
+    }
+
+    /// 搜索歌单（DoSearchForQQMusicDesktop, search_type=3）
+    pub(super) async fn search_playlist(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<QqMultiSearchResp> {
+        let page_num = (offset / limit.max(1) + 1).to_string();
+        self.post_json_with_sign(
+            &serde_json::json!({
+                "result": {
+                    "method": "DoSearchForQQMusicDesktop",
+                    "module": "music.search.SearchCgiService",
+                    "param": {
+                        "grp": 0,
+                        "num_per_page": limit,
+                        "page_num": page_num,
+                        "query": keyword,
+                        "search_type": 3,
+                        "searchid": ""
+                    }
+                }
+            }),
+            Some("https://y.qq.com/"),
+            self.current_cookie().await.as_deref(),
+            "search_playlist",
+        )
+        .await
     }
 
     pub(super) async fn song_detail(&self, song_mid: &str) -> ProviderResult<QqTrackDetailResp> {

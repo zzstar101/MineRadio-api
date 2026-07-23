@@ -11,7 +11,7 @@ use crate::{
     providers::ProviderAdapter,
     providers::netease::client::NeteaseClient,
     services::podcast::{PodcastPageParams, PodcastService},
-    types::{ProviderId, SearchType},
+    types::ProviderId,
 };
 
 pub type NeteaseResponse = Value;
@@ -356,7 +356,7 @@ async fn first_search_tracks(
         let Some(adapter) = adapters.get(provider) else {
             continue;
         };
-        if let Ok(tracks) = adapter.search("每日推荐", SearchType::default(), 0, 12).await {
+        if let Ok(tracks) = adapter.search_track("每日推荐", 0, 12).await {
             let tracks = tracks
                 .into_iter()
                 .map(|track| serde_json::to_value(track).unwrap_or(Value::Null))
@@ -661,7 +661,7 @@ mod tests {
             self.id
         }
 
-        async fn search(&self, _keyword: &str, _search_type: SearchType, _offset: u32, _limit: u32) -> ProviderResult<Vec<Track>> {
+        async fn search_track(&self, _keyword: &str, _offset: u32, _limit: u32) -> ProviderResult<Vec<Track>> {
             Ok(self.search_tracks.clone())
         }
 
