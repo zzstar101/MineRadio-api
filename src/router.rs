@@ -20,7 +20,7 @@ use crate::{
     services::{
         self, cross_source_resolver, podcast, sidecar_log, weather_radio::WeatherRadioParams,
     },
-    types::{ProviderId, SongUrlOptions, Track},
+    types::{ProviderId, SearchType, SongUrlOptions, Track},
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -191,6 +191,8 @@ struct SearchQuery {
     keyword: Option<String>,
     q: Option<String>,
     provider: Option<String>,
+    #[serde(rename = "type")]
+    search_type: Option<SearchType>,
     offset: Option<u32>,
     limit: Option<u32>,
 }
@@ -665,7 +667,7 @@ async fn provider_search(
         return unavailable_provider(provider_id);
     };
     match provider
-        .search(&keyword, query.offset.unwrap_or(0), query.limit.unwrap_or(20).max(1))
+        .search(&keyword, query.search_type.unwrap_or_default(), query.offset.unwrap_or(0), query.limit.unwrap_or(20).max(1))
         .await
     {
         Ok(tracks) => ok(tracks),

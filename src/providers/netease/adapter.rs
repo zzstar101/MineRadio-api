@@ -16,7 +16,7 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
         VipLevel,
     },
@@ -161,7 +161,7 @@ impl ProviderAdapter for NeteaseAdapter {
         ProviderId::Netease
     }
 
-    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(&self, keyword: &str, _search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let body = self.client.cloudsearch(keyword, offset, limit).await?;
         let songs = body
             .get("result")

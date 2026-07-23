@@ -13,7 +13,7 @@ use crate::{
     },
     providers::{ProviderAdapter, ProviderResult, error::ProviderError},
     types::{
-        LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
+        LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus, SearchType,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
 };
@@ -41,7 +41,7 @@ impl ProviderAdapter for KugouAdapter {
         ProviderId::Kugou
     }
 
-    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(&self, keyword: &str, _search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let page = offset / limit.max(1) + 1;
         let body = self.client.search(keyword, page, limit).await?;
         Ok(search_items(&body)

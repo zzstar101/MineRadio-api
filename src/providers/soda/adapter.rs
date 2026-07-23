@@ -16,7 +16,7 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId,
-        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
+        ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
         TrackQualityAvailability,
     },
 };
@@ -42,7 +42,7 @@ impl ProviderAdapter for SodaAdapter {
         ProviderId::Soda
     }
 
-    async fn search(&self, keyword: &str, _offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(&self, keyword: &str, _search_type: SearchType, _offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let mut t = self.client.search(keyword).await?.standardize();
         t.truncate(limit as usize);
         Ok(t)

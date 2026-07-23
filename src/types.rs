@@ -73,6 +73,17 @@ impl VipLevel {
     }
 }
 
+/// 搜索类型
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchType {
+    #[default]
+    Track,
+    Album,
+    Artist,
+    Playlist,
+}
+
 //等待其他修改完成批量接入
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]

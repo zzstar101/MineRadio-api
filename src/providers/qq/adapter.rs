@@ -12,8 +12,8 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, VipLevel,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SearchType, SongUrlOptions, SongUrlResult,
+        Track, TrackQualityAvailability, VipLevel,
     },
     utils::decrypt_qrc,
 };
@@ -49,7 +49,7 @@ impl ProviderAdapter for QqAdapter {
         ProviderId::Qq
     }
 
-    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(&self, keyword: &str, _search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
         let tracks = self.client.search(keyword, offset, limit).await?.standardize();
         if !tracks.is_empty() {
             return Ok(tracks);

@@ -59,8 +59,8 @@ use async_trait::async_trait;
 
 use crate::types::{
     AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-    ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-    TrackQualityAvailability,
+    ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
+    Track, TrackQualityAvailability,
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
@@ -69,7 +69,7 @@ pub use crate::types::ProviderId;
 pub trait ProviderAdapter: Send + Sync {
     fn id(&self) -> ProviderId;
 
-    async fn search(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>>;
+    async fn search(&self, keyword: &str, search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>>;
     async fn song_url(
         &self,
         track: &Track,
