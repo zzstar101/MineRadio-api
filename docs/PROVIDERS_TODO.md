@@ -35,7 +35,7 @@
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `lyric` |
 | 歌单列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_list` |
-| 歌单详情 | [ ] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_detail`（offset/limit 暂未透传） |
+| 歌单详情 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_detail`（offset/limit 暂未透传） |
 | 登录状态 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `login_status` |
 | 登出 | [x] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `logout` |
 | 收藏 / 取消收藏 | [ ] | [ ] | 未覆写 `ProviderAdapter::like_song`，默认返回 `NOT_IMPLEMENTED` |
@@ -50,7 +50,7 @@
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
 | 二维码登录 | [x] | [x] | [soda_qr_login.rs](../src/services/soda_qr_login.rs) 的 `create_image`、`check` |
-| 搜索 | [ ] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `search`（offset 暂未透传） |
+| 搜索 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `song_url` |
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `lyric` |
@@ -61,7 +61,7 @@
 | 收藏 / 取消收藏 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `like_song` |
 | 收藏状态查询 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `check_song_likes` |
 | 添加歌曲到歌单 | [ ] | [ ] | 未覆写 `ProviderAdapter::add_song_to_playlist`，默认返回 `NOT_IMPLEMENTED` |
-| 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_list` |
+| 专辑列表 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_list` |
 | 专辑详情 | [ ] | [ ] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_detail`（offset/limit 暂未透传） |
 
 ## 酷狗（kugou）
