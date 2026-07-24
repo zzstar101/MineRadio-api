@@ -217,7 +217,11 @@ impl KugouClient {
         self.request_model(request, "lyric").await
     }
 
-    pub(super) async fn lyric_krc(&self, id: u64, access_key: &str) -> ProviderResult<KugouLyricResp> {
+    pub(super) async fn lyric_krc(
+        &self,
+        id: u64,
+        access_key: &str,
+    ) -> ProviderResult<KugouLyricResp> {
         let mut request = KugouRequest::new(Method::GET, "/download");
         request.base_url = Some("https://lyrics.kugou.com".to_owned());
         request.params = KugouParams::from([

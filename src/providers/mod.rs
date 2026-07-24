@@ -70,30 +70,61 @@ pub trait ProviderAdapter: Send + Sync {
     fn id(&self) -> ProviderId;
 
     /// 搜索单曲
-    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>>;
+    async fn search_track(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>>;
 
     /// 搜索专辑
-    async fn search_album(&self, _keyword: &str, _offset: u32, _limit: u32) -> ProviderResult<Vec<AlbumSummary>> {
-        Err(error::ProviderError::not_implemented(self.id(), "search_album"))
+    async fn search_album(
+        &self,
+        _keyword: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "search_album",
+        ))
     }
 
     /// 搜索歌单
-    async fn search_playlist(&self, _keyword: &str, _offset: u32, _limit: u32) -> ProviderResult<Vec<PlaylistSummary>> {
-        Err(error::ProviderError::not_implemented(self.id(), "search_playlist"))
+    async fn search_playlist(
+        &self,
+        _keyword: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "search_playlist",
+        ))
     }
 
     /// 统一搜索入口（向后兼容）：按 search_type 分发到 search_track / search_album / search_playlist
     /// 注意：Album / Playlist 的返回会丢弃类型信息，外部应优先调用具体的 search_* 方法
     #[allow(dead_code)]
-    async fn search(&self, keyword: &str, search_type: SearchType, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search(
+        &self,
+        keyword: &str,
+        search_type: SearchType,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>> {
         match search_type {
-            SearchType::Track | SearchType::Artist => self.search_track(keyword, offset, limit).await,
-            SearchType::Album => {
-                Err(error::ProviderError::not_implemented(self.id(), "search (album type — use search_album instead)"))
+            SearchType::Track | SearchType::Artist => {
+                self.search_track(keyword, offset, limit).await
             }
-            SearchType::Playlist => {
-                Err(error::ProviderError::not_implemented(self.id(), "search (playlist type — use search_playlist instead)"))
-            }
+            SearchType::Album => Err(error::ProviderError::not_implemented(
+                self.id(),
+                "search (album type — use search_album instead)",
+            )),
+            SearchType::Playlist => Err(error::ProviderError::not_implemented(
+                self.id(),
+                "search (playlist type — use search_playlist instead)",
+            )),
         }
     }
 
@@ -105,7 +136,12 @@ pub trait ProviderAdapter: Send + Sync {
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability>;
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload>;
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>>;
-    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail>;
+    async fn playlist_detail(
+        &self,
+        id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<PlaylistDetail>;
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus>;
     async fn logout(&self) -> ProviderResult<()>;
 
@@ -138,7 +174,12 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn album_detail(&self, _id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(
+        &self,
+        _id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<AlbumDetail> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",

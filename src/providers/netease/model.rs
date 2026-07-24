@@ -35,7 +35,11 @@ impl From<NeteaseLyricV1Resp> for NeteaseLyricResp {
         let inner = v1.lrc;
         Self {
             lrc: NeteaseLyric {
-                lyric: if inner.lyric.is_empty() { None } else { Some(inner.lyric) },
+                lyric: if inner.lyric.is_empty() {
+                    None
+                } else {
+                    Some(inner.lyric)
+                },
             },
             tlyric: inner.tlyric.unwrap_or(NeteaseLyric { lyric: None }),
             yrc: inner.yrc.unwrap_or(NeteaseLyric { lyric: None }),
@@ -56,8 +60,12 @@ pub(super) struct NeteaseAlbumListResp {
 }
 
 impl NeteaseAlbumListResp {
-    pub(super) fn standardize(self) -> Vec<AlbumSummary> {
-        self.data
+    pub(super) fn standardize(self) -> Option<Vec<AlbumSummary>> {
+        if self.data.is_empty() {
+            return None;
+        }
+        let v: Vec<AlbumSummary> = self
+            .data
             .into_iter()
             .map(|a| AlbumSummary {
                 provider: ProviderId::Netease,
@@ -69,7 +77,8 @@ impl NeteaseAlbumListResp {
                 track_ids: vec![],
                 collected: Some(true),
             })
-            .collect()
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 
@@ -152,8 +161,12 @@ struct NeteaseSearchAlbumArtist {
 }
 
 impl NeteaseSearchAlbumResp {
-    pub(super) fn standardize(self) -> Vec<AlbumSummary> {
-        self.result
+    pub(super) fn standardize(self) -> Option<Vec<AlbumSummary>> {
+        if self.result.albums.is_empty() {
+            return None;
+        }
+        let v: Vec<AlbumSummary> = self
+            .result
             .albums
             .into_iter()
             .map(|a| AlbumSummary {
@@ -166,7 +179,8 @@ impl NeteaseSearchAlbumResp {
                 track_ids: vec![],
                 collected: None,
             })
-            .collect()
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 
@@ -191,8 +205,12 @@ struct NeteaseSearchPlaylist {
 }
 
 impl NeteaseSearchPlaylistResp {
-    pub(super) fn standardize(self) -> Vec<PlaylistSummary> {
-        self.result
+    pub(super) fn standardize(self) -> Option<Vec<PlaylistSummary>> {
+        if self.result.playlists.is_empty() {
+            return None;
+        }
+        let v: Vec<PlaylistSummary> = self
+            .result
             .playlists
             .into_iter()
             .map(|p| PlaylistSummary {
@@ -204,7 +222,8 @@ impl NeteaseSearchPlaylistResp {
                 track_ids: vec![],
                 collected: None,
             })
-            .collect()
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 

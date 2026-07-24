@@ -88,7 +88,6 @@ pub fn map_qq_song_to_track(raw: &Value) -> Track {
     }
 }
 
-
 fn first_string(values: &[Option<&Value>]) -> String {
     values
         .iter()
@@ -97,7 +96,6 @@ fn first_string(values: &[Option<&Value>]) -> String {
         .find_map(value_to_string)
         .unwrap_or_default()
 }
-
 
 fn value_to_string(value: &Value) -> Option<String> {
     match value {

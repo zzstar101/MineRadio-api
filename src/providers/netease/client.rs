@@ -77,7 +77,12 @@ impl NeteaseClient {
         Ok(())
     }
 
-    pub async fn cloudsearch(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Value> {
+    pub async fn cloudsearch(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/cloudsearch/pc",
             json!({
@@ -209,7 +214,12 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<Value> {
+    pub async fn playlist_detail(
+        &self,
+        id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Value> {
         self.request_eapi(
             "/api/v6/playlist/detail",
             json!({

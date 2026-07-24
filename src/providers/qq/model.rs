@@ -574,27 +574,24 @@ struct QqMultiSearchData {
 
 #[derive(Debug, Deserialize)]
 struct QqMultiSearchBody {
-    #[serde(default)]
-    song: QqMultiSearchSongSection,
-    #[serde(default)]
-    album: QqMultiSearchAlbumSection,
-    #[serde(default)]
-    songlist: QqMultiSearchSonglistSection,
+    song: Option<QqMultiSearchSongSection>,
+    album: Option<QqMultiSearchAlbumSection>,
+    songlist: Option<QqMultiSearchSonglistSection>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct QqMultiSearchSongSection {
     #[serde(default)]
     list: Vec<QqMultiSearchSong>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct QqMultiSearchAlbumSection {
     #[serde(default)]
     list: Vec<QqMultiSearchAlbum>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct QqMultiSearchSonglistSection {
     #[serde(default)]
     list: Vec<QqMultiSearchSonglist>,
@@ -606,15 +603,14 @@ struct QqMultiSearchMeta {
     nextpage: i32,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqMultiSearchSong {
     mid: String,
     name: String,
     #[serde(default)]
     singer: Vec<QqMultiSearchSinger>,
-    #[serde(default)]
-    album: QqMultiSearchSongAlbum,
+    album: Option<QqMultiSearchSongAlbum>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,12 +619,11 @@ struct QqMultiSearchSinger {
     name: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct QqMultiSearchSongAlbum {
     mid: String,
     name: String,
-    #[serde(default)]
-    pmid: String,
+    pmid: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -637,68 +632,102 @@ struct QqMultiSearchAlbum {
     #[serde(rename = "albumMID")]
     album_mid: String,
     album_name: String,
-    #[serde(default)]
-    album_pic: String,
-    #[serde(rename = "singerMID", default)]
-    singer_mid: String,
-    #[serde(default)]
-    singer_name: String,
+    album_pic: Option<String>,
+    #[serde(rename = "singerMID")]
+    singer_mid: Option<String>,
+    singer_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct QqMultiSearchSonglist {
     dissid: String,
     dissname: String,
-    #[serde(default)]
-    imgurl: String,
+    imgurl: Option<String>,
 }
 
 impl QqMultiSearchResp {
-    pub(super) fn standardize_albums(self) -> Vec<AlbumSummary> {
-        self.result
-            .data
-            .body
-            .album
-            .list
+    pub(super) fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
+        let list = self.result.data.body.album?.list;
+        if list.is_empty() {
+            return None;
+        }
+        let v: Vec<AlbumSummary> = list
             .into_iter()
             .map(|a| AlbumSummary {
                 provider: ProviderId::Qq,
                 id: a.album_mid,
                 name: a.album_name,
-                artists: if a.singer_name.is_empty() {
-                    vec![]
-                } else {
-                    vec![a.singer_name]
-                },
-                cover_url: if a.album_pic.is_empty() {
-                    format!("https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg", "")
-                } else {
-                    a.album_pic
-                },
+                artists: a.singer_name.map_or(vec![], |n| vec![n]),
+                cover_url: a.album_pic.unwrap_or_else(|| {
+                    format!(
+                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                        ""
+                    )
+                }),
                 track_count: None,
                 track_ids: vec![],
                 collected: None,
             })
-            .collect()
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 
-    pub(super) fn standardize_playlists(self) -> Vec<PlaylistSummary> {
-        self.result
-            .data
-            .body
-            .songlist
-            .list
+    pub(super) fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
+        let list = self.result.data.body.songlist?.list;
+        if list.is_empty() {
+            return None;
+        }
+        let v: Vec<PlaylistSummary> = list
             .into_iter()
             .map(|s| PlaylistSummary {
                 provider: ProviderId::Qq,
                 id: s.dissid,
                 name: s.dissname,
-                cover_url: s.imgurl,
+                cover_url: s.imgurl.unwrap_or_default(),
                 track_count: None,
                 track_ids: vec![],
                 collected: None,
             })
-            .collect()
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    }
+
+    pub(super) fn standardize_songs(self) -> Option<Vec<Track>> {
+        let list = self.result.data.body.song?.list;
+        if list.is_empty() {
+            return None;
+        }
+        let v: Vec<Track> = list
+            .into_iter()
+            .map(|s| {
+                let album_name = s.album.as_ref().map_or(String::new(), |a| a.name.clone());
+                let cover_url = match &s.album {
+                    Some(album) => format!(
+                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                        album.pmid.as_deref().unwrap_or(&album.mid)
+                    ),
+                    None => format!(
+                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                        ""
+                    ),
+                };
+                Track {
+                    id: s.mid.clone(),
+                    provider: ProviderId::Qq,
+                    source_id: s.mid.clone(),
+                    media_mid: Some(s.mid),
+                    title: s.name,
+                    artists: s.singer.into_iter().map(|si| si.name).collect(),
+                    album: album_name,
+                    cover_url,
+                    quality_hints: vec!["standard".to_owned()],
+                    playable_state: PlayableState::Unknown,
+                    duration_ms: None,
+                    artwork_url: None,
+                }
+            })
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 
     pub(super) fn has_more(&self) -> bool {

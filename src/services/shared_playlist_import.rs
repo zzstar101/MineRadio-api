@@ -1606,8 +1606,8 @@ mod tests {
         providers,
         types::{
             LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-            ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions,
-            SongUrlResult, Track, TrackQualityAvailability,
+            ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
+            Track, TrackQualityAvailability,
         },
     };
     use async_trait::async_trait;
@@ -1670,7 +1670,12 @@ mod tests {
         async fn playlist_list(&self) -> providers::ProviderResult<Vec<PlaylistSummary>> {
             Ok(Vec::new())
         }
-        async fn playlist_detail(&self, id: &str, _offset: u32, _limit: u32) -> providers::ProviderResult<PlaylistDetail> {
+        async fn playlist_detail(
+            &self,
+            id: &str,
+            _offset: u32,
+            _limit: u32,
+        ) -> providers::ProviderResult<PlaylistDetail> {
             Ok(PlaylistDetail {
                 provider: self.provider.clone(),
                 id: id.to_owned(),

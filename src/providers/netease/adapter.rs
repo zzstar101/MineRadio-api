@@ -161,7 +161,12 @@ impl ProviderAdapter for NeteaseAdapter {
         ProviderId::Netease
     }
 
-    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search_track(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>> {
         let body = self.client.cloudsearch(keyword, offset, limit).await?;
         let songs = body
             .get("result")
@@ -173,12 +178,32 @@ impl ProviderAdapter for NeteaseAdapter {
         Ok(songs.iter().map(map_hana_song_to_track).collect())
     }
 
-    async fn search_album(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<AlbumSummary>> {
-        Ok(self.client.search_album(keyword, offset, limit).await?.standardize())
+    async fn search_album(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        Ok(self
+            .client
+            .search_album(keyword, offset, limit)
+            .await?
+            .standardize()
+            .unwrap_or_default())
     }
 
-    async fn search_playlist(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<PlaylistSummary>> {
-        Ok(self.client.search_playlist(keyword, offset, limit).await?.standardize())
+    async fn search_playlist(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        Ok(self
+            .client
+            .search_playlist(keyword, offset, limit)
+            .await?
+            .standardize()
+            .unwrap_or_default())
     }
 
     async fn song_url(
@@ -431,10 +456,8 @@ impl ProviderAdapter for NeteaseAdapter {
                     base_lines
                         .into_iter()
                         .map(|mut line| {
-                            line.translation = trans
-                                .get(&line.time_ms)
-                                .cloned()
-                                .filter(|v| !v.is_empty());
+                            line.translation =
+                                trans.get(&line.time_ms).cloned().filter(|v| !v.is_empty());
                             line
                         })
                         .collect(),
@@ -484,7 +507,12 @@ impl ProviderAdapter for NeteaseAdapter {
             .unwrap_or_default())
     }
 
-    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(
+        &self,
+        id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<PlaylistDetail> {
         let body = self.client.playlist_detail(id, offset, limit).await?;
         let Some(playlist) = body.get("playlist") else {
             return Err(ProviderError {
@@ -501,10 +529,20 @@ impl ProviderAdapter for NeteaseAdapter {
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
         self.client.ensure_login().await?;
-        Ok(self.client.album_list().await?.standardize())
+        Ok(self
+            .client
+            .album_list()
+            .await?
+            .standardize()
+            .unwrap_or_default())
     }
 
-    async fn album_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(
+        &self,
+        id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<AlbumDetail> {
         Ok(self.client.album_detail(id).await?.standardize())
     }
 

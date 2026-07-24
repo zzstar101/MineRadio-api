@@ -12,8 +12,8 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult,
-        Track, TrackQualityAvailability, VipLevel,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
+        TrackQualityAvailability, VipLevel,
     },
     utils::decrypt_qrc,
 };
@@ -49,22 +49,64 @@ impl ProviderAdapter for QqAdapter {
         ProviderId::Qq
     }
 
-    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
-        let tracks = self.client.search(keyword, offset, limit).await?.standardize();
+    async fn search_track(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>> {
+        // 1. 旧搜索端点 shc.y.qq.com（速度快，常用）
+        let tracks = self
+            .client
+            .search(keyword, offset, limit)
+            .await?
+            .standardize();
         if !tracks.is_empty() {
             return Ok(tracks);
         }
 
+        // 2. smartbox 建议接口兜底
         let list = self.client.smartbox_search(keyword, limit).await?;
-        Ok(list.iter().map(map_qq_song_to_track).collect())
+        let smartbox_tracks: Vec<Track> = list.iter().map(map_qq_song_to_track).collect();
+        if !smartbox_tracks.is_empty() {
+            return Ok(smartbox_tracks);
+        }
+
+        // 3. DoSearchForQQMusicDesktop 多类型搜索（数据更丰富，singer mid / album pmid）
+        Ok(self
+            .client
+            .multi_search_track(keyword, offset, limit)
+            .await?
+            .standardize_songs()
+            .unwrap_or_default())
     }
 
-    async fn search_album(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<AlbumSummary>> {
-        Ok(self.client.search_album(keyword, offset, limit).await?.standardize_albums())
+    async fn search_album(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        Ok(self
+            .client
+            .search_album(keyword, offset, limit)
+            .await?
+            .standardize_albums()
+            .unwrap_or_default())
     }
 
-    async fn search_playlist(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<PlaylistSummary>> {
-        Ok(self.client.search_playlist(keyword, offset, limit).await?.standardize_playlists())
+    async fn search_playlist(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        Ok(self
+            .client
+            .search_playlist(keyword, offset, limit)
+            .await?
+            .standardize_playlists()
+            .unwrap_or_default())
     }
 
     async fn song_url(
@@ -213,7 +255,7 @@ impl ProviderAdapter for QqAdapter {
             return Ok(Vec::new());
         };
         let euin = self.client.euin().await;
-        
+
         let Some(euin) = euin else {
             return Ok(Vec::new());
         };
@@ -244,7 +286,12 @@ impl ProviderAdapter for QqAdapter {
         Ok(out)
     }
 
-    async fn playlist_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(
+        &self,
+        id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<PlaylistDetail> {
         Ok(self
             .client
             .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
@@ -257,7 +304,11 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
-        Ok(self.client.album_detail(id, offset, limit).await?.standardize())
+        Ok(self
+            .client
+            .album_detail(id, offset, limit)
+            .await?
+            .standardize())
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -1182,13 +1233,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-       map_qq_login_status,
-        qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction,
+        map_qq_login_status, qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction,
     };
-    use crate::{
-        providers::error::ProviderErrorCode,
-        types::VipLevel,
-    };
+    use crate::{providers::error::ProviderErrorCode, types::VipLevel};
 
     #[test]
     fn qq_song_url_restriction_maps_missing_playback_key() {

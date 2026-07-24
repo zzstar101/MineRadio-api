@@ -41,7 +41,12 @@ impl ProviderAdapter for KugouAdapter {
         ProviderId::Kugou
     }
 
-    async fn search_track(&self, keyword: &str, offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
+    async fn search_track(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>> {
         let page = offset / limit.max(1) + 1;
         let body = self.client.search(keyword, page, limit).await?;
         Ok(search_items(&body)
@@ -160,7 +165,12 @@ impl ProviderAdapter for KugouAdapter {
         Err(not_implemented("playlist_list"))
     }
 
-    async fn playlist_detail(&self, _id: &str, _offset: u32, _limit: u32) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(
+        &self,
+        _id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<PlaylistDetail> {
         Err(not_implemented("playlist_detail"))
     }
 

@@ -661,7 +661,12 @@ mod tests {
             self.id
         }
 
-        async fn search_track(&self, _keyword: &str, _offset: u32, _limit: u32) -> ProviderResult<Vec<Track>> {
+        async fn search_track(
+            &self,
+            _keyword: &str,
+            _offset: u32,
+            _limit: u32,
+        ) -> ProviderResult<Vec<Track>> {
             Ok(self.search_tracks.clone())
         }
 
@@ -687,8 +692,13 @@ mod tests {
         async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
             Ok(self.playlists.clone())
         }
-        
-        async fn playlist_detail(&self, _id: &str, _offset: u32, _limit: u32) -> ProviderResult<PlaylistDetail> {
+
+        async fn playlist_detail(
+            &self,
+            _id: &str,
+            _offset: u32,
+            _limit: u32,
+        ) -> ProviderResult<PlaylistDetail> {
             Ok(self.playlist_detail.clone().unwrap_or_default())
         }
 

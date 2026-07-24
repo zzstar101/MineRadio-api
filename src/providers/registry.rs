@@ -6,8 +6,12 @@ use crate::types::ProviderId;
 
 use super::ProviderAdapter;
 
-pub const PROVIDER_IDS: [ProviderId; 4] =
-    [ProviderId::Netease, ProviderId::Qq, ProviderId::Soda, ProviderId::Kugou];
+pub const PROVIDER_IDS: [ProviderId; 4] = [
+    ProviderId::Netease,
+    ProviderId::Qq,
+    ProviderId::Soda,
+    ProviderId::Kugou,
+];
 
 const NETEASE_CAPABILITIES: [&str; 15] = [
     "qrLogin",
@@ -58,13 +62,7 @@ const SODA_CAPABILITIES: [&str; 13] = [
     "albumDetail",
 ];
 
-const KUGOU_CAPABILITIES: [&str; 5] = [
-    "search",
-    "songUrl",
-    "quality",
-    "lyric",
-    "register",
-];
+const KUGOU_CAPABILITIES: [&str; 5] = ["search", "songUrl", "quality", "lyric", "register"];
 
 #[derive(Default)]
 pub struct ProviderRegistry {

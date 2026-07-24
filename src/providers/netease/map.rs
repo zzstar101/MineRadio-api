@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{
-    PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
-};
+use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();

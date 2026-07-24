@@ -677,18 +677,14 @@ async fn provider_search(
                 Err(err) => provider_error_response(err),
             }
         }
-        SearchType::Album => {
-            match provider.search_album(&keyword, offset, limit).await {
-                Ok(albums) => ok(albums),
-                Err(err) => provider_error_response(err),
-            }
-        }
-        SearchType::Playlist => {
-            match provider.search_playlist(&keyword, offset, limit).await {
-                Ok(playlists) => ok(playlists),
-                Err(err) => provider_error_response(err),
-            }
-        }
+        SearchType::Album => match provider.search_album(&keyword, offset, limit).await {
+            Ok(albums) => ok(albums),
+            Err(err) => provider_error_response(err),
+        },
+        SearchType::Playlist => match provider.search_playlist(&keyword, offset, limit).await {
+            Ok(playlists) => ok(playlists),
+            Err(err) => provider_error_response(err),
+        },
     }
 }
 
