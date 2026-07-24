@@ -26,7 +26,6 @@ use super::{
 };
 
 const QQ_QUALITIES: [&str; 5] = ["flac", "ape", "320", "128", "m4a"];
-const QQ_PUBLIC_PLAYLIST_TRACK_LIMIT: u32 = 500;
 
 #[derive(Clone, Default)]
 pub struct QqAdapter {
@@ -289,12 +288,12 @@ impl ProviderAdapter for QqAdapter {
     async fn playlist_detail(
         &self,
         id: &str,
-        _offset: u32,
-        _limit: u32,
+        offset: u32,
+        limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
         Ok(self
             .client
-            .official_playlist_detail(id, QQ_PUBLIC_PLAYLIST_TRACK_LIMIT)
+            .playlist_detail(id, offset, limit)
             .await?
             .standardize())
     }

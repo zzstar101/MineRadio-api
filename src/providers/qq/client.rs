@@ -466,13 +466,13 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn official_playlist_detail(
+    pub(super) async fn playlist_detail(
         &self,
         playlist_id: &str,
+        offset: u32,
         limit: u32,
     ) -> ProviderResult<QqPlaylistDetailResp> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
-        let song_num = limit.clamp(1, 500);
         self.post_json_with_sign(
             &json!({
                 "req_0": {
@@ -483,8 +483,8 @@ impl QqClient {
                         "userinfo": 1,
                         "tag": 1,
                         "orderlist": 1,
-                        "song_begin": 0,
-                        "song_num": song_num,
+                        "song_begin": offset,
+                        "song_num": limit.clamp(1, 500),
                         "onlysonglist": 0,
                         "enc_host_uin": ""
                     }
