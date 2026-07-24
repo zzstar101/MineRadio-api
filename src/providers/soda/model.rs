@@ -69,12 +69,12 @@ struct AvatarUrl {
 }
 
 #[derive(Deserialize)]
-pub(super) struct SodaSearchResp {
+pub(super) struct SodaMultiSearchResp {
     result_groups: Vec<SodaSearchGroup>,
 }
 
-impl SodaSearchResp {
-    pub fn standardize(self) -> Vec<Track> {
+impl SodaMultiSearchResp {
+    pub fn standardize_tracks(self) -> Option<Vec<Track>> {
         self.result_groups
             .into_iter()
             .find(|group| group.id == "tracks")
@@ -82,10 +82,37 @@ impl SodaSearchResp {
                 group
                     .data
                     .into_iter()
-                    .map(|data| data.entity.track.standardize())
+                    .filter_map(|data| data.entity.track)
+                    .map(|track| track.standardize())
                     .collect()
             })
-            .unwrap_or_default()
+    }
+    pub fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
+        self.result_groups
+            .into_iter()
+            .find(|group| group.id == "albums")
+            .map(|group| {
+                group
+                    .data
+                    .into_iter()
+                    .filter_map(|data| data.entity.album)
+                    .map(|album| album.standardize())
+                    .collect()
+            })
+    }
+
+    pub fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
+        self.result_groups
+            .into_iter()
+            .find(|group| group.id == "playlists")
+            .map(|group| {
+                group
+                    .data
+                    .into_iter()
+                    .filter_map(|data| data.entity.playlist)
+                    .map(|playlist| playlist.standardize())
+                    .collect()
+            })
     }
 }
 
@@ -102,12 +129,14 @@ struct SodaSearchData {
 
 #[derive(Deserialize)]
 struct SodaSearchEntity {
-    track: SodaTrack,
+    track: Option<SodaTrack>,
+    playlist: Option<SodaPlaylist>,
+    album: Option<SodaAlbum>,
 }
 
 #[derive(Deserialize)]
 pub(super) struct SodaPlaylistListResp {
-    playlists: Vec<SodaPlaylistListList>,
+    playlists: Vec<SodaPlaylist>,
 }
 
 impl SodaPlaylistListResp {
@@ -115,38 +144,16 @@ impl SodaPlaylistListResp {
         let res: Vec<PlaylistSummary> = self
             .playlists
             .into_iter()
-            .map(|p| PlaylistSummary {
-                provider: ProviderId::Soda,
-                id: p.id,
-                name: p.title,
-                cover_url: p
-                    .url_cover
-                    .map(|u| u.standardize())
-                    .unwrap_or("".to_string()),
-                track_count: p.count_tracks,
-                track_ids: vec![],
-                collected: Some(true),
-            })
+            .map(|p| p.standardize())
             .collect();
         if res.is_empty() { None } else { Some(res) }
     }
 }
 
 #[derive(Deserialize)]
-struct SodaPlaylistListList {
-    id: String,
-
-    title: String,
-    //为什么会有缺封面的呀,汽水你这家伙
-    url_cover: Option<SodaUrl>,
-
-    count_tracks: Option<u32>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct SodaPLaylistDetailResp {
     //next_cursor: Option<String>,
-    playlist: Playlist,
+    playlist: SodaPlaylist,
 
     media_resources: Vec<MediaResource>,
 }
@@ -203,20 +210,6 @@ struct Owner {
 */
 
 #[derive(Deserialize)]
-struct Playlist {
-    id: String,
-
-    title: String,
-
-    url_cover: SodaUrl,
-
-    count_tracks: Option<u32>,
-
-    //owner: Owner,
-    state: Option<State>,
-}
-
-#[derive(Deserialize)]
 pub(super) struct SodaAlbumListResp {
     mixed_collections: Vec<SodaAlbumListData>,
 }
@@ -232,42 +225,12 @@ impl SodaAlbumListResp {
 
 #[derive(Deserialize)]
 struct SodaAlbumListData {
-    album: SodaAlbumListInfo,
-}
-
-#[derive(Deserialize)]
-struct SodaAlbumListInfo {
-    id: String,
-    name: String,
-    artists: Vec<Artist>,
-    count_tracks: u32,
-    url_cover: SodaUrl,
-    state: Option<State>,
-}
-
-impl SodaAlbumListInfo {
-    fn standardize(self) -> AlbumSummary {
-        let id = self.id;
-        AlbumSummary {
-            provider: ProviderId::Soda,
-            id,
-            artists: self
-                .artists
-                .into_iter()
-                .map(|a| a.name.unwrap_or_default())
-                .collect(),
-            name: self.name,
-            cover_url: self.url_cover.standardize(),
-            track_count: Some(self.count_tracks),
-            track_ids: Vec::new(),
-            collected: self.state.and_then(|s| s.is_collected),
-        }
-    }
+    album: SodaAlbum,
 }
 
 #[derive(Deserialize)]
 pub(super) struct SodaAlbumDetailResp {
-    album_info: SodaAlbumListInfo,
+    album_info: SodaAlbum,
     tracks: Vec<SodaTrack>,
 }
 
@@ -578,6 +541,64 @@ impl SodaTrack {
             })
             .collect();
         if s.is_empty() { None } else { Some(s) }
+    }
+}
+
+#[derive(Deserialize)]
+struct SodaPlaylist {
+    id: String,
+
+    title: String,
+
+    url_cover: SodaUrl,
+
+    count_tracks: Option<u32>,
+
+    //owner: Owner,
+    state: Option<State>,
+}
+
+impl SodaPlaylist {
+    pub fn standardize(self) -> PlaylistSummary {
+        PlaylistSummary {
+            provider: ProviderId::Soda,
+            id: self.id,
+            name: self.title,
+            cover_url: self.url_cover.standardize(),
+            track_count: self.count_tracks,
+            track_ids: vec![],
+            collected: self.state.and_then(|s| s.is_collected),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SodaAlbum {
+    id: String,
+    name: String,
+    artists: Vec<Artist>,
+    count_tracks: u32,
+    url_cover: SodaUrl,
+    state: Option<State>,
+}
+
+impl SodaAlbum {
+    fn standardize(self) -> AlbumSummary {
+        let id = self.id;
+        AlbumSummary {
+            provider: ProviderId::Soda,
+            id,
+            artists: self
+                .artists
+                .into_iter()
+                .map(|a| a.name.unwrap_or_default())
+                .collect(),
+            name: self.name,
+            cover_url: self.url_cover.standardize(),
+            track_count: Some(self.count_tracks),
+            track_ids: Vec::new(),
+            collected: self.state.and_then(|s| s.is_collected),
+        }
     }
 }
 

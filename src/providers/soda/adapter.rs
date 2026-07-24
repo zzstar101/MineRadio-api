@@ -42,10 +42,52 @@ impl ProviderAdapter for SodaAdapter {
         ProviderId::Soda
     }
 
-    async fn search_track(&self, keyword: &str, _offset: u32, limit: u32) -> ProviderResult<Vec<Track>> {
-        let mut t = self.client.search(keyword).await?.standardize();
+    async fn search_track(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<Track>> {
+        let mut t = self
+            .client
+            .search_track(keyword, offset)
+            .await?
+            .standardize_tracks()
+            .ok_or_else(|| no_result("search_track"))?;
         t.truncate(limit as usize);
         Ok(t)
+    }
+
+    async fn search_album(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        let mut a = self
+            .client
+            .search_album(keyword, offset)
+            .await?
+            .standardize_albums()
+            .ok_or_else(|| no_result("search_album"))?;
+        a.truncate(limit as usize);
+        Ok(a)
+    }
+
+    async fn search_playlist(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        let mut p = self
+            .client
+            .search_playlist(keyword, offset)
+            .await?
+            .standardize_playlists()
+            .ok_or_else(|| no_result("search_playlist"))?;
+        p.truncate(limit as usize);
+        Ok(p)
     }
 
     async fn song_url(
@@ -133,7 +175,12 @@ impl ProviderAdapter for SodaAdapter {
             .ok_or_else(|| no_result("playlist_list"))
     }
 
-    async fn playlist_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<PlaylistDetail> {
+    async fn playlist_detail(
+        &self,
+        id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<PlaylistDetail> {
         self.client
             .playlist_detail(id, offset, limit)
             .await?
@@ -145,7 +192,12 @@ impl ProviderAdapter for SodaAdapter {
         Ok(self.client.album_list().await?.standardize())
     }
 
-    async fn album_detail(&self, id: &str, _offset: u32, _limit: u32) -> ProviderResult<AlbumDetail> {
+    async fn album_detail(
+        &self,
+        id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<AlbumDetail> {
         Ok(self.client.album_detail(id).await?.standardize())
     }
 

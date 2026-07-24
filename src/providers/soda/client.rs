@@ -16,9 +16,11 @@ use crate::providers::{
 };
 use crate::services::auth_session;
 
-use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaSearchResp, SodaSongUrlResp};
+use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaMultiSearchResp, SodaSongUrlResp};
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
+const SEARCH_ALBUM_URL: &str = "https://api.qishui.com/luna/pc/search/album?aid=386088";
+const SEARCH_PLAYLIST_URL: &str = "https://api.qishui.com/luna/pc/search/playlist?aid=386088";
 const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=track&queue_type=&aid=386088&iid=27960026095955";
 const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=386088";
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
@@ -67,13 +69,53 @@ impl SodaClient {
         Ok(())
     }
 
-    pub(super) async fn search(&self, keyword: &str) -> ProviderResult<SodaSearchResp> {
+    pub(super) async fn search_track(
+        &self,
+        keyword: &str,
+        cursor: u32,
+    ) -> ProviderResult<SodaMultiSearchResp> {
         let mut url = reqwest::Url::parse(SEARCH_URL).map_err(internal_error)?;
-        url.query_pairs_mut().append_pair("q", keyword);
+        url.query_pairs_mut()
+            .append_pair("q", keyword)
+            .append_pair("cursor", &cursor.to_string());
         self.get_model(
             url.to_string(),
             self.current_cookie().await.as_deref(),
             "search",
+        )
+        .await
+    }
+
+    pub(super) async fn search_album(
+        &self,
+        keyword: &str,
+        cursor: u32,
+    ) -> ProviderResult<SodaMultiSearchResp> {
+        let mut url = reqwest::Url::parse(SEARCH_ALBUM_URL).map_err(internal_error)?;
+        url.query_pairs_mut()
+            .append_pair("q", keyword)
+            .append_pair("cursor", &cursor.to_string());
+        self.get_model(
+            url.to_string(),
+            self.current_cookie().await.as_deref(),
+            "search_album",
+        )
+        .await
+    }
+
+    pub(super) async fn search_playlist(
+        &self,
+        keyword: &str,
+        cursor: u32,
+    ) -> ProviderResult<SodaMultiSearchResp> {
+        let mut url = reqwest::Url::parse(SEARCH_PLAYLIST_URL).map_err(internal_error)?;
+        url.query_pairs_mut()
+            .append_pair("q", keyword)
+            .append_pair("cursor", &cursor.to_string());
+        self.get_model(
+            url.to_string(),
+            self.current_cookie().await.as_deref(),
+            "search_playlist",
         )
         .await
     }
