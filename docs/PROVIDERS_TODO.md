@@ -39,12 +39,12 @@
 | 登录状态 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `login_status` |
 | 登出 | [x] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `logout` |
 | 收藏 / 取消收藏 | [ ] | [ ] | 未覆写 `ProviderAdapter::like_song`，默认返回 `NOT_IMPLEMENTED` |
-| 收藏状态查询 | [ ] | [ ] | 未覆写 `ProviderAdapter::check_song_likes`，默认返回 `NOT_IMPLEMENTED` |
-| 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `add_song_to_playlist` |
+| 收藏状态查询 | [ ] | [ ] | [mod.rs](../src/providers/qq/mod.rs) 已明确搜索接口/详情接口无法得知是否收藏单曲/歌单 |
+| 添加歌曲到歌单 | [ ] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `add_song_to_playlist` |
 | 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `album_list` |
 | 专辑详情 | [x] | [ ] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `album_detail` |
 
-## Soda（soda）
+## 汽水音乐（soda）
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
