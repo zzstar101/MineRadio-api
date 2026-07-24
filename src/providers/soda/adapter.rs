@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
@@ -21,14 +23,18 @@ use crate::{
     },
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SodaAdapter {
     client: Arc<SodaClient>,
+    album_cache: Arc<Mutex<HashMap<String, (Vec<Track>, Instant)>>>,
 }
 
 impl SodaAdapter {
     pub fn new(client: Arc<SodaClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            album_cache: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn shared() -> Arc<Self> {
@@ -189,16 +195,64 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
+        self.client.ensure_login().await?;
         Ok(self.client.album_list().await?.standardize())
     }
 
-    async fn album_detail(
-        &self,
-        id: &str,
-        _offset: u32,
-        _limit: u32,
-    ) -> ProviderResult<AlbumDetail> {
-        Ok(self.client.album_detail(id).await?.standardize())
+    async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
+        {
+            let cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((tracks, expires_at)) = cache.get(id) {
+                if *expires_at > Instant::now() {
+                    let start = offset as usize;
+                    let end = (start + limit as usize).min(tracks.len());
+                    let sliced = if start < tracks.len() {
+                        tracks[start..end].to_vec()
+                    } else {
+                        vec![]
+                    };
+                    let has_more = (offset + limit) < tracks.len() as u32;
+                    return Ok(AlbumDetail {
+                        provider: ProviderId::Soda,
+                        id: id.to_owned(),
+                        name: String::new(),
+                        artists: vec![],
+                        cover_url: String::new(),
+                        track_count: Some(tracks.len() as u32),
+                        track_ids: sliced.iter().map(|t| t.source_id.clone()).collect(),
+                        collected: None,
+                        tracks: sliced,
+                        has_more: Some(has_more),
+                    });
+                }
+            }
+        }
+
+        let mut detail = self.client.album_detail(id).await?.standardize();
+
+        {
+            let mut cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.insert(
+                id.to_owned(),
+                (
+                    detail.tracks.clone(),
+                    Instant::now() + Duration::from_secs(300),
+                ),
+            );
+        }
+
+        let total = detail.tracks.len() as u32;
+        let start = offset as usize;
+        let end = (start + limit as usize).min(detail.tracks.len());
+        if start < detail.tracks.len() {
+            detail.tracks = detail.tracks[start..end].to_vec();
+            detail.track_ids = detail.track_ids[start..end].to_vec();
+        } else {
+            detail.tracks = vec![];
+            detail.track_ids = vec![];
+        }
+        detail.has_more = Some((offset + limit) < total);
+        Ok(detail)
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
