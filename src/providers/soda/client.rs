@@ -10,13 +10,15 @@ use crate::providers::{
     ProviderId, ProviderResult,
     error::{ProviderError, ProviderErrorCode},
     soda::model::{
-        SodaCollectionResp, SodaLoginStatusResp, SodaPLaylistDetailResp, SodaPlaylistListResp,
+        SodaCollectionResp, SodaLoginStatusResp, SodaPlaylistDetailResp, SodaPlaylistListResp,
         SodaTrackV2Resp,
     },
 };
 use crate::services::auth_session;
 
-use super::model::{SodaAlbumDetailResp, SodaAlbumListResp, SodaMultiSearchResp, SodaSongUrlResp};
+use super::model::{
+    SodaAlbumDetailResp, SodaCollectionListResp, SodaMultiSearchResp, SodaSongUrlResp,
+};
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
 const SEARCH_ALBUM_URL: &str = "https://api.qishui.com/luna/pc/search/album?aid=386088";
@@ -29,7 +31,7 @@ const COLLECTION_MEDIA_URL: &str = "https://api.qishui.com/luna/pc/me/collection
 const COLLECTION_MEDIA_DELETE_URL: &str =
     "https://api.qishui.com/luna/pc/me/collection/media/delete?aid=386088";
 const LOGOUT_URL: &str = "https://api.qishui.com/passport/web/logout/?need_redirect=0&iid=27960026095955&device_platform=PC&version_code=3.5.1&aid=386088";
-const ALBUM_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/collection/mixed?aid=386088&app_name=luna_pc&iid=3242894632956240&version_name=3.5.2&version_code=30050200&channel=official&item_types=album&item_types=playlist";
+const COLLECTION_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/collection/mixed?aid=386088&app_name=luna_pc&iid=3242894632956240&version_name=3.5.2&version_code=30050200&channel=official&item_types=album&item_types=playlist";
 const ALBUM_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/albums/AID?aid=386088&app_name=luna_pc&iid=3242894632956240&version_code=30050200&ignore_tracks=false";
 
 #[derive(Clone, Default)]
@@ -150,11 +152,20 @@ impl SodaClient {
         .await
     }
 
-    pub(super) async fn playlist_list(&self) -> ProviderResult<SodaPlaylistListResp> {
+    pub(super) async fn user_playlist_list(&self) -> ProviderResult<SodaPlaylistListResp> {
         self.get_model(
             PLAYLIST_LIST_URL.to_owned(),
             self.current_cookie().await.as_deref(),
             "playlist_list",
+        )
+        .await
+    }
+    //这个是收藏的专辑和歌单接口
+    pub(super) async fn user_collected_list(&self) -> ProviderResult<SodaCollectionListResp> {
+        self.get_model(
+            COLLECTION_LIST_URL.to_owned(),
+            self.current_cookie().await.as_deref(),
+            "album_list",
         )
         .await
     }
@@ -164,7 +175,7 @@ impl SodaClient {
         playlist_id: &str,
         offset: u32,
         limit: u32,
-    ) -> ProviderResult<SodaPLaylistDetailResp> {
+    ) -> ProviderResult<SodaPlaylistDetailResp> {
         let cookie = self.current_cookie().await;
         let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
         url.query_pairs_mut()
@@ -173,15 +184,6 @@ impl SodaClient {
             .append_pair("count", &limit.to_string());
         self.get_model(url.to_string(), cookie.as_deref(), "playlist_detail")
             .await
-    }
-
-    pub(super) async fn album_list(&self) -> ProviderResult<SodaAlbumListResp> {
-        self.get_model(
-            ALBUM_LIST_URL.to_owned(),
-            self.current_cookie().await.as_deref(),
-            "album_list",
-        )
-        .await
     }
 
     pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<SodaAlbumDetailResp> {

@@ -151,14 +151,14 @@ impl SodaPlaylistListResp {
 }
 
 #[derive(Deserialize)]
-pub(super) struct SodaPLaylistDetailResp {
+pub(super) struct SodaPlaylistDetailResp {
     //next_cursor: Option<String>,
     playlist: SodaPlaylist,
 
     media_resources: Vec<MediaResource>,
 }
 
-impl SodaPLaylistDetailResp {
+impl SodaPlaylistDetailResp {
     pub fn standardize(self) -> Option<PlaylistDetail> {
         let p = self.playlist;
         let tracks: Vec<Track> = self
@@ -210,22 +210,35 @@ struct Owner {
 */
 
 #[derive(Deserialize)]
-pub(super) struct SodaAlbumListResp {
-    mixed_collections: Vec<SodaAlbumListData>,
+pub(super) struct SodaCollectionListResp {
+    mixed_collections: Vec<SodaCollectionListData>,
 }
 
-impl SodaAlbumListResp {
-    pub fn standardize(self) -> Vec<AlbumSummary> {
-        self.mixed_collections
+impl SodaCollectionListResp {
+    pub fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
+        let v: Vec<AlbumSummary> = self
+            .mixed_collections
             .into_iter()
-            .map(|collection| collection.album.standardize())
-            .collect()
+            .filter_map(|collection| collection.album)
+            .map(|album| album.standardize())
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    }
+    pub fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
+        let v: Vec<PlaylistSummary> = self
+            .mixed_collections
+            .into_iter()
+            .filter_map(|collection| collection.playlist)
+            .map(|playlist| playlist.standardize())
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 
 #[derive(Deserialize)]
-struct SodaAlbumListData {
-    album: SodaAlbum,
+struct SodaCollectionListData {
+    album: Option<SodaAlbum>,
+    playlist: Option<SodaPlaylist>,
 }
 
 #[derive(Deserialize)]

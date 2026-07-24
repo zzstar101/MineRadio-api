@@ -174,11 +174,24 @@ impl ProviderAdapter for SodaAdapter {
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         self.client.ensure_login().await?;
-        self.client
-            .playlist_list()
+        let mut created = self
+            .client
+            .user_playlist_list()
             .await?
             .standardize()
-            .ok_or_else(|| no_result("playlist_list"))
+            .unwrap_or_default();
+        let collected = self
+            .client
+            .user_collected_list()
+            .await?
+            .standardize_playlists()
+            .unwrap_or_default();
+        created.extend(collected);
+        if created.is_empty() {
+            Err(no_result("playlist_list"))
+        } else {
+            Ok(created)
+        }
     }
 
     async fn playlist_detail(
@@ -196,7 +209,11 @@ impl ProviderAdapter for SodaAdapter {
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
         self.client.ensure_login().await?;
-        Ok(self.client.album_list().await?.standardize())
+        self.client
+            .user_collected_list()
+            .await?
+            .standardize_albums()
+            .ok_or_else(|| no_result("playlist_detail"))
     }
 
     async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
