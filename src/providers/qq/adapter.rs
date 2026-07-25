@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crate::{
     parsers::{
@@ -13,19 +16,53 @@ use crate::{
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, VipLevel,
+        TrackQualityAvailability,
     },
     utils::decrypt_qrc,
 };
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{
-    client::QqClient,
-    map::{map_qq_song_to_track, normalize_provider_image_url},
-};
+use super::client::QqClient;
 
-const QQ_QUALITIES: [&str; 5] = ["flac", "ape", "320", "128", "m4a"];
+const QQ_QUALITY_CANDIDATES: [QqQualityCandidate; 5] = [
+    QqQualityCandidate::new("RS01", ".flac", "hires", "Hi-Res FLAC"),
+    QqQualityCandidate::new("F000", ".flac", "lossless", "FLAC"),
+    QqQualityCandidate::new("M800", ".mp3", "exhigh", "320k MP3"),
+    QqQualityCandidate::new("M500", ".mp3", "standard", "128k MP3"),
+    QqQualityCandidate::new("C400", ".m4a", "aac", "AAC/M4A"),
+];
+const QQ_AUDIO_PROBE_TOTAL_TIMEOUT: Duration = Duration::from_millis(6200);
+const QQ_AUDIO_PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2000);
+
+#[derive(Clone, Copy)]
+struct QqQualityCandidate {
+    prefix: &'static str,
+    extension: &'static str,
+    level: &'static str,
+    label: &'static str,
+}
+
+impl QqQualityCandidate {
+    const fn new(
+        prefix: &'static str,
+        extension: &'static str,
+        level: &'static str,
+        label: &'static str,
+    ) -> Self {
+        Self {
+            prefix,
+            extension,
+            level,
+            label,
+        }
+    }
+}
+
+struct QqPlaybackUrl {
+    filename: String,
+    url: String,
+}
 
 #[derive(Clone, Default)]
 pub struct QqAdapter {
@@ -54,7 +91,6 @@ impl ProviderAdapter for QqAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<Vec<Track>> {
-        // 1. 旧搜索端点 shc.y.qq.com（速度快，常用）
         let tracks = self
             .client
             .search(keyword, offset, limit)
@@ -64,14 +100,6 @@ impl ProviderAdapter for QqAdapter {
             return Ok(tracks);
         }
 
-        // 2. smartbox 建议接口兜底
-        let list = self.client.smartbox_search(keyword, limit).await?;
-        let smartbox_tracks: Vec<Track> = list.iter().map(map_qq_song_to_track).collect();
-        if !smartbox_tracks.is_empty() {
-            return Ok(smartbox_tracks);
-        }
-
-        // 3. DoSearchForQQMusicDesktop 多类型搜索（数据更丰富，singer mid / album pmid）
         Ok(self
             .client
             .multi_search_track(keyword, offset, limit)
@@ -118,52 +146,68 @@ impl ProviderAdapter for QqAdapter {
                 .unwrap_or_else(|| "hires".to_owned())
                 .as_str(),
         );
-        let media_mid = track
-            .media_mid
-            .clone()
-            .unwrap_or_else(|| track.source_id.clone());
-        let qualities = candidate_qualities(&requested);
+        let media_mids = qq_media_mids(track);
+        let candidates = qq_filename_candidates(&media_mids, &requested);
+        let filenames = candidates
+            .iter()
+            .map(|candidate| candidate.filename.clone())
+            .collect::<Vec<_>>();
         let cookie = self.client.current_cookie().await.unwrap_or_default();
         let has_cookie = !cookie.trim().is_empty();
         let has_playback_key = QqClient::has_playback_key(&cookie);
-        let mut last_error = None;
-
-        for quality in qualities {
-            let filename = QqClient::filename_for_quality(&media_mid, quality);
-            match self
-                .client
-                .song_url(&track.source_id, quality, &filename)
-                .await
-            {
-                Ok(body) => {
-                    if let Some(url) = qq_song_url_info(&body) {
+        let last_error = match self.client.song_url(&track.source_id, &filenames).await {
+            Ok(body) => {
+                let deadline = Instant::now() + QQ_AUDIO_PROBE_TOTAL_TIMEOUT;
+                for playback in qq_song_url_candidates(&body) {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining < Duration::from_millis(300) {
+                        break;
+                    }
+                    if self
+                        .client
+                        .probe_playback_url(
+                            &playback.url,
+                            remaining.min(QQ_AUDIO_PROBE_ATTEMPT_TIMEOUT),
+                        )
+                        .await
+                    {
+                        let candidate = candidates
+                            .iter()
+                            .find(|candidate| candidate.filename == playback.filename);
                         return Ok(SongUrlResult {
-                            url: Some(url),
+                            url: Some(playback.url),
                             proxied: false,
                             provider: Some(ProviderId::Qq),
                             trial: Some(false),
                             playable: Some(true),
-                            level: Some(quality.to_owned()),
-                            quality: Some(qq_quality_label(quality).to_owned()),
-                            filename: Some(filename),
+                            level: Some(
+                                candidate
+                                    .map(|candidate| candidate.level)
+                                    .unwrap_or(playback.filename.as_str())
+                                    .to_owned(),
+                            ),
+                            quality: Some(
+                                candidate
+                                    .map(|candidate| candidate.label)
+                                    .unwrap_or("QQ")
+                                    .to_owned(),
+                            ),
+                            filename: Some(playback.filename),
                             requested_quality: Some(requested.clone()),
                             expires_at: None,
                             ..Default::default()
                         });
                     }
-                    if let Some(error) = qq_song_url_restriction(
-                        &body,
-                        &track.source_id,
-                        has_cookie,
-                        has_playback_key,
-                    ) {
-                        return Err(error);
-                    }
-                    last_error = Some(format!("no url for quality {quality}"));
                 }
-                Err(err) => last_error = Some(err.message),
+                if let Some(error) =
+                    qq_song_url_restriction(&body, &track.source_id, has_cookie, has_playback_key)
+                {
+                    return Err(error);
+                }
+                "qq song-url returned no verified playback url".to_owned()
             }
-        }
+            Err(err) => err.message,
+        };
 
         if !has_cookie {
             return Err(ProviderError {
@@ -179,8 +223,7 @@ impl ProviderAdapter for QqAdapter {
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
             provider: ProviderId::Qq,
-            message: last_error
-                .unwrap_or_else(|| format!("qq song-url {} returned no url", track.source_id)),
+            message: last_error,
             retryable: false,
             action: None,
             raw_message: None,
@@ -306,46 +349,18 @@ impl ProviderAdapter for QqAdapter {
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
         let cookie = self.client.current_cookie().await;
         let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
-            return Ok(ProviderLoginStatus {
-                provider: ProviderId::Qq,
-                logged_in: false,
-                nickname: None,
-                user_id: None,
-                avatar_url: None,
-                ..Default::default()
-            });
+            return Ok(qq_logged_out_status());
         };
         let euin = self.client.euin().await;
         let Some(euin) = euin else {
-            return Ok(ProviderLoginStatus {
-                provider: ProviderId::Qq,
-                logged_in: true,
-                nickname: None,
-                user_id: None,
-                avatar_url: None,
-                ..Default::default()
-            });
+            return Ok(qq_logged_out_status());
         };
-
-        let vip_info = self.client.vip_info_with_cookie(&euin, &cookie).await.ok();
-        match self.client.login_status_with_cookie(&euin, &cookie).await {
-            Ok(body) => Ok(map_qq_login_status(
-                Some(&body),
-                vip_info.as_ref(),
-                Some(&euin),
-            )),
-            Err(_) => {
-                if let Some(vip_info) = vip_info.as_ref() {
-                    Ok(map_qq_login_status(None, Some(vip_info), Some(&euin)))
-                } else {
-                    Ok(ProviderLoginStatus {
-                        provider: ProviderId::Qq,
-                        logged_in: true,
-                        user_id: Some(euin),
-                        ..Default::default()
-                    })
-                }
-            }
+        match tokio::try_join!(
+            self.client.login_status_with_cookie(&euin, &cookie),
+            self.client.vip_info_with_cookie(&euin, &cookie),
+        ) {
+            Ok((login_status, vip_info)) => Ok(login_status.standardize(vip_info)),
+            Err(_) => Ok(qq_logged_out_status()),
         }
     }
 
@@ -407,62 +422,96 @@ impl ProviderAdapter for QqAdapter {
 
 fn normalize_request_quality(requested: &str) -> String {
     match requested.trim().to_lowercase().as_str() {
-        "jymaster" | "hires" | "lossless" | "sq" => "flac".to_owned(),
-        "exhigh" | "high" | "hq" => "320".to_owned(),
-        "standard" | "normal" | "std" => "128".to_owned(),
-        "aac" => "m4a".to_owned(),
-        other => other.to_owned(),
+        "jymaster" | "master" | "studio" | "svip" => "hires".to_owned(),
+        "hires" | "hi-res" | "highres" | "zhenyin" | "spatial" => "hires".to_owned(),
+        "lossless" | "flac" | "sq" => "lossless".to_owned(),
+        "exhigh" | "high" | "320" | "320k" | "hq" => "exhigh".to_owned(),
+        "standard" | "normal" | "128" | "128k" | "std" => "standard".to_owned(),
+        "aac" | "m4a" => "aac".to_owned(),
+        _ => "hires".to_owned(),
     }
 }
 
-fn candidate_qualities(requested: &str) -> Vec<&'static str> {
-    let start = QQ_QUALITIES
+fn qq_filename_candidates(media_mids: &[String], requested: &str) -> Vec<QqFilenameCandidate> {
+    let start = QQ_QUALITY_CANDIDATES
         .iter()
-        .position(|quality| *quality == requested)
+        .position(|candidate| candidate.level == requested)
         .unwrap_or(0);
-    QQ_QUALITIES[start..].to_vec()
+    media_mids
+        .iter()
+        .flat_map(|media_mid| {
+            QQ_QUALITY_CANDIDATES[start..]
+                .iter()
+                .map(move |candidate| QqFilenameCandidate {
+                    filename: format!("{}{}{}", candidate.prefix, media_mid, candidate.extension),
+                    level: candidate.level,
+                    label: candidate.label,
+                })
+        })
+        .collect()
 }
 
-fn qq_quality_label(quality: &str) -> &'static str {
-    match quality {
-        "flac" => "FLAC",
-        "ape" => "APE",
-        "320" => "320k MP3",
-        "128" => "128k MP3",
-        "m4a" => "AAC",
-        _ => "QQ",
+struct QqFilenameCandidate {
+    filename: String,
+    level: &'static str,
+    label: &'static str,
+}
+
+fn qq_media_mids(track: &Track) -> Vec<String> {
+    let mut ids = Vec::with_capacity(2);
+    if let Some(media_mid) = track
+        .media_mid
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        ids.push(media_mid.to_owned());
     }
+    if !track.source_id.trim().is_empty() && !ids.iter().any(|id| id == &track.source_id) {
+        ids.push(track.source_id.clone());
+    }
+    ids
 }
 
-fn qq_song_url_info(body: &Value) -> Option<String> {
+fn qq_song_url_candidates(body: &Value) -> Vec<QqPlaybackUrl> {
     let data = body
         .get("req_0")
         .and_then(|value| value.get("data"))
-        .or_else(|| body.get("data"))?;
-    let info = data
-        .get("midurlinfo")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items.iter().find(|item| {
-                item.get("purl")
-                    .and_then(Value::as_str)
-                    .map(|value| !value.trim().is_empty())
-                    .unwrap_or(false)
-            })
-        })?;
-    let purl = info.get("purl").and_then(Value::as_str)?.trim();
-    if purl.is_empty() {
-        return None;
-    }
-    if purl.starts_with("http://") || purl.starts_with("https://") {
-        return Some(purl.to_owned());
-    }
-    let sip = data
+        .or_else(|| body.get("data"));
+    let Some(data) = data else {
+        return Vec::new();
+    };
+    let sips = data
         .get("sip")
         .and_then(Value::as_array)
-        .and_then(|items| items.iter().find_map(Value::as_str))
-        .unwrap_or("https://ws.stream.qqmusic.qq.com/");
-    Some(format!("{sip}{purl}"))
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .filter(|items| !items.is_empty())
+        .unwrap_or_else(|| vec!["https://ws.stream.qqmusic.qq.com/"]);
+    data.get("midurlinfo")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|info| {
+            let purl = info.get("purl").and_then(Value::as_str)?.trim();
+            (!purl.is_empty()).then_some((
+                info.get("filename")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                purl,
+            ))
+        })
+        .flat_map(|(filename, purl)| {
+            sips.iter().map(move |sip| QqPlaybackUrl {
+                filename: filename.clone(),
+                url: if purl.starts_with("http://") || purl.starts_with("https://") {
+                    purl.to_owned()
+                } else {
+                    format!("{sip}{purl}")
+                },
+            })
+        })
+        .collect()
 }
 
 fn qq_song_url_restriction(
@@ -617,587 +666,6 @@ fn qq_login_avatar_url(
     .filter(|value| !value.is_empty())
 }
 
-const QQ_VIP_LEVEL_NAMES: [&str; 11] = [
-    "", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾",
-];
-
-fn qq_login_profile_candidates<'a>(
-    body: Option<&'a Value>,
-    vip_info: Option<&'a Value>,
-    fallback_user_id: Option<&str>,
-) -> Vec<&'a Value> {
-    let mut candidates = Vec::new();
-
-    if let Some(vip_info) = vip_info {
-        if let Some(icon_list) = vip_info
-            .get("getVipIcon")
-            .and_then(|value| value.get("data"))
-            .and_then(|value| value.get("UserInfoUI"))
-            .and_then(|value| value.get("iconlist"))
-            .and_then(Value::as_array)
-        {
-            for item in icon_list {
-                push_profile_candidate(&mut candidates, Some(item));
-            }
-        }
-        push_mapped_profile_candidates(
-            &mut candidates,
-            vip_info
-                .get("getVipInfo")
-                .and_then(|value| value.get("data"))
-                .and_then(|value| value.get("infoMap")),
-            fallback_user_id,
-        );
-        push_mapped_profile_candidates(
-            &mut candidates,
-            vip_info
-                .get("getNickHead")
-                .and_then(|value| value.get("data"))
-                .and_then(|value| value.get("map_userinfo")),
-            fallback_user_id,
-        );
-        push_profile_candidate(
-            &mut candidates,
-            vip_info.get("data").and_then(|value| value.get("creator")),
-        );
-        push_profile_candidate(&mut candidates, vip_info.get("creator"));
-        push_profile_candidate(
-            &mut candidates,
-            vip_info.get("data").and_then(|value| value.get("user")),
-        );
-        push_profile_candidate(
-            &mut candidates,
-            vip_info.get("data").and_then(|value| value.get("profile")),
-        );
-        push_profile_candidate(&mut candidates, vip_info.get("user"));
-        push_profile_candidate(&mut candidates, vip_info.get("profile"));
-        push_profile_candidate(&mut candidates, vip_info.get("data"));
-        push_profile_candidate(&mut candidates, Some(vip_info));
-    }
-
-    if let Some(body) = body {
-        push_profile_candidate(
-            &mut candidates,
-            body.get("data").and_then(|value| value.get("creator")),
-        );
-        push_profile_candidate(&mut candidates, body.get("creator"));
-        push_profile_candidate(
-            &mut candidates,
-            body.get("data").and_then(|value| value.get("user")),
-        );
-        push_profile_candidate(
-            &mut candidates,
-            body.get("data").and_then(|value| value.get("profile")),
-        );
-        push_profile_candidate(&mut candidates, body.get("user"));
-        push_profile_candidate(&mut candidates, body.get("profile"));
-        push_profile_candidate(&mut candidates, body.get("data"));
-        push_profile_candidate(&mut candidates, Some(body));
-    }
-
-    candidates
-}
-
-fn push_mapped_profile_candidates<'a>(
-    candidates: &mut Vec<&'a Value>,
-    map: Option<&'a Value>,
-    fallback_user_id: Option<&str>,
-) {
-    let Some(map) = map.and_then(Value::as_object) else {
-        return;
-    };
-    if let Some(user_id) = fallback_user_id {
-        if let Some(value) = map.get(user_id) {
-            push_profile_candidate(candidates, Some(value));
-            return;
-        }
-    }
-    for value in map.values() {
-        push_profile_candidate(candidates, Some(value));
-    }
-}
-
-fn push_profile_candidate<'a>(candidates: &mut Vec<&'a Value>, value: Option<&'a Value>) {
-    let Some(value) = value else {
-        return;
-    };
-    if !value.is_object() {
-        return;
-    }
-    if candidates
-        .iter()
-        .any(|current| std::ptr::eq(*current, value))
-    {
-        return;
-    }
-    candidates.push(value);
-}
-
-fn read_string_field(value: &Value, fields: &[&str]) -> String {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        let text = match value {
-            Value::String(value) => value.trim().to_owned(),
-            Value::Number(value) => value.to_string(),
-            _ => String::new(),
-        };
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    String::new()
-}
-
-fn read_number_field(value: &Value, fields: &[&str]) -> Option<i64> {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        match value {
-            Value::Number(number) => {
-                if let Some(number) = number.as_i64() {
-                    return Some(number);
-                }
-                if let Some(number) = number.as_u64().and_then(|value| i64::try_from(value).ok()) {
-                    return Some(number);
-                }
-            }
-            Value::String(text) => {
-                if let Ok(number) = text.trim().parse::<i64>() {
-                    return Some(number);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn read_flag_field(value: &Value, fields: &[&str]) -> Option<bool> {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        match value {
-            Value::Bool(flag) => return Some(*flag),
-            Value::Number(number) => {
-                if let Some(number) = number.as_i64() {
-                    return Some(number > 0);
-                }
-            }
-            Value::String(text) => {
-                let text = text.trim().to_ascii_lowercase();
-                match text.as_str() {
-                    "1" | "true" | "yes" | "y" => return Some(true),
-                    "0" | "false" | "no" | "n" | "" => return Some(false),
-                    _ => {
-                        if let Ok(number) = text.parse::<i64>() {
-                            return Some(number > 0);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn first_string(candidates: &[&Value], fields: &[&str]) -> String {
-    candidates
-        .iter()
-        .map(|value| read_string_field(value, fields))
-        .find(|value| !value.is_empty())
-        .unwrap_or_default()
-}
-
-fn first_number(candidates: &[&Value], fields: &[&str]) -> Option<i64> {
-    candidates
-        .iter()
-        .find_map(|value| read_number_field(value, fields))
-}
-
-fn first_flag(candidates: &[&Value], fields: &[&str]) -> Option<bool> {
-    candidates
-        .iter()
-        .find_map(|value| read_flag_field(value, fields))
-}
-
-fn vip_level_name_of(tier: Option<i64>) -> Option<String> {
-    let tier = tier?;
-    if tier <= 0 {
-        return None;
-    }
-    QQ_VIP_LEVEL_NAMES
-        .get(tier as usize)
-        .map(|value| (*value).to_owned())
-        .or_else(|| Some(tier.to_string()))
-}
-
-fn parse_vip_tier_from_text(text: &str) -> Option<i64> {
-    let digits = text
-        .split(|ch: char| !ch.is_ascii_digit())
-        .find(|part| !part.is_empty())
-        .and_then(|part| part.parse::<i64>().ok())
-        .filter(|value| *value > 0);
-    if digits.is_some() {
-        return digits;
-    }
-    text.chars().find_map(|ch| match ch {
-        '一' | '壹' => Some(1),
-        '二' | '贰' => Some(2),
-        '三' | '叁' => Some(3),
-        '四' | '肆' => Some(4),
-        '五' | '伍' => Some(5),
-        '六' | '陆' => Some(6),
-        '七' | '柒' => Some(7),
-        '八' | '捌' => Some(8),
-        '九' | '玖' => Some(9),
-        '十' | '拾' => Some(10),
-        _ => None,
-    })
-}
-
-fn append_vip_tier(label: &str, tier_name: Option<&str>) -> String {
-    let Some(tier_name) = tier_name else {
-        return label.to_owned();
-    };
-    if label.is_empty() || label.contains('·') || label.ends_with(tier_name) {
-        return label.to_owned();
-    }
-    format!("{label}·{tier_name}")
-}
-
-fn normalize_vip_icon_url(value: &str) -> Option<String> {
-    let text = value.trim();
-    if text.is_empty() {
-        return None;
-    }
-    if text.starts_with("//") || text.starts_with("http://") || text.starts_with("https://") {
-        return Some(normalize_provider_image_url(text));
-    }
-    if text.starts_with("data:image/") {
-        return Some(text.to_owned());
-    }
-    None
-}
-
-fn qq_vip_badge_icon_from_url(value: &str) -> Option<(String, VipLevel, Option<i64>)> {
-    let url = normalize_vip_icon_url(value)?;
-    let lower = url.to_ascii_lowercase();
-    let marker = lower.rfind('/')?;
-    let tail = &lower[marker + 1..];
-    let (level, len) = if tail.starts_with("svip") {
-        (VipLevel::Svip, 4)
-    } else if tail.starts_with("vip") {
-        (VipLevel::Vip, 3)
-    } else {
-        return None;
-    };
-    let digits = tail[len..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    let tier = digits.parse::<i64>().ok();
-    Some((url, level, tier))
-}
-
-fn first_qq_vip_badge_icon(candidates: &[&Value]) -> Option<(String, VipLevel, Option<i64>)> {
-    for value in candidates {
-        let badge = qq_vip_badge_icon_from_url(&read_string_field(
-            value,
-            &[
-                "srcUrl",
-                "src",
-                "vipIconUrl",
-                "vipIcon",
-                "iconUrl",
-                "iconurl",
-                "iconURL",
-                "icon",
-                "logoUrl",
-                "imgUrl",
-                "imageUrl",
-                "picUrl",
-                "levelIcon",
-            ],
-        ));
-        if badge.is_some() {
-            return badge;
-        }
-    }
-    None
-}
-
-fn qq_official_vip_icon_url(level: &VipLevel, tier: Option<i64>) -> Option<String> {
-    if level == &VipLevel::None {
-        return None;
-    }
-    let badge_tier = tier.unwrap_or(1).clamp(1, 9);
-    Some(format!(
-        "https://y.qq.com/mediastyle/lv-icon/v14/2x/{}{badge_tier}.png",
-        level.as_str()
-    ))
-}
-
-fn map_qq_login_status(
-    body: Option<&Value>,
-    vip_info: Option<&Value>,
-    fallback_user_id: Option<&str>,
-) -> ProviderLoginStatus {
-    let candidates = qq_login_profile_candidates(body, vip_info, fallback_user_id);
-    let mut status = ProviderLoginStatus {
-        provider: ProviderId::Qq,
-        logged_in: true,
-        ..Default::default()
-    };
-
-    let nickname = first_string(&candidates, &["nick", "nickname", "name", "hostname"]);
-    if !nickname.is_empty() {
-        status.nickname = Some(nickname);
-    }
-    let avatar = first_string(
-        &candidates,
-        &[
-            "headpic",
-            "headurl",
-            "avatarUrl",
-            "avatar",
-            "logo",
-            "pic",
-            "picurl",
-            "head_pic",
-            "avatar_url",
-        ],
-    );
-    if let Some(avatar_url) = normalize_vip_icon_url(&avatar) {
-        status.avatar_url = Some(avatar_url);
-    }
-    let user_id = {
-        let mapped = first_string(
-            &candidates,
-            &["userid", "hostuin", "uin", "qq", "id", "musicid"],
-        );
-        if mapped.is_empty() {
-            fallback_user_id.unwrap_or_default().to_owned()
-        } else {
-            mapped
-        }
-    };
-    if !user_id.is_empty() {
-        status.user_id = Some(user_id);
-    }
-
-    apply_qq_vip_status(&mut status, &candidates);
-    status
-}
-
-fn apply_qq_vip_status(status: &mut ProviderLoginStatus, candidates: &[&Value]) {
-    let badge_icon = first_qq_vip_badge_icon(candidates);
-    let explicit_level = first_string(
-        candidates,
-        &[
-            "vipLevel",
-            "level",
-            "vip_level",
-            "vipName",
-            "vip_label",
-            "vipLabel",
-        ],
-    );
-    let explicit_type = first_number(candidates, &["vipType", "vip_type", "iVipType", "type"]);
-    let super_vip = first_flag(
-        candidates,
-        &[
-            "iSuperVip",
-            "iNewSuperVip",
-            "HugeVip",
-            "hugeVip",
-            "iHugeVip",
-            "svip",
-            "superVip",
-            "isSvip",
-            "isSuperVip",
-            "itwelve",
-            "twelve",
-        ],
-    );
-    let normal_vip = first_flag(
-        candidates,
-        &[
-            "iVipFlag",
-            "iNewVip",
-            "iNewVipFlag",
-            "iMusicVip",
-            "iVip",
-            "vipFlag",
-            "vip",
-            "isVip",
-            "ieight",
-            "eight",
-        ],
-    );
-    let super_tier = first_number(
-        candidates,
-        &[
-            "iSuperVipLevel",
-            "iSvipLevel",
-            "iNewSuperVipLevel",
-            "iNewSvipLevel",
-            "superVipLevel",
-            "svipLevel",
-            "itwelveLevel",
-            "twelveLevel",
-            "iCurLevel",
-            "iMusicLevel",
-        ],
-    );
-    let normal_tier = first_number(
-        candidates,
-        &[
-            "iVipLevel",
-            "iNewVipLevel",
-            "vipLevelValue",
-            "vip_level_value",
-            "greenVipLevel",
-            "iGreenVipLevel",
-            "musicVipLevel",
-            "ieightLevel",
-            "eightLevel",
-            "iMusicLevel",
-            "iCurLevel",
-            "iLevel",
-            "level",
-        ],
-    );
-    let vip_icon_url = normalize_vip_icon_url(&first_string(
-        candidates,
-        &[
-            "vipIconUrl",
-            "vipIcon",
-            "iconUrl",
-            "iconurl",
-            "iconURL",
-            "icon",
-            "logoUrl",
-            "imgUrl",
-            "imageUrl",
-            "picUrl",
-            "levelIcon",
-        ],
-    ));
-
-    let saw_vip_signal = !explicit_level.is_empty()
-        || explicit_type.is_some()
-        || super_vip.is_some()
-        || normal_vip.is_some()
-        || super_tier.is_some()
-        || normal_tier.is_some()
-        || vip_icon_url.is_some()
-        || badge_icon.is_some();
-    if !saw_vip_signal {
-        return;
-    }
-
-    let lower_level = explicit_level.to_ascii_lowercase();
-    let level = if let Some((_, badge_level, _)) = badge_icon.as_ref() {
-        badge_level.clone()
-    } else if lower_level.contains("svip")
-        || lower_level.contains("super")
-        || lower_level.contains("超级会员")
-        || super_vip == Some(true)
-        || explicit_type.unwrap_or_default() >= 10
-    {
-        VipLevel::Svip
-    } else if lower_level.contains("vip")
-        || lower_level.contains("绿钻")
-        || lower_level.contains("豪华")
-        || lower_level.contains("付费")
-        || lower_level.contains("会员")
-        || normal_vip == Some(true)
-        || explicit_type.unwrap_or_default() > 0
-    {
-        VipLevel::Vip
-    } else {
-        VipLevel::None
-    };
-
-    let usable_explicit_label = if !explicit_level.is_empty()
-        && !matches!(
-            explicit_level.to_ascii_lowercase().as_str(),
-            "0" | "1" | "true" | "false" | "vip" | "svip" | "none"
-        )
-        && (explicit_level.to_ascii_lowercase().contains("vip")
-            || explicit_level.contains("svip")
-            || explicit_level.contains("绿钻")
-            || explicit_level.contains("豪华")
-            || explicit_level.contains("会员")
-            || explicit_level.to_ascii_lowercase().contains("super"))
-    {
-        explicit_level
-            .replace(char::is_whitespace, "")
-            .replace("绿钻豪华版", "豪华绿钻")
-    } else {
-        String::new()
-    };
-
-    let fallback_tier = if level == VipLevel::Svip {
-        super_tier
-            .or(normal_tier)
-            .or_else(|| parse_vip_tier_from_text(&explicit_level))
-    } else if level == VipLevel::Vip {
-        normal_tier.or_else(|| parse_vip_tier_from_text(&explicit_level))
-    } else {
-        None
-    };
-    let tier = badge_icon
-        .as_ref()
-        .and_then(|(_, _, tier)| *tier)
-        .or(fallback_tier);
-    let tier_name = vip_level_name_of(tier);
-    let base_label = if !usable_explicit_label.is_empty() {
-        usable_explicit_label
-    } else if level == VipLevel::Svip {
-        "超级会员".to_owned()
-    } else if level == VipLevel::Vip {
-        "豪华绿钻".to_owned()
-    } else {
-        "未开通".to_owned()
-    };
-    let label = append_vip_tier(&base_label, tier_name.as_deref());
-    let resolved_vip_icon_url = badge_icon
-        .as_ref()
-        .map(|(url, _, _)| url.clone())
-        .or(vip_icon_url)
-        .or_else(|| qq_official_vip_icon_url(&level, tier));
-
-    status.vip_type = Some(explicit_type.unwrap_or_else(|| {
-        if level == VipLevel::Svip {
-            11
-        } else if level == VipLevel::Vip {
-            1
-        } else {
-            0
-        }
-    }));
-    status.vip_level = Some(level.clone());
-    status.is_vip = Some(level != VipLevel::None);
-    status.is_svip = Some(level == VipLevel::Svip);
-    status.vip_label = Some(label);
-    status.vip_icon = if level == VipLevel::Svip {
-        Some("qq-super-vip".to_owned())
-    } else if level == VipLevel::Vip {
-        Some("qq-green-vip".to_owned())
-    } else {
-        None
-    };
-    status.vip_icon_url = resolved_vip_icon_url;
-    status.vip_tier = tier;
-    status.vip_level_name = tier_name;
-}
-
 fn no_result(action: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
@@ -1206,6 +674,14 @@ fn no_result(action: &str) -> ProviderError {
         retryable: false,
         action: Some(action.to_string()),
         raw_message: None,
+    }
+}
+
+fn qq_logged_out_status() -> ProviderLoginStatus {
+    ProviderLoginStatus {
+        provider: ProviderId::Qq,
+        logged_in: false,
+        ..Default::default()
     }
 }
 
@@ -1225,9 +701,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        map_qq_login_status, qq_login_avatar_url, qq_login_nickname, qq_song_url_restriction,
+        qq_filename_candidates, qq_login_avatar_url, qq_login_nickname, qq_song_url_candidates,
+        qq_song_url_restriction,
     };
-    use crate::{providers::error::ProviderErrorCode, types::VipLevel};
+    use crate::providers::error::ProviderErrorCode;
 
     #[test]
     fn qq_song_url_restriction_maps_missing_playback_key() {
@@ -1248,83 +725,58 @@ mod tests {
     }
 
     #[test]
-    fn qq_login_status_maps_super_vip_payload() {
-        let body = json!({
-            "data": {
-                "mymusic": [],
-                "mydiss": []
-            }
-        });
-        let vip = json!({
-            "getVipInfo": {
-                "data": {
-                    "infoMap": {
-                        "123": {
-                            "iVipFlag": 1,
-                            "iSuperVip": 1,
-                            "iSuperVipLevel": 5,
-                            "iconUrl": "//y.qq.com/super-vip.png"
-                        }
-                    }
-                }
-            },
-            "getNickHead": {
-                "data": {
-                    "map_userinfo": {
-                        "123": {
-                            "nick": "绿钻用户",
-                            "headurl": "http://q.qlogo.cn/head.jpg"
-                        }
-                    }
-                }
-            }
-        });
-        let status = map_qq_login_status(Some(&body), Some(&vip), Some("123"));
-        assert_eq!(status.nickname.as_deref(), Some("绿钻用户"));
+    fn qq_filename_candidates_try_media_mid_before_song_mid() {
+        let candidates =
+            qq_filename_candidates(&["media-mid".to_owned(), "song-mid".to_owned()], "hires");
+        let filenames = candidates
+            .into_iter()
+            .map(|candidate| candidate.filename)
+            .collect::<Vec<_>>();
+
         assert_eq!(
-            status.avatar_url.as_deref(),
-            Some("https://q.qlogo.cn/head.jpg")
+            filenames,
+            vec![
+                "RS01media-mid.flac",
+                "F000media-mid.flac",
+                "M800media-mid.mp3",
+                "M500media-mid.mp3",
+                "C400media-mid.m4a",
+                "RS01song-mid.flac",
+                "F000song-mid.flac",
+                "M800song-mid.mp3",
+                "M500song-mid.mp3",
+                "C400song-mid.m4a",
+            ]
         );
-        assert_eq!(status.user_id.as_deref(), Some("123"));
-        assert_eq!(status.vip_type, Some(11));
-        assert_eq!(status.vip_level, Some(VipLevel::Svip));
-        assert_eq!(status.is_vip, Some(true));
-        assert_eq!(status.is_svip, Some(true));
-        assert_eq!(status.vip_label.as_deref(), Some("超级会员·伍"));
-        assert_eq!(status.vip_icon.as_deref(), Some("qq-super-vip"));
-        assert_eq!(
-            status.vip_icon_url.as_deref(),
-            Some("https://y.qq.com/super-vip.png")
-        );
-        assert_eq!(status.vip_tier, Some(5));
-        assert_eq!(status.vip_level_name.as_deref(), Some("伍"));
     }
 
     #[test]
-    fn qq_login_status_uses_official_badge_icon_fallback() {
-        let vip = json!({
-            "getVipInfo": {
+    fn qq_song_url_candidates_try_every_sip_in_response_order() {
+        let body = json!({
+            "req_0": {
                 "data": {
-                    "infoMap": {
-                        "123": {
-                            "iNewVip": 1,
-                            "iNewSuperVip": 1,
-                            "iCurLevel": 6,
-                            "sIcon": "placeholder"
-                        }
-                    }
+                    "sip": ["https://first/", "https://second/"],
+                    "midurlinfo": [
+                        {"filename": "F000one.flac", "purl": "one"},
+                        {"filename": "M800two.mp3", "purl": "two"}
+                    ]
                 }
             }
         });
-        let status = map_qq_login_status(None, Some(&vip), Some("123"));
-        assert_eq!(status.vip_level, Some(VipLevel::Svip));
-        assert_eq!(status.vip_label.as_deref(), Some("超级会员·陆"));
+        let urls = qq_song_url_candidates(&body)
+            .into_iter()
+            .map(|candidate| (candidate.filename, candidate.url))
+            .collect::<Vec<_>>();
+
         assert_eq!(
-            status.vip_icon_url.as_deref(),
-            Some("https://y.qq.com/mediastyle/lv-icon/v14/2x/svip6.png")
+            urls,
+            vec![
+                ("F000one.flac".to_owned(), "https://first/one".to_owned()),
+                ("F000one.flac".to_owned(), "https://second/one".to_owned()),
+                ("M800two.mp3".to_owned(), "https://first/two".to_owned()),
+                ("M800two.mp3".to_owned(), "https://second/two".to_owned()),
+            ]
         );
-        assert_eq!(status.vip_tier, Some(6));
-        assert_eq!(status.vip_level_name.as_deref(), Some("陆"));
     }
 
     #[test]

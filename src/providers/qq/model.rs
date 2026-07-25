@@ -1,8 +1,9 @@
+use regex::Regex;
 use serde::Deserialize;
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track,
-    TrackQualityAvailability, TrackQualityOption,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
+    ProviderLoginStatus, Track, TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
 
 #[derive(Debug, Deserialize)]
@@ -170,7 +171,7 @@ struct QqPlaylistList1Playlist {
 }
 
 #[derive(Deserialize)]
-pub struct QqPlaylistList2Resp {
+pub(super) struct QqPlaylistList2Resp {
     req_0: QqPlaylistList2Req,
 }
 
@@ -196,12 +197,12 @@ impl QqPlaylistList2Resp {
 }
 
 #[derive(Deserialize)]
-pub struct QqPlaylistList2Req {
+struct QqPlaylistList2Req {
     data: QqPlaylistList2Data,
 }
 
 #[derive(Deserialize)]
-pub struct QqPlaylistList2Data {
+struct QqPlaylistList2Data {
     //number: i64,
     //hasmore: i64,
     v_list: Vec<QqPlaylistList2Playlist>,
@@ -209,7 +210,7 @@ pub struct QqPlaylistList2Data {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QqPlaylistList2Playlist {
+struct QqPlaylistList2Playlist {
     tid: i64,
     //dir_id: i64,
     name: String,
@@ -476,84 +477,6 @@ struct QqAlbumDetailArtists {
     singer_list: Vec<Identified>,
 }
 
-//Reusable Struct
-#[derive(Debug, Deserialize)]
-struct File {
-    //HQ旧值
-    size_320mp3: i64,
-
-    size_ape: i64,
-    //SQ无损
-    size_flac: i64,
-
-    size_128mp3: i64,
-    //两个同时作为标准音质判断
-    size_96ogg: i64,
-
-    size_96aac: i64,
-    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效, 待其他迁移后检查音质具体标签
-    //size_new: Vec<i64>,
-}
-
-impl File {
-    fn standardize(self, id: Option<String>) -> Vec<TrackQualityOption> {
-        let mut v: Vec<String> = Vec::new();
-        if self.size_flac != 0 {
-            v.push("flac".to_string());
-        }
-        if self.size_320mp3 != 0 {
-            v.push("320".to_string());
-        }
-        if self.size_ape != 0 {
-            v.push("ape".to_string());
-        }
-        if self.size_128mp3 != 0 {
-            v.push("128".to_string());
-        }
-        if self.size_96aac != 0 || self.size_96ogg != 0 {
-            v.push("aac".to_string());
-        }
-        v.into_iter()
-            .map(|quality| TrackQualityOption {
-                provider: ProviderId::Qq,
-                label: qq_quality_label(&quality).to_owned(),
-                id: id.clone().unwrap_or(quality.clone()),
-                request_quality: quality.clone(),
-                level: Some(quality.clone()),
-                source: "declared".to_owned(),
-                ..Default::default()
-            })
-            .collect()
-    }
-}
-
-fn qq_quality_label(quality: &str) -> &'static str {
-    match quality {
-        "flac" => "FLAC",
-        "ape" => "APE",
-        "320" => "320k MP3",
-        "128" => "128k MP3",
-        "m4a" => "AAC",
-        _ => "QQ",
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct Album {
-    //id: i64,
-    mid: String,
-    name: String,
-    songnum: Option<u32>,
-    #[serde(alias = "v_singer")]
-    singer: Vec<Identified>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Identified {
-    pub mid: String,
-    pub name: String,
-}
-
 // ── DoSearchForQQMusicDesktop 多类型搜索响应（参考 netease-qq-music-api）──
 
 #[derive(Debug, Deserialize)]
@@ -569,7 +492,6 @@ struct QqMultiSearchResult {
 #[derive(Debug, Deserialize)]
 struct QqMultiSearchData {
     body: QqMultiSearchBody,
-    meta: QqMultiSearchMeta,
 }
 
 #[derive(Debug, Deserialize)]
@@ -598,12 +520,6 @@ struct QqMultiSearchSonglistSection {
 }
 
 #[derive(Debug, Deserialize)]
-struct QqMultiSearchMeta {
-    #[serde(default)]
-    nextpage: i32,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqMultiSearchSong {
     mid: String,
@@ -615,7 +531,6 @@ struct QqMultiSearchSong {
 
 #[derive(Debug, Deserialize)]
 struct QqMultiSearchSinger {
-    mid: String,
     name: String,
 }
 
@@ -633,8 +548,6 @@ struct QqMultiSearchAlbum {
     album_mid: String,
     album_name: String,
     album_pic: Option<String>,
-    #[serde(rename = "singerMID")]
-    singer_mid: Option<String>,
     singer_name: Option<String>,
 }
 
@@ -729,8 +642,234 @@ impl QqMultiSearchResp {
             .collect();
         if v.is_empty() { None } else { Some(v) }
     }
+}
 
-    pub(super) fn has_more(&self) -> bool {
-        self.result.data.meta.nextpage > 0
+#[derive(Deserialize)]
+pub(super) struct QqLoginStatusResp {
+    data: QqLoginStatusData,
+}
+
+impl QqLoginStatusResp {
+    pub(super) fn standardize(self, vip_icon_response: QqVipIconResp) -> ProviderLoginStatus {
+        let creator = self.data.creator;
+        let user_id = creator.encrypt_uin.trim().to_owned();
+        let mut status = ProviderLoginStatus {
+            provider: ProviderId::Qq,
+            logged_in: !user_id.is_empty(),
+            ..Default::default()
+        };
+
+        if !creator.nick.trim().is_empty() {
+            status.nickname = Some(creator.nick);
+        }
+        status.avatar_url = (!creator.headpic.is_empty()).then_some(creator.headpic);
+        if !user_id.is_empty() {
+            status.user_id = Some(user_id.clone());
+        }
+        let mut expired_vip_icon = None;
+        let mut active_vip_icon = None;
+        for icon in &vip_icon_response.get_vip_icon.data.user_info_ui.iconlist {
+            match vip_badge_icon(&icon.src_url) {
+                Some(icon @ VipBadgeIcon::Active { .. }) => {
+                    active_vip_icon = Some(icon);
+                    break;
+                }
+                Some(icon @ VipBadgeIcon::Expired { .. }) => expired_vip_icon = Some(icon),
+                None => {}
+            }
+        }
+
+        apply_vip_icon_status(&mut status, active_vip_icon.or(expired_vip_icon));
+        status
     }
+
+    pub(super) fn encrypted_uin(&self) -> String {
+        self.data.creator.encrypt_uin.clone()
+    }
+}
+
+#[derive(Deserialize)]
+struct QqLoginStatusData {
+    creator: QqLoginProfile,
+}
+
+#[derive(Deserialize)]
+struct QqLoginProfile {
+    nick: String,
+    headpic: String,
+    encrypt_uin: String,
+}
+
+#[derive(Deserialize)]
+struct QqVipIconUserInfo {
+    iconlist: Vec<QqVipIconItem>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QqVipIconItem {
+    src_url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct QqVipIconResp {
+    get_vip_icon: QqVipIconPayload,
+}
+
+#[derive(Deserialize)]
+struct QqVipIconPayload {
+    data: QqVipIconData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct QqVipIconData {
+    #[serde(rename = "UserInfoUI")]
+    user_info_ui: QqVipIconUserInfo,
+}
+
+enum VipBadgeIcon {
+    Active {
+        url: String,
+        level: VipLevel,
+        tier: i64,
+    },
+    Expired {
+        url: String,
+    },
+}
+
+fn apply_vip_icon_status(status: &mut ProviderLoginStatus, badge_icon: Option<VipBadgeIcon>) {
+    match badge_icon {
+        Some(VipBadgeIcon::Active { url, level, tier }) => {
+            status.vip_type = Some(if level == VipLevel::Svip { 11 } else { 1 });
+            status.vip_level = Some(level.clone());
+            status.is_vip = Some(true);
+            status.is_svip = Some(level == VipLevel::Svip);
+            status.vip_label = Some(
+                match level {
+                    VipLevel::Svip => "QQ SVIP",
+                    VipLevel::Vip => "QQ VIP",
+                    VipLevel::None => unreachable!(),
+                }
+                .to_owned(),
+            );
+            status.vip_icon = Some(
+                match level {
+                    VipLevel::Svip => "qq-super-vip",
+                    VipLevel::Vip => "qq-green-vip",
+                    VipLevel::None => unreachable!(),
+                }
+                .to_owned(),
+            );
+            status.vip_icon_url = Some(url);
+            status.vip_tier = Some(tier);
+            status.vip_level_name = Some(tier.to_string());
+        }
+        Some(VipBadgeIcon::Expired { url }) => status.vip_icon_url = Some(url),
+        None => {}
+    }
+}
+
+fn vip_badge_icon(value: &str) -> Option<VipBadgeIcon> {
+    const VIP_ICON_PREFIX: &str = "https://y.qq.com/mediastyle/lv-icon/v14/2x/";
+    let url = value.trim();
+    let filename = url.strip_prefix(VIP_ICON_PREFIX)?;
+    let pattern = Regex::new(r"^(?P<expired>d-)?(?P<kind>svip|vip)(?P<tier>\d+)\.png$").ok()?;
+    let captures = pattern.captures(filename)?;
+    if captures.name("expired").is_some() {
+        return Some(VipBadgeIcon::Expired {
+            url: url.to_owned(),
+        });
+    }
+    let level = match captures.name("kind")?.as_str() {
+        "svip" => VipLevel::Svip,
+        "vip" => VipLevel::Vip,
+        _ => return None,
+    };
+    let tier = captures.name("tier")?.as_str().parse().ok()?;
+    Some(VipBadgeIcon::Active {
+        url: url.to_owned(),
+        level,
+        tier,
+    })
+}
+
+//Reusable Struct
+#[derive(Debug, Deserialize)]
+struct File {
+    //HQ旧值
+    size_320mp3: i64,
+
+    size_ape: i64,
+    //SQ无损
+    size_flac: i64,
+
+    size_128mp3: i64,
+    //两个同时作为标准音质判断
+    size_96ogg: i64,
+
+    size_96aac: i64,
+    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效, 待其他迁移后检查音质具体标签
+    //size_new: Vec<i64>,
+}
+
+impl File {
+    fn standardize(self, id: Option<String>) -> Vec<TrackQualityOption> {
+        let mut v: Vec<String> = Vec::new();
+        if self.size_flac != 0 {
+            v.push("flac".to_string());
+        }
+        if self.size_320mp3 != 0 {
+            v.push("320".to_string());
+        }
+        if self.size_ape != 0 {
+            v.push("ape".to_string());
+        }
+        if self.size_128mp3 != 0 {
+            v.push("128".to_string());
+        }
+        if self.size_96aac != 0 || self.size_96ogg != 0 {
+            v.push("aac".to_string());
+        }
+        v.into_iter()
+            .map(|quality| TrackQualityOption {
+                provider: ProviderId::Qq,
+                label: qq_quality_label(&quality).to_owned(),
+                id: id.clone().unwrap_or(quality.clone()),
+                request_quality: quality.clone(),
+                level: Some(quality.clone()),
+                source: "declared".to_owned(),
+                ..Default::default()
+            })
+            .collect()
+    }
+}
+
+fn qq_quality_label(quality: &str) -> &'static str {
+    match quality {
+        "flac" => "FLAC",
+        "ape" => "APE",
+        "320" => "320k MP3",
+        "128" => "128k MP3",
+        "m4a" => "AAC",
+        _ => "QQ",
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct Album {
+    //id: i64,
+    mid: String,
+    name: String,
+    songnum: Option<u32>,
+    #[serde(alias = "v_singer")]
+    singer: Vec<Identified>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Identified {
+    pub mid: String,
+    pub name: String,
 }
