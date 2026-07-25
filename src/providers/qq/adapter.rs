@@ -249,15 +249,8 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        let cookie = self.client.current_cookie().await;
-        let Some(_) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
-            return Ok(Vec::new());
-        };
-        let euin = self.client.euin().await;
-
-        let Some(euin) = euin else {
-            return Ok(Vec::new());
-        };
+        self.client.ensure_login().await?;
+        let euin = self.client.euin().await.unwrap_or_default();
         let uin = self.client.uin().await.unwrap_or_default();
         let created = self
             .client
