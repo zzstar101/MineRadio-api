@@ -152,6 +152,7 @@ impl SodaPlaylistListResp {
 
 #[derive(Deserialize)]
 pub(super) struct SodaPlaylistDetailResp {
+    has_more: Option<bool>,
     //next_cursor: Option<String>,
     playlist: SodaPlaylist,
 
@@ -177,7 +178,7 @@ impl SodaPlaylistDetailResp {
                 track_count: p.count_tracks,
                 track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
                 collected: p.state.and_then(|s| s.is_collected),
-                has_more: None,
+                has_more: self.has_more,
                 tracks,
             })
         }
