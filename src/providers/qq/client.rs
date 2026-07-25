@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::Context;
 use reqwest::{
     Client,
@@ -72,7 +74,7 @@ impl QqClient {
         }
 
         let cookie = self.current_cookie().await?;
-        let uin = qq_user_id_from_cookie_map(&parse_cookie(&cookie))?;
+        let uin = uin_from_cookie_map(&parse_cookie(&cookie))?;
 
         *self.uin.write().await = Some(uin.clone());
         Some(uin)
@@ -84,8 +86,12 @@ impl QqClient {
         }
 
         let cookie = self.current_cookie().await?;
-        let uin = self.uin().await?;
+        if let Some(euin) = euin_from_cookie_map(&parse_cookie(&cookie)) {
+            self.set_euin(euin.clone()).await;
+            return Some(euin);
+        }
 
+        let uin = self.uin().await?;
         let _ = self.login_status_with_cookie(&uin, &cookie).await;
         if let Some(euin) = self.euin.read().await.clone() {
             return Some(euin);
@@ -615,10 +621,17 @@ impl QqClient {
         action: &str,
     ) -> ProviderResult<T> {
         let sign = self.get_sign(body)?;
+
+        let now = SystemTime::now();
+        let since_epoch = now
+            .duration_since(UNIX_EPOCH)
+            .expect("系统时间早于 UNIX 纪元");
+        let millis = since_epoch.as_secs() * 1000 + since_epoch.subsec_millis() as u64;
+
         let response = self
             .http
             .post("https://u.y.qq.com/cgi-bin/musics.fcg")
-            .query(&[("sign", sign.as_str())])
+            .query(&[("sign", sign.as_str()), ("_", &millis.to_string())])
             .headers(build_headers(referer, cookie, false)?)
             .json(&body)
             .send()
@@ -781,30 +794,45 @@ fn parse_cookie(cookie: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
-fn qq_user_id_from_cookie_map(
+fn uin_from_cookie_map(
     cookie: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
+    //login_type 微信1 qq2 qq音乐3
     let login_type = cookie
         .get("login_type")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or_default();
-    let raw = if login_type == 2 {
-        cookie
-            .get("wxuin")
-            .or_else(|| cookie.get("uin"))
-            .or_else(|| cookie.get("p_uin"))
+    let raw = if login_type != 1 {
+        cookie.get("uin")
     } else {
         cookie
-            .get("uin")
-            .or_else(|| cookie.get("qqmusic_uin"))
+            .get("qqmusic_uin")
             .or_else(|| cookie.get("wxuin"))
             .or_else(|| cookie.get("p_uin"))
+            .or_else(|| cookie.get("uin"))
     }?;
     let digits = raw
         .chars()
         .filter(|ch| ch.is_ascii_digit())
         .collect::<String>();
     (!digits.is_empty()).then_some(digits)
+}
+
+fn euin_from_cookie_map(
+    cookie: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    //login_type 微信1 qq2 qq音乐3
+    let login_type = cookie
+        .get("login_type")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    if login_type != 1 {
+        cookie.get("euin")
+    } else {
+        cookie
+            .get("encrypt_uin")
+            .or_else(|| cookie.get("euin"))
+    }.map(|e| e.to_owned())
 }
 
 fn qq_login_status_euin(body: &Value) -> Option<String> {
@@ -878,14 +906,14 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use super::{QqClient, parse_cookie, qq_user_id_from_cookie_map};
+    use super::{QqClient, parse_cookie, uin_from_cookie_map};
 
     #[test]
     fn cookie_user_id_is_normalized() {
         let cookie = parse_cookie("uin=o0012345; login_type=1");
 
         assert_eq!(
-            qq_user_id_from_cookie_map(&cookie).as_deref(),
+            uin_from_cookie_map(&cookie).as_deref(),
             Some("0012345")
         );
     }
