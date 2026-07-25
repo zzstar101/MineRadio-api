@@ -283,7 +283,7 @@ impl ProviderAdapter for QqAdapter {
                 .unwrap_or(false)
         });
         Ok(LyricPayload {
-            provider: ProviderId::Soda,
+            provider: ProviderId::Qq,
             track_id: track.id.clone(),
             lines,
             has_translation,

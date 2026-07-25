@@ -608,7 +608,6 @@ impl QqClient {
         action: &str,
     ) -> ProviderResult<T> {
         let sign = self.get_sign(body)?;
-        println!("body:{body:?}");
         let now = SystemTime::now();
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
@@ -630,7 +629,6 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
-        println!("{}", String::from_utf8_lossy(&raw));
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,
