@@ -632,11 +632,18 @@ impl ProviderAdapter for NeteaseAdapter {
         Ok(song_like_check_ack(&clean_ids, &liked_ids))
     }
 
-    async fn add_song_to_playlist(
+    async fn update_song_in_playlist(
         &self,
         playlist_id: &str,
         track_id: &str,
+        adding: bool,
     ) -> ProviderResult<PlaylistAddSongAck> {
+        if !adding {
+            return Err(ProviderError::not_implemented(
+                ProviderId::Netease,
+                "del_from_playlist",
+            ));
+        }
         //未测试
         self.client.ensure_login().await?;
         let primary = self.client.playlist_tracks(playlist_id, track_id).await?;

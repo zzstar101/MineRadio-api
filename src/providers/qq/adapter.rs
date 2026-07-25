@@ -392,11 +392,10 @@ impl ProviderAdapter for QqAdapter {
             action: Some("refresh_playlists".to_owned()),
             raw_message: None,
         })?;
-        let body = if liked {
-            self.client.add_song_to_playlist(dirid, id).await?
-        } else {
-            self.client.remove_song_from_playlist(dirid, id).await?
-        };
+        let body = self
+            .client
+            .update_song_in_playlist(dirid, id, liked)
+            .await?;
         if body.succeeded() {
             return Ok(SongLikeAck {
                 provider: ProviderId::Qq,
@@ -415,10 +414,11 @@ impl ProviderAdapter for QqAdapter {
         })
     }
 
-    async fn add_song_to_playlist(
+    async fn update_song_in_playlist(
         &self,
         tid: &str,
         track_id: &str,
+        adding: bool,
     ) -> ProviderResult<PlaylistAddSongAck> {
         self.client.ensure_login().await?;
         let tid = tid.parse::<u64>().map_err(|_| ProviderError {
@@ -443,8 +443,10 @@ impl ProviderAdapter for QqAdapter {
                 action: Some("refresh_playlists".to_owned()),
                 raw_message: None,
             })?;
-        let song_id = track_id;
-        let body = self.client.add_song_to_playlist(dirid, song_id).await?;
+        let body = self
+            .client
+            .update_song_in_playlist(dirid, track_id, adding)
+            .await?;
         if body.succeeded() {
             return Ok(PlaylistAddSongAck {
                 provider: ProviderId::Qq,
@@ -457,7 +459,12 @@ impl ProviderAdapter for QqAdapter {
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
             provider: ProviderId::Qq,
-            message: "qq add-song failed".to_owned(),
+            message: if adding {
+                "qq add-song failed"
+            } else {
+                "qq del-song failed"
+            }
+            .to_owned(),
             retryable: false,
             action: None,
             raw_message: None,

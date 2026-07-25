@@ -156,14 +156,15 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn add_song_to_playlist(
+    async fn update_song_in_playlist(
         &self,
         _playlist_id: &str,
         _track_id: &str,
+        _adding: bool,
     ) -> ProviderResult<PlaylistAddSongAck> {
         Err(error::ProviderError::not_implemented(
             self.id(),
-            "add_to_playlist",
+            "update_playlist_song",
         ))
     }
 

@@ -146,6 +146,10 @@ pub fn build(state: AppState) -> Router {
             "/providers/{pid}/playlists/add-song",
             post(provider_playlist_add_song).options(preflight),
         )
+        .route(
+            "/providers/{pid}/playlists/del-song",
+            post(provider_playlist_del_song).options(preflight),
+        )
         .fallback(fallback)
         .with_state(state)
 }
@@ -949,7 +953,27 @@ async fn provider_playlist_add_song(
         return unavailable_provider(provider_id);
     };
     match provider
-        .add_song_to_playlist(&body.playlist_id, &body.track_id)
+        .update_song_in_playlist(&body.playlist_id, &body.track_id, true)
+        .await
+    {
+        Ok(result) => ok(result),
+        Err(err) => provider_error_response(err),
+    }
+}
+
+async fn provider_playlist_del_song(
+    State(state): State<AppState>,
+    Path(pid): Path<String>,
+    axum::Json(body): axum::Json<PlaylistAddSongBody>,
+) -> Response {
+    let Ok(provider_id) = pid.parse::<ProviderId>() else {
+        return unknown_provider(&pid);
+    };
+    let Some(provider) = state.providers.get(&provider_id) else {
+        return unavailable_provider(provider_id);
+    };
+    match provider
+        .update_song_in_playlist(&body.playlist_id, &body.track_id, false)
         .await
     {
         Ok(result) => ok(result),

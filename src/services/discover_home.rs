@@ -718,10 +718,11 @@ mod tests {
             Ok(SongLikeCheckAck::default())
         }
 
-        async fn add_song_to_playlist(
+        async fn update_song_in_playlist(
             &self,
             _playlist_id: &str,
             _track_id: &str,
+            _adding: bool,
         ) -> ProviderResult<PlaylistAddSongAck> {
             Ok(PlaylistAddSongAck::default())
         }

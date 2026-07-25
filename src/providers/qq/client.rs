@@ -538,22 +538,14 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn add_song_to_playlist(
+    pub(super) async fn update_song_in_playlist(
         &self,
         dir_id: u64,
         track_id: &str,
+        adding: bool,
     ) -> ProviderResult<QqPlaylistSongWriteResp> {
-        self.write_playlist_song("AddSonglist", dir_id, track_id)
-            .await
-    }
-
-    pub(super) async fn remove_song_from_playlist(
-        &self,
-        dir_id: u64,
-        track_id: &str,
-    ) -> ProviderResult<QqPlaylistSongWriteResp> {
-        self.write_playlist_song("DelSonglist", dir_id, track_id)
-            .await
+        let method = if adding { "AddSonglist" } else { "DelSonglist" };
+        self.write_playlist_song(method, dir_id, track_id).await
     }
 
     async fn write_playlist_song(
@@ -595,7 +587,6 @@ impl QqClient {
         action: &str,
     ) -> ProviderResult<T> {
         let sign = self.get_sign(body)?;
-        println!("{body}");
         let now = SystemTime::now();
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
@@ -617,7 +608,6 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
-        println!("{}", String::from_utf8_lossy(&raw));
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,
