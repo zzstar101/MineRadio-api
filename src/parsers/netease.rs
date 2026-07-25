@@ -2,9 +2,7 @@ use crate::parsers::{MemchrParsers, lrc::*};
 use memchr::{memchr, memchr2};
 
 ///网易LRC歌词解析器
-pub struct NeteaseLrcParser {
-    pub version: u8,
-}
+pub struct NeteaseLrcParser {}
 impl LrcParser for NeteaseLrcParser {
     fn parse_lrc_time(&self, tag: &str) -> Result<u64, String> {
         let tbytes = tag.as_bytes();

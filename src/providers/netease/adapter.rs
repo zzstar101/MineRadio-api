@@ -432,7 +432,7 @@ impl ProviderAdapter for NeteaseAdapter {
         let yrc_text = resp.yrc.lyric.unwrap_or_default();
 
         let trans = (!tlyric_text.is_empty())
-            .then(|| NeteaseLrcParser { version: 0 }.parse(tlyric_text).ok())
+            .then(|| NeteaseLrcParser {}.parse(tlyric_text).ok())
             .flatten()
             .map(|t| {
                 t.into_iter()
@@ -446,7 +446,7 @@ impl ProviderAdapter for NeteaseAdapter {
                     .parse(yrc_text)
                     .map_err(|e| invalid_response(e))?
             } else {
-                NeteaseLrcParser { version: 0 }
+                NeteaseLrcParser {}
                     .parse(lrc_text)
                     .map_err(|e| invalid_response(e))?
             };
