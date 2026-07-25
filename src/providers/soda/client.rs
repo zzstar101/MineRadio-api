@@ -1,10 +1,10 @@
 use anyhow::Context;
 use reqwest::{
     Client,
-    header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue},
+    header::{COOKIE, HeaderMap, HeaderValue},
 };
-use serde::de::DeserializeOwned;
-use serde_json::json;
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde_json::{Value, json};
 
 use crate::providers::{
     ProviderId, ProviderResult,
@@ -27,9 +27,12 @@ const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=tra
 const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=386088";
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
 const ME_URL: &str = "https://api.qishui.com/luna/pc/me?aid=386088&version_code=30050100";
-const COLLECTION_MEDIA_URL: &str = "https://api.qishui.com/luna/pc/me/collection/media?aid=386088";
+const COLLECTION_MEDIA_APPEND_URL: &str =
+    "https://api.qishui.com/luna/pc/me/collection/media/append?aid=386088";
 const COLLECTION_MEDIA_DELETE_URL: &str =
     "https://api.qishui.com/luna/pc/me/collection/media/delete?aid=386088";
+const PLAYLIST_MEDIA_URL: &str = "https://api.qishui.com/luna/pc/me/playlist/media/append?aid=386088&iid=357778617272924&version_name=3.6.0";
+const PLAYLIST_MEDIA_DELETE_URL: &str = "https://api.qishui.com/luna/pc/me/playlist/media/delete?aid=386088&iid=357778617272924&version_name=3.6.0";
 const LOGOUT_URL: &str = "https://api.qishui.com/passport/web/logout/?need_redirect=0&iid=27960026095955&device_platform=PC&version_code=3.5.1&aid=386088";
 const COLLECTION_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/collection/mixed?aid=386088&app_name=luna_pc&iid=3242894632956240&version_name=3.5.2&version_code=30050200&channel=official&item_types=album&item_types=playlist";
 const ALBUM_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/albums/AID?aid=386088&app_name=luna_pc&iid=3242894632956240&version_code=30050200&ignore_tracks=false";
@@ -210,56 +213,41 @@ impl SodaClient {
         liked: bool,
     ) -> ProviderResult<SodaCollectionResp> {
         let url = if liked {
-            COLLECTION_MEDIA_URL
+            COLLECTION_MEDIA_APPEND_URL
         } else {
             COLLECTION_MEDIA_DELETE_URL
         };
-        let cookie = self.current_cookie().await;
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if let Some(cookie) = cookie.as_deref().filter(|value| !value.trim().is_empty()) {
-            headers.insert(COOKIE, header_value(cookie)?);
-        }
+        self.post_model(
+            url,
+            json!({
+                "media": [{"type": "track", "id": track_id}],
+                "scene": ""
+            }),
+            "like_song",
+        )
+        .await
+    }
 
-        let response = self
-            .http
-            .post(url)
-            .headers(headers)
-            .body(
-                json!({
-                    "media": [{"type": "track", "id": track_id}],
-                    "scene": ""
-                })
-                .to_string(),
-            )
-            .send()
-            .await
-            .context("send soda collection-media request")
-            .map_err(unavailable_error)?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(ProviderError {
-                code: ProviderErrorCode::Unavailable,
-                provider: ProviderId::Soda,
-                message: format!("soda upstream http {}", status.as_u16()),
-                retryable: false,
-                action: None,
-                raw_message: None,
-            });
-        }
-        let body = response
-            .bytes()
-            .await
-            .context("read soda upstream response")
-            .map_err(unavailable_error)?;
-        serde_json::from_slice(&body).map_err(|err| ProviderError {
-            code: ProviderErrorCode::InvalidResponse,
-            provider: ProviderId::Soda,
-            message: format!("decode soda like_song response: {err}"),
-            retryable: false,
-            action: Some("like_song".to_owned()),
-            raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
-        })
+    pub(super) async fn update_song_in_playlist(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+        adding: bool,
+    ) -> ProviderResult<IgnoredAny> {
+        let url = if adding {
+            PLAYLIST_MEDIA_URL
+        } else {
+            PLAYLIST_MEDIA_DELETE_URL
+        };
+        self.post_model(
+            url,
+            json!({
+                "playlist_id": playlist_id,
+                "media": [{"id": track_id, "type": "track"}]
+            }),
+            "update_song_in_playlist",
+        )
+        .await
     }
 
     pub async fn logout(&self) -> ProviderResult<()> {
@@ -299,6 +287,56 @@ impl SodaClient {
             .send()
             .await
             .context("send soda upstream request")
+            .map_err(unavailable_error)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                provider: ProviderId::Soda,
+                message: format!("soda upstream http {}", status.as_u16()),
+                retryable: false,
+                action: None,
+                raw_message: None,
+            });
+        }
+        let body = response
+            .bytes()
+            .await
+            .context("read soda upstream response")
+            .map_err(unavailable_error)?;
+        serde_json::from_slice(&body).map_err(|err| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: ProviderId::Soda,
+            message: format!("decode soda {action} response: {err}"),
+            retryable: false,
+            action: Some(action.to_owned()),
+            raw_message: Some(String::from_utf8_lossy(&body).into_owned()),
+        })
+    }
+
+    async fn post_model<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        payload: Value,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let mut headers = HeaderMap::new();
+        if let Some(cookie) = self
+            .current_cookie()
+            .await
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            headers.insert(COOKIE, header_value(cookie)?);
+        }
+        let response = self
+            .http
+            .post(url)
+            .headers(headers)
+            .json(&payload)
+            .send()
+            .await
+            .context(format!("send soda {action} request"))
             .map_err(unavailable_error)?;
         let status = response.status();
         if !status.is_success() {

@@ -17,9 +17,9 @@ use crate::{
     },
     services::auth_session,
     types::{
-        AlbumDetail, AlbumSummary, LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId,
-        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability,
+        AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
 };
 
@@ -282,20 +282,7 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn logout(&self) -> ProviderResult<()> {
-        if self
-            .client
-            .current_cookie()
-            .await
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default()
-            .is_empty()
-        {
-            return Err(ProviderError::not_implemented(
-                ProviderId::Soda,
-                "no-session",
-            ));
-        }
+        self.client.ensure_login().await?;
         self.client.logout().await?;
         auth_session::clear_runtime_provider_cookie(&ProviderId::Soda).await;
         Ok(())
@@ -349,6 +336,25 @@ impl ProviderAdapter for SodaAdapter {
                 .iter()
                 .map(|id| (id.clone(), liked_set.contains(id)))
                 .collect(),
+        })
+    }
+
+    async fn update_song_in_playlist(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+        adding: bool,
+    ) -> ProviderResult<PlaylistAddSongAck> {
+        self.client
+            .update_song_in_playlist(playlist_id, track_id, adding)
+            .await?;
+        //经过测试无法简易判断是否成功, 乱输一个歌曲id和正常操作响应体无异
+        Ok(PlaylistAddSongAck {
+            provider: ProviderId::Soda,
+            playlist_id: playlist_id.to_string(),
+            track_id: track_id.to_string(),
+            success: true,
+            code: None,
         })
     }
 }
