@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
@@ -128,6 +130,28 @@ pub(super) struct QqPlaylistList1Resp {
     req_0: QqPlaylistList1Req,
 }
 impl QqPlaylistList1Resp {
+    pub fn liked_dirid(&self) -> Option<u64> {
+        self.req_0
+            .data
+            .v_playlist
+            .first()
+            .and_then(|playlist| u64::try_from(playlist.dir_id).ok())
+    }
+
+    pub fn tid_to_dirid(&self) -> HashMap<u64, u64> {
+        self.req_0
+            .data
+            .v_playlist
+            .iter()
+            .filter_map(|playlist| {
+                Some((
+                    u64::try_from(playlist.tid).ok()?,
+                    u64::try_from(playlist.dir_id).ok()?,
+                ))
+            })
+            .collect()
+    }
+
     pub fn standardize(self) -> Option<Vec<PlaylistSummary>> {
         let v: Vec<PlaylistSummary> = self
             .req_0
@@ -147,6 +171,33 @@ impl QqPlaylistList1Resp {
         if v.is_empty() { None } else { Some(v) }
     }
 }
+
+#[derive(Deserialize)]
+pub(super) struct QqPlaylistSongWriteResp {
+    req_0: QqPlaylistSongWriteReq,
+}
+
+impl QqPlaylistSongWriteResp {
+    pub fn succeeded(&self) -> bool {
+        self.req_0.data.result.update_time.is_some()
+    }
+}
+
+#[derive(Deserialize)]
+struct QqPlaylistSongWriteReq {
+    data: QqPlaylistSongWriteData,
+}
+
+#[derive(Deserialize)]
+struct QqPlaylistSongWriteData {
+    result: QqPlaylistSongWriteResult,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QqPlaylistSongWriteResult {
+    update_time: Option<IgnoredAny>,
+}
 #[derive(Deserialize)]
 struct QqPlaylistList1Req {
     data: QqPlaylistList1Data,
@@ -160,7 +211,8 @@ struct QqPlaylistList1Data {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqPlaylistList1Playlist {
-    //dir_id: i64, //观察到收藏需要知道'我喜欢'歌单的dir_id
+    dir_id: i64,
+
     dir_name: String,
 
     tid: i64,
@@ -872,4 +924,57 @@ struct Album {
 struct Identified {
     pub mid: String,
     pub name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{QqPlaylistList1Resp, QqPlaylistSongWriteResp};
+
+    #[test]
+    fn created_playlists_preserve_tid_to_dirid_mapping() {
+        let response: QqPlaylistList1Resp = serde_json::from_value(json!({
+            "req_0": {
+                "data": {
+                    "v_playlist": [{
+                        "dirId": 101,
+                        "dirName": "Created playlist",
+                        "tid": 202,
+                        "songNum": 3,
+                        "picUrl": "https://example.invalid/cover.jpg"
+                    }]
+                }
+            }
+        }))
+        .expect("deserialize created QQ playlist");
+
+        assert_eq!(response.tid_to_dirid().get(&202), Some(&101));
+        assert_eq!(response.liked_dirid(), Some(101));
+    }
+
+    #[test]
+    fn playlist_song_write_success_requires_update_time() {
+        let response: QqPlaylistSongWriteResp = serde_json::from_value(json!({
+            "req_0": {
+                "code": 0,
+                "data": {
+                    "msg": "",
+                    "result": {
+                        "dirDesc": "",
+                        "dirId": 0,
+                        "dirName": "",
+                        "dirPicUrl": "",
+                        "songlist": [],
+                        "tid": 0,
+                        "updateTime": 0
+                    },
+                    "retCode": 0
+                }
+            }
+        }))
+        .expect("deserialize QQ playlist write response");
+
+        assert!(response.succeeded());
+    }
 }

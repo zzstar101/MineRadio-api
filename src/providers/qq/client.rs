@@ -18,8 +18,8 @@ use crate::{
         error::{ProviderError, ProviderErrorCode},
         qq::model::{
             QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqMultiSearchResp,
-            QqPlaylistDetailResp, QqPlaylistList1Resp, QqPlaylistList2Resp, QqSearchResp,
-            QqTrackDetailResp,
+            QqPlaylistDetailResp, QqPlaylistList1Resp, QqPlaylistList2Resp,
+            QqPlaylistSongWriteResp, QqSearchResp, QqTrackDetailResp,
         },
     },
     services::auth_session,
@@ -538,26 +538,35 @@ impl QqClient {
         .await
     }
 
-    pub async fn add_song_to_playlist(
+    pub(super) async fn add_song_to_playlist(
         &self,
-        playlist_id: &str,
-        track_mid: &str,
-    ) -> ProviderResult<Value> {
-        self.get_json(
-            "https://c.y.qq.com/splcloud/fcgi-bin/fcg_music_add2songdir.fcg",
-            &[
-                ("g_tk", "5381".to_owned()),
-                ("midlist", track_mid.to_owned()),
-                ("typelist", "13".to_owned()),
-                ("dirid", playlist_id.to_owned()),
-                ("addtype", "".to_owned()),
-                ("formsender", "4".to_owned()),
-                ("r2", "0".to_owned()),
-                ("r3", "1".to_owned()),
-                ("utf8", "1".to_owned()),
-            ],
+        dir_id: u64,
+        track_id: &str,
+    ) -> ProviderResult<QqPlaylistSongWriteResp> {
+        self.write_playlist_song("AddSonglist", dir_id, track_id)
+            .await
+    }
+
+    pub(super) async fn remove_song_from_playlist(
+        &self,
+        dir_id: u64,
+        track_id: &str,
+    ) -> ProviderResult<QqPlaylistSongWriteResp> {
+        self.write_playlist_song("DelSonglist", dir_id, track_id)
+            .await
+    }
+
+    async fn write_playlist_song(
+        &self,
+        method: &str,
+        dir_id: u64,
+        track_id: &str,
+    ) -> ProviderResult<QqPlaylistSongWriteResp> {
+        self.post_json_with_sign(
+            &playlist_song_write_body(method, dir_id, track_id),
             None,
             self.current_cookie().await.as_deref(),
+            "playlist_song_write",
         )
         .await
     }
@@ -578,28 +587,6 @@ impl QqClient {
         .await
     }
 
-    async fn get_json(
-        &self,
-        url: &str,
-        query: &[(&str, String)],
-        referer: Option<&str>,
-        cookie: Option<&str>,
-    ) -> ProviderResult<Value> {
-        let mut request = self.http.get(url).query(query);
-        request = request.headers(build_headers(referer, cookie, false)?);
-        let response = request
-            .send()
-            .await
-            .context("send qq upstream request")
-            .map_err(unavailable_error)?;
-        let text = response
-            .text()
-            .await
-            .context("read qq upstream response")
-            .map_err(unavailable_error)?;
-        parse_json_like(&text)
-    }
-
     async fn post_json_with_sign<T: DeserializeOwned>(
         &self,
         body: &Value,
@@ -608,6 +595,7 @@ impl QqClient {
         action: &str,
     ) -> ProviderResult<T> {
         let sign = self.get_sign(body)?;
+        println!("{body}");
         let now = SystemTime::now();
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
@@ -629,6 +617,7 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
+        println!("{}", String::from_utf8_lossy(&raw));
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,
@@ -711,14 +700,22 @@ fn build_headers(
     Ok(headers)
 }
 
-fn parse_json_like(text: &str) -> ProviderResult<Value> {
-    let trimmed = text.trim();
-    let cleaned = trimmed
-        .trim_start_matches("callback(")
-        .trim_start_matches("MusicJsonCallback(")
-        .trim_start_matches("jsonCallback(")
-        .trim_end_matches(')');
-    serde_json::from_str(cleaned).map_err(internal_error)
+fn playlist_song_write_body(method: &str, dir_id: u64, track_id: &str) -> Value {
+    json!({"req_0": {
+        "method": method,
+        "module": "music.musicasset.PlaylistDetailWrite",
+        "param": {
+            "bFmtUtf8": true,
+            "dirId": dir_id,
+            "v_songInfo": [
+                {
+                    "songMid": track_id,
+                    "songType": 0
+                }
+            ]
+        }
+    }
+    })
 }
 
 fn parse_cookie(cookie: &str) -> std::collections::HashMap<String, String> {
@@ -829,7 +826,9 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use super::{QqClient, looks_like_audio, parse_cookie, uin_from_cookie_map};
+    use super::{
+        QqClient, looks_like_audio, parse_cookie, playlist_song_write_body, uin_from_cookie_map,
+    };
 
     #[test]
     fn cookie_user_id_is_normalized() {
@@ -855,5 +854,20 @@ mod tests {
         assert!(looks_like_audio(b"\0\0\0\x18ftypisom"));
         assert!(looks_like_audio(&[0, 0xff, 0xfb, 0]));
         assert!(!looks_like_audio(b"<html>not audio</html>"));
+    }
+
+    #[test]
+    fn playlist_song_write_uses_matching_request_key_and_method() {
+        for method in ["AddSonglist", "DelSonglist"] {
+            let body = playlist_song_write_body(method, 201, "0039MnYb0qxYhV");
+            let request = &body["req_0"];
+
+            assert_eq!(request["method"], method);
+            assert_eq!(request["param"]["dirId"], 201);
+            assert_eq!(
+                request["param"]["v_songInfo"][0]["songMid"],
+                "0039MnYb0qxYhV"
+            );
+        }
     }
 }

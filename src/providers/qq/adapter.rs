@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -15,13 +16,14 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongUrlOptions,
+        SongUrlResult, Track, TrackQualityAvailability,
     },
     utils::decrypt_qrc,
 };
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::RwLock;
 
 use super::client::QqClient;
 
@@ -64,14 +66,20 @@ struct QqPlaybackUrl {
     url: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct QqAdapter {
     client: Arc<QqClient>,
+    created_playlist_dirids: Arc<RwLock<HashMap<u64, u64>>>,
+    liked_playlist_dirid: Arc<RwLock<Option<u64>>>,
 }
 
 impl QqAdapter {
     pub fn new(client: Arc<QqClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            created_playlist_dirids: Arc::new(RwLock::new(HashMap::new())),
+            liked_playlist_dirid: Arc::new(RwLock::new(None)),
+        }
     }
 
     pub fn shared() -> Arc<Self> {
@@ -295,12 +303,14 @@ impl ProviderAdapter for QqAdapter {
         self.client.ensure_login().await?;
         let euin = self.client.euin().await.unwrap_or_default();
         let uin = self.client.uin().await.unwrap_or_default();
-        let created = self
-            .client
-            .user_songlists(&euin)
-            .await
-            .ok()
-            .and_then(|l| l.standardize());
+        let created = match self.client.user_songlists(&euin).await {
+            Ok(response) => {
+                *self.liked_playlist_dirid.write().await = response.liked_dirid();
+                *self.created_playlist_dirids.write().await = response.tid_to_dirid();
+                response.standardize()
+            }
+            Err(_) => None,
+        };
 
         let collected = self
             .client
@@ -366,56 +376,91 @@ impl ProviderAdapter for QqAdapter {
 
     async fn logout(&self) -> ProviderResult<()> {
         self.client.logout().await?;
+        self.created_playlist_dirids.write().await.clear();
+        *self.liked_playlist_dirid.write().await = None;
         auth_session::clear_runtime_provider_cookie(&ProviderId::Qq).await;
         Ok(())
     }
 
-    async fn add_song_to_playlist(
-        &self,
-        playlist_id: &str,
-        track_id: &str,
-    ) -> ProviderResult<PlaylistAddSongAck> {
+    async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
         self.client.ensure_login().await?;
-        let body = self
-            .client
-            .add_song_to_playlist(playlist_id, track_id)
-            .await?;
-        let code = body
-            .get("result")
-            .or_else(|| body.get("code"))
-            .and_then(Value::as_i64)
-            .unwrap_or_default();
-        if matches!(code, 0 | 100) {
-            return Ok(PlaylistAddSongAck {
+        let dirid = (*self.liked_playlist_dirid.read().await).ok_or_else(|| ProviderError {
+            code: ProviderErrorCode::NoPlaylist,
+            provider: ProviderId::Qq,
+            message: "qq liked playlist has not been loaded".to_owned(),
+            retryable: false,
+            action: Some("refresh_playlists".to_owned()),
+            raw_message: None,
+        })?;
+        let body = if liked {
+            self.client.add_song_to_playlist(dirid, id).await?
+        } else {
+            self.client.remove_song_from_playlist(dirid, id).await?
+        };
+        if body.succeeded() {
+            return Ok(SongLikeAck {
                 provider: ProviderId::Qq,
-                playlist_id: playlist_id.to_owned(),
-                track_id: track_id.to_owned(),
-                success: true,
-                code: Some(code),
-            });
-        }
-        if matches!(code, 301 | 1000) {
-            return Err(ProviderError {
-                code: ProviderErrorCode::LoginRequired,
-                provider: ProviderId::Qq,
-                message: format!("qq playlist {playlist_id} add-song requires cookie"),
-                retryable: true,
-                action: Some("login".to_owned()),
-                raw_message: Some(body.to_string()),
+                id: id.to_owned(),
+                liked,
+                code: None,
             });
         }
         Err(ProviderError {
             code: ProviderErrorCode::Unavailable,
             provider: ProviderId::Qq,
-            message: body
-                .get("errMsg")
-                .or_else(|| body.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("qq add-song failed")
-                .to_owned(),
+            message: "qq like-song failed".to_owned(),
             retryable: false,
             action: None,
-            raw_message: Some(body.to_string()),
+            raw_message: None,
+        })
+    }
+
+    async fn add_song_to_playlist(
+        &self,
+        tid: &str,
+        track_id: &str,
+    ) -> ProviderResult<PlaylistAddSongAck> {
+        self.client.ensure_login().await?;
+        let tid = tid.parse::<u64>().map_err(|_| ProviderError {
+            code: ProviderErrorCode::NoPlaylist,
+            provider: ProviderId::Qq,
+            message: "qq playlist id must be a numeric tid".to_owned(),
+            retryable: false,
+            action: None,
+            raw_message: None,
+        })?;
+        let dirid = self
+            .created_playlist_dirids
+            .read()
+            .await
+            .get(&tid)
+            .copied()
+            .ok_or_else(|| ProviderError {
+                code: ProviderErrorCode::NoPlaylist,
+                provider: ProviderId::Qq,
+                message: format!("qq created playlist {tid} has not been loaded"),
+                retryable: false,
+                action: Some("refresh_playlists".to_owned()),
+                raw_message: None,
+            })?;
+        let song_id = track_id;
+        let body = self.client.add_song_to_playlist(dirid, song_id).await?;
+        if body.succeeded() {
+            return Ok(PlaylistAddSongAck {
+                provider: ProviderId::Qq,
+                playlist_id: tid.to_string(),
+                track_id: track_id.to_owned(),
+                success: true,
+                code: None,
+            });
+        }
+        Err(ProviderError {
+            code: ProviderErrorCode::Unavailable,
+            provider: ProviderId::Qq,
+            message: "qq add-song failed".to_owned(),
+            retryable: false,
+            action: None,
+            raw_message: None,
         })
     }
 }
@@ -598,74 +643,6 @@ fn qq_song_url_restriction(
     None
 }
 
-#[cfg(test)]
-fn qq_login_nickname(
-    body: Option<&Value>,
-    vip_info: Option<&Value>,
-    user_id: &str,
-) -> Option<String> {
-    body.and_then(|value| {
-        value
-            .get("data")
-            .and_then(|value| value.get("creator"))
-            .and_then(|value| value.get("nick"))
-            .and_then(Value::as_str)
-            .or_else(|| {
-                value
-                    .get("data")
-                    .and_then(|value| value.get("creator"))
-                    .and_then(|value| value.get("hostname"))
-                    .and_then(Value::as_str)
-            })
-    })
-    .or_else(|| {
-        vip_info
-            .and_then(|value| value.get("getNickHead"))
-            .and_then(|value| value.get("data"))
-            .and_then(|value| value.get("map_userinfo"))
-            .and_then(|value| value.get(user_id))
-            .and_then(|value| value.get("nick"))
-            .and_then(Value::as_str)
-    })
-    .map(str::to_owned)
-}
-
-#[cfg(test)]
-fn qq_login_avatar_url(
-    body: Option<&Value>,
-    vip_info: Option<&Value>,
-    user_id: &str,
-) -> Option<String> {
-    body.and_then(|value| {
-        value
-            .get("data")
-            .and_then(|value| value.get("creator"))
-            .and_then(|value| {
-                value
-                    .get("headpic")
-                    .or_else(|| value.get("pic"))
-                    .or_else(|| value.get("avatarUrl"))
-            })
-            .and_then(Value::as_str)
-    })
-    .or_else(|| {
-        vip_info
-            .and_then(|value| value.get("getNickHead"))
-            .and_then(|value| value.get("data"))
-            .and_then(|value| value.get("map_userinfo"))
-            .and_then(|value| value.get(user_id))
-            .and_then(|value| {
-                value
-                    .get("headurl")
-                    .or_else(|| value.get("picurl"))
-                    .or_else(|| value.get("avatarUrl"))
-            })
-            .and_then(Value::as_str)
-    })
-    .map(str::to_owned)
-    .filter(|value| !value.is_empty())
-}
-
 fn no_result(action: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
@@ -700,10 +677,7 @@ fn invalid_response(message: String) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        qq_filename_candidates, qq_login_avatar_url, qq_login_nickname, qq_song_url_candidates,
-        qq_song_url_restriction,
-    };
+    use super::{qq_filename_candidates, qq_song_url_candidates, qq_song_url_restriction};
     use crate::providers::error::ProviderErrorCode;
 
     #[test]
@@ -776,31 +750,6 @@ mod tests {
                 ("M800two.mp3".to_owned(), "https://first/two".to_owned()),
                 ("M800two.mp3".to_owned(), "https://second/two".to_owned()),
             ]
-        );
-    }
-
-    #[test]
-    fn qq_legacy_test_helpers_still_follow_vip_fallback_shape() {
-        let vip = json!({
-            "getNickHead": {
-                "data": {
-                    "map_userinfo": {
-                        "123": {
-                            "nick": "QQ昵称",
-                            "headurl": "http://q.qlogo.cn/head.jpg"
-                        }
-                    }
-                }
-            }
-        });
-
-        assert_eq!(
-            qq_login_nickname(None, Some(&vip), "123").as_deref(),
-            Some("QQ昵称")
-        );
-        assert_eq!(
-            qq_login_avatar_url(None, Some(&vip), "123").as_deref(),
-            Some("http://q.qlogo.cn/head.jpg")
         );
     }
 }
