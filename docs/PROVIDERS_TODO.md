@@ -20,7 +20,8 @@
 | 登出 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `logout` |
 | 收藏 / 取消收藏 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `like_song` |
 | 收藏状态查询 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `check_song_likes` |
-| 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `add_song_to_playlist` |
+| 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
+| 从歌单移除歌曲 | [ ] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `update_song_in_playlist` 在 `adding = false` 时返回 `NOT_IMPLEMENTED` |
 | 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_list` |
 | 专辑详情 | [ ] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_detail`（offset/limit 暂未透传） |
 
@@ -35,12 +36,13 @@
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `lyric` |
 | 歌单列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_list` |
-| 歌单详情 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_detail`（offset/limit 暂未透传） |
+| 歌单详情 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `playlist_detail` |
 | 登录状态 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `login_status` |
 | 登出 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `logout` |
-| 收藏 / 取消收藏 | [x] | [x] | 未覆写 `ProviderAdapter::like_song`，默认返回 `NOT_IMPLEMENTED` |
+| 收藏 / 取消收藏 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `like_song` |
 | 收藏状态查询 | [ ] | [ ] | [mod.rs](../src/providers/qq/mod.rs) 已明确搜索接口/详情接口无法得知是否收藏单曲/歌单 |
-| 添加歌曲到歌单 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `add_song_to_playlist` |
+| 添加歌曲到歌单 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
+| 从歌单移除歌曲 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `update_song_in_playlist`（`adding = false`） |
 | 专辑列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `album_list` |
 | 专辑详情 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `album_detail` |
 
@@ -60,9 +62,10 @@
 | 登出 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `logout` |
 | 收藏 / 取消收藏 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `like_song` |
 | 收藏状态查询 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `check_song_likes` |
-| 添加歌曲到歌单 | [ ] | [ ] | 未覆写 `ProviderAdapter::add_song_to_playlist`，默认返回 `NOT_IMPLEMENTED` |
+| 添加歌曲到歌单 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
+| 从歌单移除歌曲 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `update_song_in_playlist`（`adding = false`） |
 | 专辑列表 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_list` |
-| 专辑详情 | [ ] | [ ] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_detail`（offset/limit 暂未透传） |
+| 专辑详情 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `album_detail` |
 
 ## 酷狗（kugou）
 
@@ -80,7 +83,8 @@
 | 登出 | [ ] | [ ] | 未覆写 `ProviderAdapter::logout`，默认返回 `NOT_IMPLEMENTED` |
 | 收藏 / 取消收藏 | [ ] | [ ] | 未覆写 `ProviderAdapter::like_song`，默认返回 `NOT_IMPLEMENTED` |
 | 收藏状态查询 | [ ] | [ ] | 未覆写 `ProviderAdapter::check_song_likes`，默认返回 `NOT_IMPLEMENTED` |
-| 添加歌曲到歌单 | [ ] | [ ] | 未覆写 `ProviderAdapter::add_song_to_playlist`，默认返回 `NOT_IMPLEMENTED` |
+| 添加歌曲到歌单 | [ ] | [ ] | 未覆写 `ProviderAdapter::update_song_in_playlist`，默认返回 `NOT_IMPLEMENTED` |
+| 从歌单移除歌曲 | [ ] | [ ] | 未覆写 `ProviderAdapter::update_song_in_playlist`，默认返回 `NOT_IMPLEMENTED` |
 | 专辑列表 | [ ] | [ ] | 未覆写 `ProviderAdapter::album_list`，默认返回 `NOT_IMPLEMENTED` |
 | 专辑详情 | [ ] | [ ] | 未覆写 `ProviderAdapter::album_detail`，默认返回 `NOT_IMPLEMENTED` |
 | 核心请求封装与签名 | [x] | [ ] | [client.rs](../src/providers/kugou/client.rs) 的 `KugouClient::request`、`signature_*`、`sign_key` |
@@ -102,6 +106,7 @@
 | 收藏 / 取消收藏 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
 | 收藏状态查询 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
 | 添加歌曲到歌单 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
+| 从歌单移除歌曲 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
 | 专辑列表 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
 | 专辑详情 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
 
@@ -121,3 +126,4 @@
 - `/providers/{pid}/login-status`、`/providers/{pid}/logout`
 - `/providers/{pid}/like`、`/providers/{pid}/like-check`
 - `/providers/{pid}/playlists/add-song`
+- `/providers/{pid}/playlists/del-song`

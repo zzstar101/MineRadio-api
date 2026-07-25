@@ -31,7 +31,7 @@ const NETEASE_CAPABILITIES: [&str; 15] = [
     "register",
 ];
 
-const QQ_CAPABILITIES: [&str; 12] = [
+const QQ_CAPABILITIES: [&str; 14] = [
     "qrLogin",
     "search",
     "songUrl",
@@ -41,12 +41,14 @@ const QQ_CAPABILITIES: [&str; 12] = [
     "playlistDetail",
     "loginStatus",
     "logout",
+    "like",
     "addToPlaylist",
+    "delFromPlaylist",
     "albumList",
     "albumDetail",
 ];
 
-const SODA_CAPABILITIES: [&str; 13] = [
+const SODA_CAPABILITIES: [&str; 15] = [
     "qrLogin",
     "search",
     "songUrl",
@@ -58,6 +60,8 @@ const SODA_CAPABILITIES: [&str; 13] = [
     "logout",
     "like",
     "likeCheck",
+    "addToPlaylist",
+    "delFromPlaylist",
     "albumList",
     "albumDetail",
 ];
