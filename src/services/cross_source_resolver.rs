@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     sync::{Arc, LazyLock},
-    time::Instant,
 };
 
 use futures::future::join_all;
@@ -163,7 +162,6 @@ impl CrossSourceResolver {
         let provider_order = self.provider_order();
         let mut ranked = Vec::new();
         let mut first_error: Option<anyhow::Error> = None;
-        let request_started = Instant::now();
 
         let searches =
             provider_order
@@ -180,10 +178,7 @@ impl CrossSourceResolver {
                 });
 
         let search_results = join_all(searches).await;
-        let request_elapsed_ms = request_started.elapsed().as_millis();
-        eprintln!("[cross-search] request_elapsed_ms={request_elapsed_ms}");
 
-        let scoring_started = Instant::now();
         for (provider_index, result) in search_results {
             match result {
                 Ok(tracks) => {
@@ -224,11 +219,6 @@ impl CrossSourceResolver {
             .take(merged_result_limit(query.limit) as usize)
             .map(|entry| entry.track)
             .collect::<Vec<_>>();
-        eprintln!(
-            "[cross-search] scoring_elapsed_ms={} total_elapsed_ms={}",
-            scoring_started.elapsed().as_millis(),
-            request_started.elapsed().as_millis(),
-        );
         if !merged.is_empty() {
             return Ok(merged);
         }
