@@ -1029,7 +1029,11 @@ fn build_cross_source_resolver(
 fn is_known_provider(provider: ProviderId) -> bool {
     matches!(
         provider,
-        ProviderId::Netease | ProviderId::Qq | ProviderId::Soda | ProviderId::Spotify
+        ProviderId::Netease
+            | ProviderId::Qq
+            | ProviderId::Soda
+            | ProviderId::Kugou
+            | ProviderId::Spotify
     )
 }
 
@@ -1136,5 +1140,10 @@ mod tests {
     #[test]
     fn spotify_accepts_session_cookie_routes() {
         assert!(is_known_provider(ProviderId::Spotify));
+    }
+
+    #[test]
+    fn kugou_accepts_session_cookie_routes() {
+        assert!(is_known_provider(ProviderId::Kugou));
     }
 }

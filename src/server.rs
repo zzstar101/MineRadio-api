@@ -8,6 +8,7 @@ use tracing::info;
 use crate::{
     config::Config,
     providers::{
+        kugou::adapter::KugouAdapter,
         netease::{adapter::NeteaseAdapter, client::NeteaseClient},
         qq::adapter::QqAdapter,
         registry::ProviderRegistry,
@@ -60,6 +61,7 @@ impl AppState {
         providers.register(Arc::new(NeteaseAdapter::new(netease_client.clone())));
         providers.register(QqAdapter::shared());
         providers.register(SodaAdapter::shared());
+        providers.register(KugouAdapter::shared());
         providers.register(SpotifyAdapter::shared());
 
         Self {

@@ -1,6 +1,7 @@
-#![allow(dead_code)]
-
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -11,27 +12,134 @@ use crate::{
         kugou::KugouParser,
         lrc::{LrcParser, UniversalLrcParser},
     },
-    providers::{ProviderAdapter, ProviderResult, error::ProviderError},
+    providers::{
+        ProviderAdapter, ProviderResult,
+        error::{ProviderError, ProviderErrorCode},
+    },
+    services::auth_session,
     types::{
-        LyricPayload, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginStatus,
-        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+        LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId,
+        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
+        TrackQualityAvailability, TrackQualityOption,
     },
 };
 
-use super::{client::KugouClient, map::map_kugou_song_to_track};
+use super::{
+    client::KugouClient,
+    map::{KugouTrackMeta, map_kugou_song},
+    model::{
+        KugouAddSongRequest, KugouDeleteSongRequest, KugouDeleteSongResource, KugouSongResource,
+    },
+};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct KugouAdapter {
     client: Arc<KugouClient>,
+    metadata: Arc<Mutex<HashMap<String, KugouTrackMeta>>>,
 }
 
 impl KugouAdapter {
     pub fn new(client: Arc<KugouClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            metadata: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn shared() -> Arc<Self> {
         Arc::new(Self::new(Arc::new(KugouClient::new())))
+    }
+
+    fn remember(&self, track: &Track, meta: KugouTrackMeta) {
+        self.metadata
+            .lock()
+            .unwrap()
+            .insert(track.source_id.to_ascii_lowercase(), meta);
+    }
+
+    fn metadata_for(&self, id: &str) -> KugouTrackMeta {
+        self.metadata
+            .lock()
+            .unwrap()
+            .get(&id.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    async fn playlist_tracks(
+        &self,
+        playlist_id: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<(Vec<Track>, u32, bool)> {
+        let list_id = parse_playlist_id(playlist_id)
+            .ok_or_else(|| invalid_response("invalid kugou playlist id"))?;
+        let page_size = limit.clamp(1, 50);
+        let first = self
+            .client
+            .playlist_tracks_page(list_id, 1, page_size)
+            .await?;
+        let first_tracks = self.map_playlist_tracks(&first);
+        let total = playlist_total(&first).max(first_tracks.len() as u32);
+        if total == 0 || offset >= total {
+            return Ok((Vec::new(), total, false));
+        }
+        let start = total.saturating_sub(offset.saturating_add(page_size));
+        let end = total.saturating_sub(offset);
+        let mut raw_tracks = Vec::new();
+        let mut position = start;
+        while position < end {
+            let page = position / page_size + 1;
+            let page_start = (page - 1) * page_size;
+            let body = if page == 1 {
+                first.clone()
+            } else {
+                self.client
+                    .playlist_tracks_page(list_id, page, page_size)
+                    .await?
+            };
+            let tracks = self.map_playlist_tracks(&body);
+            if tracks.is_empty() {
+                break;
+            }
+            let within_page = (position - page_start) as usize;
+            let take = ((end - position) as usize).min(tracks.len().saturating_sub(within_page));
+            if take == 0 {
+                break;
+            }
+            raw_tracks.extend(tracks.into_iter().skip(within_page).take(take));
+            position += take as u32;
+        }
+        raw_tracks.reverse();
+        let has_more = offset.saturating_add(raw_tracks.len() as u32) < total;
+        Ok((raw_tracks, total, has_more))
+    }
+
+    fn map_playlist_tracks(&self, body: &Value) -> Vec<Track> {
+        playlist_track_items(body)
+            .into_iter()
+            .filter_map(|raw| {
+                let (track, meta) = map_kugou_song(raw);
+                (!track.source_id.is_empty()).then(|| {
+                    self.remember(&track, meta);
+                    track
+                })
+            })
+            .collect()
+    }
+
+    async fn favorite_playlist_id(&self) -> ProviderResult<String> {
+        let body = self.client.playlist_list().await?;
+        playlist_items(&body)
+            .into_iter()
+            .find(|item| {
+                item.get("is_default").and_then(Value::as_i64) == Some(1)
+                    || item.get("default").and_then(Value::as_i64) == Some(1)
+                    || item_name(item).to_ascii_lowercase().contains("favorite")
+                    || item_name(item).to_ascii_lowercase().contains("liked")
+            })
+            .and_then(playlist_id)
+            .ok_or_else(|| invalid_response("kugou favorite playlist not found"))
     }
 }
 
@@ -50,9 +158,13 @@ impl ProviderAdapter for KugouAdapter {
         let page = offset / limit.max(1) + 1;
         let body = self.client.search(keyword, page, limit).await?;
         Ok(search_items(&body)
-            .iter()
-            .map(map_kugou_song_to_track)
-            .filter(|track| !track.source_id.is_empty())
+            .filter_map(|raw| {
+                let (track, meta) = map_kugou_song(raw);
+                (!track.source_id.is_empty()).then(|| {
+                    self.remember(&track, meta);
+                    track
+                })
+            })
             .collect())
     }
 
@@ -62,43 +174,74 @@ impl ProviderAdapter for KugouAdapter {
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
         let requested_quality = opts.and_then(|value| value.quality);
-        let quality = kugou_quality(requested_quality.as_deref());
-        let album_audio_id = track
-            .media_mid
-            .as_deref()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or_default();
-        let body = self
-            .client
-            .song_url(&track.source_id, 0, album_audio_id, quality)
-            .await?;
-        let url = first_url(&body);
+        let requested = normalize_quality(requested_quality.as_deref());
+        let meta = self.metadata_for(&track.source_id);
+        for (hash, quality) in hash_candidates(&track.source_id, &meta, requested) {
+            for response in [
+                self.client
+                    .song_url_h5(
+                        &hash,
+                        meta.album_id,
+                        meta.album_audio_id,
+                        quality_parameter(quality),
+                    )
+                    .await,
+                self.client.song_url_mobile(&hash, meta.album_id).await,
+                self.client
+                    .song_url_web(&hash, meta.album_id, meta.album_audio_id)
+                    .await,
+                self.client
+                    .song_url(
+                        &hash,
+                        meta.album_id,
+                        meta.album_audio_id,
+                        quality_parameter(quality),
+                    )
+                    .await,
+            ] {
+                if let Ok(body) = response {
+                    if let Some(url) = play_url(&body) {
+                        return Ok(SongUrlResult {
+                            url: Some(url),
+                            provider: Some(ProviderId::Kugou),
+                            playable: Some(true),
+                            level: Some(quality.to_owned()),
+                            quality: Some(quality.to_owned()),
+                            requested_quality: requested_quality.clone(),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
         Ok(SongUrlResult {
-            url: url.clone(),
             provider: Some(ProviderId::Kugou),
-            playable: Some(url.is_some()),
-            quality: Some(quality.to_owned()),
+            playable: Some(false),
+            quality: Some(requested.to_owned()),
             requested_quality,
-            reason: url
-                .is_none()
-                .then(|| "kugou did not return a playable URL".to_owned()),
+            reason: Some("kugou_url_unavailable".to_owned()),
+            message: Some("kugou did not return a playable URL".to_owned()),
             ..Default::default()
         })
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
+        let meta = self.metadata_for(&track.source_id);
         let qualities = [
-            ("standard", "128"),
-            ("higher", "320"),
-            ("lossless", "flac"),
-            ("hires", "high"),
+            ("jymaster", !meta.res_hash.is_empty()),
+            ("hires", !meta.res_hash.is_empty()),
+            ("lossless", !meta.sq_hash.is_empty()),
+            ("exhigh", !meta.hq_hash.is_empty()),
+            ("standard", true),
         ]
         .into_iter()
-        .map(|(id, request_quality)| TrackQualityOption {
+        .filter(|(_, available)| *available)
+        .map(|(id, _)| TrackQualityOption {
             provider: ProviderId::Kugou,
             id: id.to_owned(),
             label: id.to_owned(),
-            request_quality: request_quality.to_owned(),
+            request_quality: id.to_owned(),
+            level: Some(id.to_owned()),
             source: "declared".to_owned(),
             ..Default::default()
         })
@@ -114,31 +257,17 @@ impl ProviderAdapter for KugouAdapter {
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let search_resp = self.client.lyric_search(&track.source_id).await?;
         let Some(candidate) = search_resp.first_candidate() else {
-            return Ok(LyricPayload {
-                provider: ProviderId::Kugou,
-                track_id: track.id.clone(),
-                ..Default::default()
-            });
+            return Ok(empty_lyric(track));
         };
         let id: u64 = candidate.id.parse().unwrap_or_default();
-        let access_key = candidate.access_key.as_str();
-        if id == 0 || access_key.is_empty() {
-            return Ok(LyricPayload {
-                provider: ProviderId::Kugou,
-                track_id: track.id.clone(),
-                ..Default::default()
-            });
+        if id == 0 || candidate.access_key.is_empty() {
+            return Ok(empty_lyric(track));
         }
-
-        // Prefer KRC (word-level lyrics), fall back to LRC
-        if let Ok(body) = self.client.lyric_krc(id, access_key).await {
-            if let Ok(lines) = KugouParser.decrypt_and_parse(body.content.clone()) {
-                let is_word_by_word = lines.iter().any(|line| {
-                    line.words
-                        .as_ref()
-                        .map(|words| !words.is_empty())
-                        .unwrap_or(false)
-                });
+        if let Ok(body) = self.client.lyric_krc(id, &candidate.access_key).await {
+            if let Ok(lines) = KugouParser.decrypt_and_parse(body.content) {
+                let is_word_by_word = lines
+                    .iter()
+                    .any(|line| line.words.as_ref().is_some_and(|words| !words.is_empty()));
                 return Ok(LyricPayload {
                     provider: ProviderId::Kugou,
                     track_id: track.id.clone(),
@@ -148,10 +277,12 @@ impl ProviderAdapter for KugouAdapter {
                 });
             }
         }
-
-        // Fallback: plain LRC
-        let body = self.client.lyric(id, access_key).await?;
-        let text = decode_base64_text(&body.content).unwrap_or_default();
+        let body = self.client.lyric(id, &candidate.access_key).await?;
+        let text = BASE64
+            .decode(body.content)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
         Ok(LyricPayload {
             provider: ProviderId::Kugou,
             track_id: track.id.clone(),
@@ -162,68 +293,390 @@ impl ProviderAdapter for KugouAdapter {
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        Err(not_implemented("playlist_list"))
+        let body = self.client.playlist_list().await?;
+        Ok(playlist_items(&body)
+            .into_iter()
+            .filter_map(|item| {
+                let id = playlist_id(item)?;
+                Some(PlaylistSummary {
+                    provider: ProviderId::Kugou,
+                    id,
+                    name: item_name(item),
+                    cover_url: cover_url(item),
+                    track_count: number(
+                        item,
+                        &["count", "m_count", "song_count", "total", "list_count"],
+                    )
+                    .and_then(|value| value.try_into().ok()),
+                    track_ids: Vec::new(),
+                    collected: None,
+                })
+            })
+            .collect())
     }
 
     async fn playlist_detail(
         &self,
-        _id: &str,
-        _offset: u32,
-        _limit: u32,
+        id: &str,
+        offset: u32,
+        limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
-        Err(not_implemented("playlist_detail"))
+        let (tracks, total, has_more) = self.playlist_tracks(id, offset, limit).await?;
+        Ok(PlaylistDetail {
+            provider: ProviderId::Kugou,
+            id: id.to_owned(),
+            name: String::new(),
+            cover_url: tracks
+                .first()
+                .map(|track| track.cover_url.clone())
+                .unwrap_or_default(),
+            track_count: Some(total),
+            track_ids: tracks.iter().map(|track| track.id.clone()).collect(),
+            collected: None,
+            tracks,
+            has_more: Some(has_more),
+        })
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
-        Err(not_implemented("login_status"))
+        let (_, auth) = self.client.current_auth().await;
+        Ok(ProviderLoginStatus {
+            provider: ProviderId::Kugou,
+            logged_in: auth.logged_in,
+            nickname: (!auth.nickname.is_empty()).then_some(auth.nickname),
+            user_id: (!auth.user_id.is_empty()).then_some(auth.user_id),
+            avatar_url: (!auth.avatar_url.is_empty()).then_some(auth.avatar_url),
+            ..Default::default()
+        })
     }
 
     async fn logout(&self) -> ProviderResult<()> {
-        Err(not_implemented("logout"))
+        auth_session::clear_runtime_provider_cookie(&ProviderId::Kugou).await;
+        Ok(())
+    }
+
+    async fn like_song(&self, id: &str, liked: bool) -> ProviderResult<SongLikeAck> {
+        let playlist_id = self.favorite_playlist_id().await?;
+        self.update_song_in_playlist(&playlist_id, id, liked)
+            .await?;
+        Ok(SongLikeAck {
+            provider: ProviderId::Kugou,
+            id: id.to_owned(),
+            liked,
+            code: Some(0),
+        })
+    }
+
+    async fn check_song_likes(&self, ids: &[String]) -> ProviderResult<SongLikeCheckAck> {
+        let playlist_id = self.favorite_playlist_id().await?;
+        let wanted = ids
+            .iter()
+            .map(|id| id.to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
+        let mut liked = HashMap::new();
+        let mut offset = 0;
+        while offset < 300 && liked.len() < wanted.len() {
+            let (tracks, total, has_more) = self.playlist_tracks(&playlist_id, offset, 50).await?;
+            for track in tracks {
+                if wanted.contains(&track.source_id.to_ascii_lowercase()) {
+                    liked.insert(track.id, true);
+                }
+            }
+            if !has_more || offset.saturating_add(50) >= total {
+                break;
+            }
+            offset += 50;
+        }
+        for id in ids {
+            liked.entry(id.clone()).or_insert(false);
+        }
+        Ok(SongLikeCheckAck {
+            provider: ProviderId::Kugou,
+            ids: ids.to_vec(),
+            liked,
+        })
+    }
+
+    async fn update_song_in_playlist(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+        adding: bool,
+    ) -> ProviderResult<PlaylistAddSongAck> {
+        let list_id = parse_playlist_id(playlist_id)
+            .ok_or_else(|| invalid_response("invalid kugou playlist id"))?;
+        let (_, auth) = self.client.current_auth().await;
+        if !auth.playback_ready() {
+            return Err(login_required());
+        }
+        let meta = self.metadata_for(track_id);
+        if adding {
+            let payload = KugouAddSongRequest {
+                userid: auth.user_id.parse().unwrap_or_default(),
+                token: &auth.token,
+                listid: list_id,
+                list_ver: 0,
+                r#type: 0,
+                slow_upload: 1,
+                scene: "false;null",
+                data: vec![KugouSongResource {
+                    number: 1,
+                    name: &meta.title,
+                    hash: track_id,
+                    size: 0,
+                    sort: 0,
+                    timelen: meta.duration_ms,
+                    bitrate: 0,
+                    album_id: meta.album_id,
+                    mixsongid: meta.album_audio_id,
+                }],
+            };
+            self.client.add_song_to_playlist(&payload).await?;
+        } else {
+            let file_id = self
+                .find_file_id(playlist_id, track_id)
+                .await?
+                .ok_or_else(|| invalid_response("kugou song not in playlist"))?;
+            let payload = KugouDeleteSongRequest {
+                listid: list_id,
+                userid: auth.user_id.parse().unwrap_or_default(),
+                token: &auth.token,
+                r#type: 0,
+                list_ver: 0,
+                data: vec![KugouDeleteSongResource { fileid: file_id }],
+            };
+            self.client.delete_song_from_playlist(&payload).await?;
+        }
+        Ok(PlaylistAddSongAck {
+            provider: ProviderId::Kugou,
+            playlist_id: playlist_id.to_owned(),
+            track_id: track_id.to_owned(),
+            success: true,
+            code: Some(0),
+        })
     }
 }
 
-fn not_implemented(action: &str) -> ProviderError {
-    ProviderError::not_implemented(ProviderId::Kugou, action)
+impl KugouAdapter {
+    async fn find_file_id(&self, playlist_id: &str, track_id: &str) -> ProviderResult<Option<u64>> {
+        let list_id = parse_playlist_id(playlist_id)
+            .ok_or_else(|| invalid_response("invalid kugou playlist id"))?;
+        for page in 1..=6 {
+            let body = self.client.playlist_tracks_page(list_id, page, 50).await?;
+            for item in playlist_track_items(&body) {
+                let hash = string(item, &["FileHash", "hash", "Hash"]);
+                if hash.eq_ignore_ascii_case(track_id) {
+                    return Ok(number(item, &["fileid", "file_id"]));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
-fn search_items(body: &Value) -> &[Value] {
-    body.get("data")
-        .and_then(|value| value.get("lists"))
+fn search_items(body: &Value) -> impl Iterator<Item = &Value> {
+    body.pointer("/data/lists")
         .or_else(|| body.get("lists"))
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .into_iter()
+        .flatten()
 }
-
-fn first_url(body: &Value) -> Option<String> {
-    body.get("url")
+fn playlist_items(body: &Value) -> Vec<&Value> {
+    let data = body.get("data").unwrap_or(body);
+    if let Some(items) = data.get("info").and_then(Value::as_array) {
+        return items.iter().collect();
+    }
+    let data = data.get("info").unwrap_or(data);
+    ["info", "collect", "love", "self", "list"]
+        .into_iter()
+        .filter_map(move |key| data.get(key).and_then(Value::as_array))
+        .flatten()
+        .collect()
+}
+fn playlist_track_items(body: &Value) -> Vec<&Value> {
+    let data = body.get("data").unwrap_or(body);
+    let chunk = data
+        .get("info")
+        .or_else(|| data.get("songs"))
+        .or_else(|| data.get("lists"))
+        .or_else(|| data.get("file"));
+    chunk
         .and_then(Value::as_array)
-        .and_then(|urls| urls.iter().find_map(Value::as_str))
-        .or_else(|| body.get("url").and_then(Value::as_str))
-        .or_else(|| body.pointer("/data/url").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(str::to_owned)
-}
-
-fn decode_base64_text(value: &str) -> Option<String> {
-    BASE64
-        .decode(value)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-}
-
-fn kugou_quality(value: Option<&str>) -> &'static str {
-    match value
+        .map(|items| items.iter().collect())
+        .or_else(|| {
+            chunk
+                .and_then(|value| value.get("file"))
+                .and_then(Value::as_array)
+                .map(|items| items.iter().collect())
+        })
         .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "higher" | "320" => "320",
-        "lossless" | "flac" => "flac",
-        "hires" | "hi_res" | "high" => "high",
+}
+fn playlist_total(body: &Value) -> u32 {
+    body.pointer("/data/count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+        .min(u32::MAX as u64) as u32
+}
+fn playlist_id(item: &Value) -> Option<String> {
+    let id = string(
+        item,
+        &[
+            "global_collection_id",
+            "specialid",
+            "listid",
+            "list_id",
+            "id",
+        ],
+    );
+    (!id.is_empty()).then_some(id)
+}
+fn item_name(item: &Value) -> String {
+    string(item, &["name", "listname", "specialname", "title"])
+}
+fn cover_url(item: &Value) -> String {
+    string(
+        item,
+        &["pic", "img", "imgurl", "sizable_cover", "create_user_pic"],
+    )
+    .replace("{size}", "240")
+}
+fn string(item: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .find_map(|key| item.get(*key))
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .or_else(|| value.as_u64().map(|value| value.to_string()))
+        })
+        .unwrap_or_default()
+}
+fn number(item: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| item.get(*key))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
+}
+fn parse_playlist_id(id: &str) -> Option<u64> {
+    if let Ok(id) = id.parse() {
+        return Some(id);
+    }
+    let parts = id
+        .strip_prefix("collection_")?
+        .split('_')
+        .collect::<Vec<_>>();
+    parts.get(2)?.parse().ok()
+}
+fn normalize_quality(value: Option<&str>) -> &'static str {
+    match value.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "jymaster" | "viper_tape" => "jymaster",
+        "hires" | "hi_res" => "hires",
+        "lossless" | "flac" => "lossless",
+        "exhigh" | "higher" | "320" => "exhigh",
+        _ => "standard",
+    }
+}
+
+fn quality_parameter(quality: &str) -> &'static str {
+    match quality {
+        "jymaster" => "viper_tape",
+        "hires" => "hires",
+        "lossless" => "flac",
+        "exhigh" => "320",
         _ => "128",
+    }
+}
+fn hash_candidates<'a>(
+    default_hash: &'a str,
+    meta: &'a KugouTrackMeta,
+    requested: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let chain = [
+        ("jymaster", meta.res_hash.as_str()),
+        ("hires", meta.res_hash.as_str()),
+        ("lossless", meta.sq_hash.as_str()),
+        ("exhigh", meta.hq_hash.as_str()),
+        ("standard", default_hash),
+    ];
+    let start = chain
+        .iter()
+        .position(|(level, _)| *level == requested)
+        .unwrap_or(chain.len() - 1);
+    chain[start..]
+        .iter()
+        .filter_map(|(level, hash)| (!hash.is_empty()).then_some((*hash, *level)))
+        .collect()
+}
+fn play_url(body: &Value) -> Option<String> {
+    [
+        "/url/0",
+        "/url",
+        "/play_url",
+        "/data/url/0",
+        "/data/url",
+        "/data/play_url",
+        "/data/play_backup_url",
+        "/data/backupUrl",
+        "/backup_url",
+        "/backupUrl",
+    ]
+    .into_iter()
+    .find_map(|pointer| body.pointer(pointer).and_then(Value::as_str))
+    .map(|url| url.replace("\\/", "/"))
+    .filter(|url| !url.is_empty())
+}
+fn empty_lyric(track: &Track) -> LyricPayload {
+    LyricPayload {
+        provider: ProviderId::Kugou,
+        track_id: track.id.clone(),
+        ..Default::default()
+    }
+}
+fn invalid_response(message: &str) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::InvalidResponse,
+        provider: ProviderId::Kugou,
+        message: message.to_owned(),
+        retryable: false,
+        action: None,
+        raw_message: None,
+    }
+}
+fn login_required() -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::LoginRequired,
+        provider: ProviderId::Kugou,
+        message: "kugou login with userid and token required".to_owned(),
+        retryable: false,
+        action: Some("login".to_owned()),
+        raw_message: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_playlist_id, playlist_track_items, quality_parameter};
+    use serde_json::json;
+
+    #[test]
+    fn parses_global_collection_playlist_id() {
+        assert_eq!(parse_playlist_id("collection_1_2_345_6"), Some(345));
+        assert_eq!(parse_playlist_id("345"), Some(345));
+    }
+
+    #[test]
+    fn maps_quality_levels_to_kugou_request_values() {
+        assert_eq!(quality_parameter("jymaster"), "viper_tape");
+        assert_eq!(quality_parameter("lossless"), "flac");
+        assert_eq!(quality_parameter("exhigh"), "320");
+    }
+
+    #[test]
+    fn reads_tracks_from_the_nested_file_response_shape() {
+        let body = json!({ "data": { "info": { "file": [{ "hash": "a" }] } } });
+        assert_eq!(playlist_track_items(&body).len(), 1);
     }
 }

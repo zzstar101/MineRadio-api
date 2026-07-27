@@ -67,7 +67,21 @@ const SODA_CAPABILITIES: [&str; 15] = [
     "albumDetail",
 ];
 
-const KUGOU_CAPABILITIES: [&str; 5] = ["search", "songUrl", "quality", "lyric", "register"];
+const KUGOU_CAPABILITIES: [&str; 13] = [
+    "search",
+    "songUrl",
+    "quality",
+    "lyric",
+    "playlistList",
+    "playlistDetail",
+    "loginStatus",
+    "logout",
+    "like",
+    "likeCheck",
+    "addToPlaylist",
+    "delFromPlaylist",
+    "register",
+];
 
 const SPOTIFY_CAPABILITIES: [&str; 14] = [
     "search",

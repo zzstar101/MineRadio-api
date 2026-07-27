@@ -2,14 +2,48 @@ use serde_json::Value;
 
 use crate::types::{PlayableState, ProviderId, Track};
 
+#[derive(Clone, Debug, Default)]
+pub struct KugouTrackMeta {
+    pub album_id: u64,
+    pub album_audio_id: u64,
+    pub hq_hash: String,
+    pub sq_hash: String,
+    pub res_hash: String,
+    pub title: String,
+    pub duration_ms: u64,
+}
+
+#[cfg(test)]
 pub fn map_kugou_song_to_track(raw: &Value) -> Track {
+    map_kugou_song(raw).0
+}
+
+pub fn map_kugou_song(raw: &Value) -> (Track, KugouTrackMeta) {
     let hash = first_string(raw, &["FileHash", "hash", "Hash"]);
-    Track {
+    let title = first_string(raw, &["SongName", "songname", "name", "filename"]);
+    let album_audio_id = first_string(
+        raw,
+        &[
+            "MixSongID",
+            "mixsongid",
+            "AlbumAudioID",
+            "album_audio_id",
+            "EMixSongID",
+        ],
+    );
+    let duration_ms = raw
+        .get("Duration")
+        .or_else(|| raw.get("duration"))
+        .or_else(|| raw.get("timelen"))
+        .and_then(Value::as_u64)
+        .map(|value| if value > 10_000 { value } else { value * 1_000 })
+        .unwrap_or_default();
+    let track = Track {
         id: hash.clone(),
         provider: ProviderId::Kugou,
         source_id: hash,
-        media_mid: non_empty(first_string(raw, &["AlbumAudioID", "album_audio_id"])),
-        title: first_string(raw, &["SongName", "songname", "filename"]),
+        media_mid: non_empty(album_audio_id.clone()),
+        title: title.clone(),
         artists: split_artists(&first_string(
             raw,
             &["SingerName", "singername", "author_name"],
@@ -25,13 +59,19 @@ pub fn map_kugou_song_to_track(raw: &Value) -> Track {
             "lossless".to_owned(),
         ],
         playable_state: PlayableState::Unknown,
-        duration_ms: raw
-            .get("Duration")
-            .or_else(|| raw.get("duration"))
-            .and_then(Value::as_u64)
-            .map(|seconds| seconds * 1_000),
+        duration_ms: (duration_ms > 0).then_some(duration_ms),
         artwork_url: None,
-    }
+    };
+    let meta = KugouTrackMeta {
+        album_id: number(raw, &["AlbumID", "album_id"]),
+        album_audio_id: album_audio_id.parse().unwrap_or_default(),
+        hq_hash: first_string(raw, &["HQFileHash", "hq_hash", "hqHash"]),
+        sq_hash: first_string(raw, &["SQFileHash", "sq_hash", "sqHash"]),
+        res_hash: first_string(raw, &["ResFileHash", "res_hash", "resHash"]),
+        title,
+        duration_ms,
+    };
+    (track, meta)
 }
 
 fn first_string(raw: &Value, fields: &[&str]) -> String {
@@ -54,6 +94,18 @@ fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+fn number(raw: &Value, fields: &[&str]) -> u64 {
+    fields
+        .iter()
+        .find_map(|field| raw.get(*field))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
+        .unwrap_or_default()
+}
+
 fn split_artists(value: &str) -> Vec<String> {
     value
         .split(['、', '/', '&'])
@@ -67,7 +119,7 @@ fn split_artists(value: &str) -> Vec<String> {
 mod tests {
     use serde_json::json;
 
-    use super::map_kugou_song_to_track;
+    use super::{map_kugou_song, map_kugou_song_to_track};
 
     #[test]
     fn maps_kugou_search_song() {
@@ -83,5 +135,19 @@ mod tests {
         assert_eq!(track.artists, ["A", "B"]);
         assert_eq!(track.media_mid.as_deref(), Some("42"));
         assert_eq!(track.duration_ms, Some(120_000));
+    }
+
+    #[test]
+    fn preserves_playback_metadata_for_adapter_cache() {
+        let (_, metadata) = map_kugou_song(&json!({
+            "FileHash": "STD", "AlbumID": 7, "AlbumAudioID": 42,
+            "HQFileHash": "HQ", "SQFileHash": "SQ", "ResFileHash": "RES"
+        }));
+
+        assert_eq!(metadata.album_id, 7);
+        assert_eq!(metadata.album_audio_id, 42);
+        assert_eq!(metadata.hq_hash, "HQ");
+        assert_eq!(metadata.sq_hash, "SQ");
+        assert_eq!(metadata.res_hash, "RES");
     }
 }

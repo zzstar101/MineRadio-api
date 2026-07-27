@@ -92,7 +92,7 @@ fn env_cookie(provider: &ProviderId) -> Option<String> {
         ProviderId::Netease => "MINERADIO_NETEASE_COOKIE",
         ProviderId::Qq => "MINERADIO_QQ_COOKIE",
         ProviderId::Soda => "MINERADIO_SODA_COOKIE",
-        ProviderId::Kugou => "MINERADIO_SODA_COOKIE",
+        ProviderId::Kugou => "MINERADIO_KUGOU_COOKIE",
         ProviderId::Spotify => "MINERADIO_SPOTIFY_TOKEN",
         ProviderId::Unknown => return None,
     };
@@ -131,8 +131,10 @@ fn read_persisted_cookies() -> HashMap<ProviderId, String> {
         .into_iter()
         .filter_map(|(provider, cookie)| {
             let normalized = cookie.trim().to_owned();
-            if matches!(provider.as_str(), "netease" | "qq" | "soda" | "spotify")
-                && !normalized.is_empty()
+            if matches!(
+                provider.as_str(),
+                "netease" | "qq" | "soda" | "kugou" | "spotify"
+            ) && !normalized.is_empty()
             {
                 Some((provider, normalized))
             } else {

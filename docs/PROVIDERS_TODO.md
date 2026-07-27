@@ -71,20 +71,20 @@
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
+| 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `KugouAdapter::shared` |
 | 二维码登录 | [ ] | [ ] | 未建立 Kugou QR 登录服务 |
 | 搜索 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
 | 播放地址 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `song_url`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `song_url` |
 | 音质列表 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `lyric`，调用 `lyric_search` 与 `lyric_krc`/`lyric` |
-| 歌单列表 | [ ] | [ ] | 未覆写 `ProviderAdapter::playlist_list`，默认返回 `NOT_IMPLEMENTED` |
-| 歌单详情 | [ ] | [ ] | 未覆写 `ProviderAdapter::playlist_detail`，默认返回 `NOT_IMPLEMENTED` |
-| 登录状态 | [ ] | [ ] | 未覆写 `ProviderAdapter::login_status`，默认返回 `NOT_IMPLEMENTED` |
-| 登出 | [ ] | [ ] | 未覆写 `ProviderAdapter::logout`，默认返回 `NOT_IMPLEMENTED` |
-| 收藏 / 取消收藏 | [ ] | [ ] | 未覆写 `ProviderAdapter::like_song`，默认返回 `NOT_IMPLEMENTED` |
-| 收藏状态查询 | [ ] | [ ] | 未覆写 `ProviderAdapter::check_song_likes`，默认返回 `NOT_IMPLEMENTED` |
-| 添加歌曲到歌单 | [ ] | [ ] | 未覆写 `ProviderAdapter::update_song_in_playlist`，默认返回 `NOT_IMPLEMENTED` |
-| 从歌单移除歌曲 | [ ] | [ ] | 未覆写 `ProviderAdapter::update_song_in_playlist`，默认返回 `NOT_IMPLEMENTED` |
+| 歌单列表 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `playlist_list`，调用 H5 `get_all_list` |
+| 歌单详情 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `playlist_detail`，调用 H5 `get_list_all_file` |
+| 登录状态 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `login_status` |
+| 登出 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `logout` |
+| 收藏 / 取消收藏 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `like_song`，通过默认收藏歌单写入 |
+| 收藏状态查询 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `check_song_likes` |
+| 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
+| 从歌单移除歌曲 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `update_song_in_playlist`（`adding = false`） |
 | 专辑列表 | [ ] | [ ] | 未覆写 `ProviderAdapter::album_list`，默认返回 `NOT_IMPLEMENTED` |
 | 专辑详情 | [ ] | [ ] | 未覆写 `ProviderAdapter::album_detail`，默认返回 `NOT_IMPLEMENTED` |
 | 核心请求封装与签名 | [x] | [ ] | [client.rs](../src/providers/kugou/client.rs) 的 `KugouClient::request`、`signature_*`、`sign_key` |
