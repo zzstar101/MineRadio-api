@@ -93,22 +93,22 @@
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [ ] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 未包含 Spotify |
+| 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `SpotifyAdapter::shared` |
 | 二维码登录 | [ ] | [ ] | 未建立 Spotify QR 登录服务 |
-| 搜索 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 播放地址 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 音质列表 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 歌词 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 歌单列表 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 歌单详情 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 登录状态 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 登出 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 收藏 / 取消收藏 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 收藏状态查询 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 添加歌曲到歌单 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 从歌单移除歌曲 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 专辑列表 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
-| 专辑详情 | [ ] | [ ] | 未建立 `src/providers/spotify` 模块或 `ProviderAdapter` 实现 |
+| 搜索 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `search_track` |
+| 播放地址 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `song_url`（官方 API 不提供音频直链） |
+| 音质列表 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `track_qualities`（官方 API 不声明可用音质） |
+| 歌词 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `lyric`（官方 API 不提供歌词） |
+| 歌单列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `playlist_list` |
+| 歌单详情 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `playlist_detail` |
+| 登录状态 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `login_status` |
+| 登出 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `logout` |
+| 收藏 / 取消收藏 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `like_song` |
+| 收藏状态查询 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `check_song_likes` |
+| 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
+| 从歌单移除歌曲 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `update_song_in_playlist`（`adding = false`） |
+| 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_list` |
+| 专辑详情 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_detail` |
 
 ## 路由共用举证
 

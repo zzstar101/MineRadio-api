@@ -93,6 +93,7 @@ pub enum ProviderId {
     Netease,
     Soda,
     Kugou,
+    Spotify,
     #[default]
     Unknown,
 }
@@ -104,6 +105,7 @@ impl ProviderId {
             Self::Netease => "netease",
             Self::Soda => "soda",
             Self::Kugou => "kugou",
+            Self::Spotify => "spotify",
             Self::Unknown => "unknown",
         }
     }
@@ -124,6 +126,7 @@ impl std::str::FromStr for ProviderId {
             "netease" => Ok(Self::Netease),
             "soda" => Ok(Self::Soda),
             "kugou" => Ok(Self::Kugou),
+            "spotify" => Ok(Self::Spotify),
             "unknown" => Ok(Self::Unknown),
             _ => Err(format!("unknown provider id: {s}")),
         }

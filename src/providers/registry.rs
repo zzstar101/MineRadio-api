@@ -6,11 +6,12 @@ use crate::types::ProviderId;
 
 use super::ProviderAdapter;
 
-pub const PROVIDER_IDS: [ProviderId; 4] = [
+pub const PROVIDER_IDS: [ProviderId; 5] = [
     ProviderId::Netease,
     ProviderId::Qq,
     ProviderId::Soda,
     ProviderId::Kugou,
+    ProviderId::Spotify,
 ];
 
 const NETEASE_CAPABILITIES: [&str; 15] = [
@@ -67,6 +68,23 @@ const SODA_CAPABILITIES: [&str; 15] = [
 ];
 
 const KUGOU_CAPABILITIES: [&str; 5] = ["search", "songUrl", "quality", "lyric", "register"];
+
+const SPOTIFY_CAPABILITIES: [&str; 14] = [
+    "search",
+    "songUrl",
+    "quality",
+    "lyric",
+    "playlistList",
+    "playlistDetail",
+    "loginStatus",
+    "logout",
+    "like",
+    "likeCheck",
+    "addToPlaylist",
+    "delFromPlaylist",
+    "albumList",
+    "albumDetail",
+];
 
 #[derive(Default)]
 pub struct ProviderRegistry {
@@ -127,6 +145,7 @@ fn capabilities_of(id: ProviderId) -> &'static [&'static str] {
         ProviderId::Qq => &QQ_CAPABILITIES,
         ProviderId::Soda => &SODA_CAPABILITIES,
         ProviderId::Kugou => &KUGOU_CAPABILITIES,
+        ProviderId::Spotify => &SPOTIFY_CAPABILITIES,
         ProviderId::Unknown => &[],
     }
 }
@@ -143,5 +162,24 @@ pub fn build_capability_matrix() -> CapabilityMatrix {
                 message: "online",
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_capability_matrix;
+    use crate::types::ProviderId;
+
+    #[test]
+    fn spotify_is_listed_with_its_supported_capabilities() {
+        let matrix = build_capability_matrix();
+        let spotify = matrix
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == ProviderId::Spotify)
+            .unwrap();
+
+        assert!(spotify.capabilities.contains(&"search"));
+        assert!(spotify.capabilities.contains(&"albumList"));
     }
 }

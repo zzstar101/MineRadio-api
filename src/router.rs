@@ -1029,7 +1029,7 @@ fn build_cross_source_resolver(
 fn is_known_provider(provider: ProviderId) -> bool {
     matches!(
         provider,
-        ProviderId::Netease | ProviderId::Qq | ProviderId::Soda
+        ProviderId::Netease | ProviderId::Qq | ProviderId::Soda | ProviderId::Spotify
     )
 }
 
@@ -1110,7 +1110,8 @@ fn anyhow_error_response(err: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{LikeCheckQuery, parse_like_check_ids};
+    use super::{LikeCheckQuery, is_known_provider, parse_like_check_ids};
+    use crate::types::ProviderId;
 
     #[test]
     fn like_check_ids_accepts_the_id_alias() {
@@ -1130,5 +1131,10 @@ mod tests {
         });
 
         assert_eq!(ids, ["3"]);
+    }
+
+    #[test]
+    fn spotify_accepts_session_cookie_routes() {
+        assert!(is_known_provider(ProviderId::Spotify));
     }
 }

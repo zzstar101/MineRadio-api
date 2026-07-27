@@ -54,6 +54,7 @@ pub mod netease;
 pub mod qq;
 pub mod registry;
 pub mod soda;
+pub mod spotify;
 
 use async_trait::async_trait;
 

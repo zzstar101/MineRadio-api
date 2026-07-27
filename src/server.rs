@@ -12,6 +12,7 @@ use crate::{
         qq::adapter::QqAdapter,
         registry::ProviderRegistry,
         soda::adapter::SodaAdapter,
+        spotify::adapter::SpotifyAdapter,
     },
     router,
     services::{
@@ -59,6 +60,7 @@ impl AppState {
         providers.register(Arc::new(NeteaseAdapter::new(netease_client.clone())));
         providers.register(QqAdapter::shared());
         providers.register(SodaAdapter::shared());
+        providers.register(SpotifyAdapter::shared());
 
         Self {
             config,
