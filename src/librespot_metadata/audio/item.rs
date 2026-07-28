@@ -1,220 +1,108 @@
-use std::{fmt::Debug, path::PathBuf};
+use std::ops::{Deref, DerefMut};
 
-use crate::librespot_metadata::{
-    Metadata,
-    artist::ArtistsWithRole,
-    availability::{AudioItemAvailability, Availabilities, UnavailabilityReason},
-    episode::Episode,
-    error::MetadataError,
-    image::{ImageSize, Images},
-    restriction::Restrictions,
-    track::{Track, Tracks},
+use protobuf::Message;
+
+use crate::{
+    librespot_core::{Error, Session, SpotifyUri, date::Date, session::UserData},
+    librespot_metadata::{
+        MetadataError,
+        availability::{AudioItemAvailability, Availabilities, UnavailabilityReason},
+        restriction::Restrictions,
+        util::impl_deref_wrapped,
+    },
+    librespot_protocol as protocol,
 };
 
 use super::file::AudioFiles;
 
-use crate::librespot_core::{Error, Session, SpotifyUri, date::Date, session::UserData};
-
 pub type AudioItemResult = Result<AudioItem, Error>;
 
 #[derive(Debug, Clone)]
-pub struct CoverImage {
-    pub url: String,
-    pub size: ImageSize,
-    pub width: i32,
-    pub height: i32,
-}
-
-#[derive(Debug, Clone)]
 pub struct AudioItem {
-    pub track_id: SpotifyUri,
     pub uri: String,
     pub files: AudioFiles,
-    pub name: String,
-    pub covers: Vec<CoverImage>,
-    pub language: Vec<String>,
-    pub duration_ms: u32,
-    pub is_explicit: bool,
     pub availability: AudioItemAvailability,
     pub alternatives: Option<Tracks>,
-    pub unique_fields: UniqueFields,
 }
 
-#[derive(Debug, Clone)]
-pub enum UniqueFields {
-    Track {
-        artists: ArtistsWithRole,
-        album: String,
-        album_artists: Vec<String>,
-        popularity: u8,
-        number: u32,
-        disc_number: u32,
-    },
-    Local {
-        // artists / album_artists can't be a Vec here, they are retrieved from metadata as a String,
-        // and we cannot make any assumptions about them being e.g. comma-separated
-        artists: Option<String>,
-        album: Option<String>,
-        album_artists: Option<String>,
-        number: Option<u32>,
-        disc_number: Option<u32>,
-        path: PathBuf,
-    },
-    Episode {
-        description: String,
-        publish_time: Date,
-        show_name: String,
-    },
-}
+#[derive(Debug, Clone, Default)]
+pub struct Tracks(pub Vec<SpotifyUri>);
+
+impl_deref_wrapped!(Tracks, Vec<SpotifyUri>);
 
 impl AudioItem {
     pub async fn get_file(session: &Session, uri: SpotifyUri) -> AudioItemResult {
-        let image_url = session
-            .get_user_attribute("image-url")
-            .unwrap_or_else(|| String::from("https://i.scdn.co/image/{file_id}"));
-
         match uri {
-            SpotifyUri::Track { .. } => {
-                let track = Track::get(session, &uri).await?;
-
-                if track.duration <= 0 {
-                    return Err(Error::unavailable(MetadataError::InvalidDuration(
-                        track.duration,
-                    )));
-                }
-
-                if track.is_explicit && session.filter_explicit_content() {
-                    return Err(Error::unavailable(MetadataError::ExplicitContentFiltered));
-                }
-
-                let uri_string = uri.to_uri();
-                let album = track.album.name;
-
-                let album_artists = track
-                    .album
-                    .artists
-                    .0
-                    .into_iter()
-                    .map(|a| a.name)
-                    .collect::<Vec<String>>();
-
-                let covers = get_covers(track.album.covers, image_url);
-
-                let alternatives = if track.alternatives.is_empty() {
-                    None
-                } else {
-                    Some(track.alternatives)
-                };
-
-                let availability = if Date::now_utc() < track.earliest_live_timestamp {
-                    Err(UnavailabilityReason::Embargo)
-                } else {
-                    available_for_user(
-                        &session.user_data(),
-                        &track.availability,
-                        &track.restrictions,
-                    )
-                };
-
-                let popularity = track.popularity.clamp(0, 100) as u8;
-                let number = track.number.max(0) as u32;
-                let disc_number = track.disc_number.max(0) as u32;
-
-                let unique_fields = UniqueFields::Track {
-                    artists: track.artists_with_role,
-                    album,
-                    album_artists,
-                    popularity,
-                    number,
-                    disc_number,
-                };
-
-                Ok(Self {
-                    track_id: uri,
-                    uri: uri_string,
-                    files: track.files,
-                    name: track.name,
-                    covers,
-                    language: track.language_of_performance,
-                    duration_ms: track.duration as u32,
-                    is_explicit: track.is_explicit,
-                    availability,
-                    alternatives,
-                    unique_fields,
-                })
-            }
-            SpotifyUri::Episode { .. } => {
-                let episode = Episode::get(session, &uri).await?;
-
-                if episode.duration <= 0 {
-                    return Err(Error::unavailable(MetadataError::InvalidDuration(
-                        episode.duration,
-                    )));
-                }
-
-                if episode.is_explicit && session.filter_explicit_content() {
-                    return Err(Error::unavailable(MetadataError::ExplicitContentFiltered));
-                }
-
-                let uri_string = uri.to_uri();
-
-                let covers = get_covers(episode.covers, image_url);
-
-                let availability = available_for_user(
-                    &session.user_data(),
-                    &episode.availability,
-                    &episode.restrictions,
-                );
-
-                let unique_fields = UniqueFields::Episode {
-                    description: episode.description,
-                    publish_time: episode.publish_time,
-                    show_name: episode.show_name,
-                };
-
-                Ok(Self {
-                    track_id: uri,
-                    uri: uri_string,
-                    files: episode.audio,
-                    name: episode.name,
-                    covers,
-                    language: vec![episode.language],
-                    duration_ms: episode.duration as u32,
-                    is_explicit: episode.is_explicit,
-                    availability,
-                    alternatives: None,
-                    unique_fields,
-                })
-            }
+            SpotifyUri::Track { .. } => Self::get_track(session, uri).await,
+            SpotifyUri::Episode { .. } => Self::get_episode(session, uri).await,
             _ => Err(Error::unavailable(MetadataError::NonPlayable)),
         }
     }
-}
 
-fn get_covers(covers: Images, image_url: String) -> Vec<CoverImage> {
-    let mut covers = covers;
+    async fn get_track(session: &Session, uri: SpotifyUri) -> AudioItemResult {
+        let response = session.spclient().get_track_metadata(&uri).await?;
+        let track = protocol::metadata::Track::parse_from_bytes(&response)?;
 
-    covers.sort_by_key(|a| std::cmp::Reverse(a.width));
+        if track.duration() <= 0 {
+            return Err(Error::unavailable(MetadataError::InvalidDuration(
+                track.duration(),
+            )));
+        }
 
-    covers
-        .iter()
-        .filter_map(|cover| {
-            let cover_id = cover.id.to_string();
+        if track.explicit() && session.filter_explicit_content() {
+            return Err(Error::unavailable(MetadataError::ExplicitContentFiltered));
+        }
 
-            if !cover_id.is_empty() {
-                let cover_image = CoverImage {
-                    url: image_url.replace("{file_id}", &cover_id),
-                    size: cover.size,
-                    width: cover.width,
-                    height: cover.height,
-                };
+        let alternatives = track
+            .alternative
+            .iter()
+            .filter_map(|track| SpotifyUri::try_from(track).ok())
+            .collect::<Vec<_>>();
 
-                Some(cover_image)
+        let availability =
+            if Date::now_utc() < Date::from_timestamp_ms(track.earliest_live_timestamp())? {
+                Err(UnavailabilityReason::Embargo)
             } else {
-                None
-            }
+                available_for_user(
+                    &session.user_data(),
+                    &track.availability.as_slice().try_into()?,
+                    &track.restriction.as_slice().into(),
+                )
+            };
+
+        Ok(Self {
+            uri: uri.to_uri(),
+            files: track.file.as_slice().into(),
+            availability,
+            alternatives: (!alternatives.is_empty()).then_some(Tracks(alternatives)),
         })
-        .collect()
+    }
+
+    async fn get_episode(session: &Session, uri: SpotifyUri) -> AudioItemResult {
+        let response = session.spclient().get_episode_metadata(&uri).await?;
+        let episode = protocol::metadata::Episode::parse_from_bytes(&response)?;
+
+        if episode.duration() <= 0 {
+            return Err(Error::unavailable(MetadataError::InvalidDuration(
+                episode.duration(),
+            )));
+        }
+
+        if episode.explicit() && session.filter_explicit_content() {
+            return Err(Error::unavailable(MetadataError::ExplicitContentFiltered));
+        }
+
+        Ok(Self {
+            uri: uri.to_uri(),
+            files: episode.audio.as_slice().into(),
+            availability: available_for_user(
+                &session.user_data(),
+                &episode.availability.as_slice().try_into()?,
+                &episode.restriction.as_slice().into(),
+            ),
+            alternatives: None,
+        })
+    }
 }
 
 fn allowed_for_user(user_data: &UserData, restrictions: &Restrictions) -> AudioItemAvailability {
@@ -231,9 +119,6 @@ fn allowed_for_user(user_data: &UserData, restrictions: &Restrictions) -> AudioI
             .any(|restricted_catalogue| restricted_catalogue == user_catalogue)
     }) {
         if let Some(allowed_countries) = &premium_restriction.countries_allowed {
-            // A restriction will specify either a whitelast *or* a blacklist,
-            // but not both. So restrict availability if there is a whitelist
-            // and the country isn't on it.
             if allowed_countries.iter().any(|allowed| country == allowed) {
                 return Ok(());
             } else {
@@ -253,12 +138,11 @@ fn allowed_for_user(user_data: &UserData, restrictions: &Restrictions) -> AudioI
         }
     }
 
-    Ok(()) // no restrictions in place
+    Ok(())
 }
 
 fn available(availability: &Availabilities) -> AudioItemAvailability {
     if availability.is_empty() {
-        // not all items have availability specified
         return Ok(());
     }
 
