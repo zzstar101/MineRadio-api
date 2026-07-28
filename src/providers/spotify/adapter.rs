@@ -27,9 +27,6 @@ impl SpotifyAdapter {
     pub fn new(client: Arc<SpotifyClient>) -> Self {
         Self { client }
     }
-    pub fn shared() -> Arc<Self> {
-        Arc::new(Self::new(Arc::new(SpotifyClient::new())))
-    }
 }
 
 #[async_trait]
@@ -65,26 +62,45 @@ impl ProviderAdapter for SpotifyAdapter {
 
     async fn song_url(
         &self,
-        _track: &Track,
+        track: &Track,
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
+        let requested_quality = opts.and_then(|value| value.quality);
+        let resolved = self
+            .client
+            .resolve_audio(&track.source_id, requested_quality.as_deref())
+            .await?;
+        let quality = resolved.format;
         Ok(SongUrlResult {
+            url: Some(format!(
+                "/providers/spotify/audio-proxy?id={}&quality={}",
+                urlencoding::encode(&track.source_id),
+                urlencoding::encode(quality.id)
+            )),
+            proxied: true,
             provider: Some(ProviderId::Spotify),
-            playable: Some(false),
-            quality: opts.and_then(|value| value.quality),
-            requested_quality: Some("metadata_only".to_owned()),
-            reason: Some("spotify_metadata_only".to_owned()),
-            message: Some("Spotify Web API does not provide a playable audio URL".to_owned()),
+            trial: Some(false),
+            playable: Some(true),
+            level: Some(quality.id.to_owned()),
+            quality: Some(quality.label.to_owned()),
+            br: Some(quality.br),
+            requested_quality,
+            playback_key_ready: Some(true),
+            filename: Some(resolved.file_id.to_base16()),
+            message: Some("Spotify Premium playback is proxied through librespot".to_owned()),
             ..Default::default()
         })
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
+        let qualities = self.client.available_qualities(&track.source_id).await?;
         Ok(TrackQualityAvailability {
             provider: ProviderId::Spotify,
             track_id: track.id.clone(),
-            default_quality: None,
-            qualities: Vec::new(),
+            default_quality: qualities
+                .first()
+                .map(|quality| quality.request_quality.clone()),
+            qualities,
         })
     }
 

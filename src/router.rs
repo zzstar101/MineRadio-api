@@ -48,6 +48,10 @@ pub fn build(state: AppState) -> Router {
             "/providers/soda/audio-proxy",
             get(soda_audio_proxy).options(preflight),
         )
+        .route(
+            "/providers/spotify/audio-proxy",
+            get(spotify_audio_proxy).options(preflight),
+        )
         .route("/weather/radio", get(weather_radio).options(preflight))
         .route("/discover/home", get(discover_home).options(preflight))
         .route("/podcast/search", get(podcast_search).options(preflight))
@@ -191,6 +195,12 @@ struct SodaAudioProxyQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct SpotifyAudioProxyQuery {
+    id: Option<String>,
+    quality: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SearchQuery {
     keyword: Option<String>,
     q: Option<String>,
@@ -325,6 +335,20 @@ async fn soda_audio_proxy(
             target,
             request: request.map(Body::new),
             play_auth: query.play_auth,
+        })
+        .await
+}
+
+async fn spotify_audio_proxy(
+    State(state): State<AppState>,
+    Query(query): Query<SpotifyAudioProxyQuery>,
+) -> Response {
+    state
+        .services
+        .spotify_audio_proxy
+        .resolve(services::spotify_audio_proxy::SpotifyAudioProxyRequest {
+            track_id: query.id.unwrap_or_default(),
+            quality: query.quality,
         })
         .await
 }

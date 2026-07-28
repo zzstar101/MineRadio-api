@@ -13,4 +13,5 @@ pub mod shared_playlist_import;
 pub mod sidecar_log;
 pub mod soda_audio_proxy;
 pub mod soda_qr_login;
+pub mod spotify_audio_proxy;
 pub mod weather_radio;
