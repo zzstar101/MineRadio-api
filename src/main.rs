@@ -5,13 +5,13 @@ extern crate async_trait;
 
 mod config;
 mod http;
-#[path = "librespot_audio/lib.rs"]
+#[path = "vendor/librespot_audio/lib.rs"]
 mod librespot_audio;
-#[path = "librespot_core/lib.rs"]
+#[path = "vendor/librespot_core/lib.rs"]
 mod librespot_core;
-#[path = "librespot_metadata/lib.rs"]
+#[path = "vendor/librespot_metadata/lib.rs"]
 mod librespot_metadata;
-#[path = "librespot_protocol/lib.rs"]
+#[path = "vendor/librespot_protocol/lib.rs"]
 mod librespot_protocol;
 mod parsers;
 mod providers;

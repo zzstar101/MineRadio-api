@@ -19,6 +19,7 @@ fn compile_librespot_protocol() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let proto_dir = manifest_dir
         .join("src")
+        .join("vendor")
         .join("librespot_protocol")
         .join("proto");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
