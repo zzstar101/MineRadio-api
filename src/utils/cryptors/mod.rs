@@ -10,8 +10,9 @@ pub mod qrc;
 
 #[allow(unused_imports)]
 pub use crypto::{
-    AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa, from_hex, to_hex_lower,
-    to_hex_upper,
+    AesMode, CipherOutputFormat, decrypt_aes, decrypt_kugou_register_payload, encrypt_aes,
+    encrypt_kugou_register_payload, encrypt_kugou_register_rsa, encrypt_rsa, from_hex,
+    to_hex_lower, to_hex_upper,
 };
 #[allow(unused_imports)]
 pub use krc::decrypt_krc;

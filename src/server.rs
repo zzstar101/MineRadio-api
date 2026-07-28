@@ -20,6 +20,7 @@ use crate::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
         discover_home::DiscoverRequester,
         image_proxy::{ImageProxy, ImageProxyDeps, create_image_proxy},
+        kugou_qr_login::{KugouQrLoginService, create_kugou_qr_login_service},
         netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
         qq_qr_login::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
@@ -39,6 +40,7 @@ pub struct AppServices {
     pub audio_proxy: AudioProxy,
     pub discover_requester: Arc<dyn DiscoverRequester>,
     pub image_proxy: ImageProxy,
+    pub kugou_qr_login: Arc<KugouQrLoginService>,
     pub netease_qr_login: Arc<NeteaseQrLoginService>,
     pub podcast: PodcastService,
     pub qq_qr_login: Arc<QqQrLoginService>,
@@ -78,6 +80,7 @@ impl AppState {
                 podcast: create_podcast_service_with_client(netease_client),
                 audio_proxy: create_audio_proxy(AudioProxyDeps::default()),
                 image_proxy: create_image_proxy(ImageProxyDeps::default()),
+                kugou_qr_login: Arc::new(create_kugou_qr_login_service(Default::default())),
                 qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps::default())),
                 qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(
                     QqMusicQrLoginDeps::default(),

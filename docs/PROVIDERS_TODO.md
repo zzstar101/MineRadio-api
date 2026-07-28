@@ -71,9 +71,9 @@
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `KugouAdapter::shared` |
-| 二维码登录 | [ ] | [ ] | 未建立 Kugou QR 登录服务 |
-| 搜索 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
+| 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `KugouAdapter::shared` |
+| 二维码登录 | [x] | [x] | [kugou_qr_login.rs](../src/services/kugou_qr_login.rs) |
+| 搜索 | [x] | [x] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
 | 播放地址 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `song_url`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `song_url` |
 | 音质列表 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `lyric`，调用 `lyric_search` 与 `lyric_krc`/`lyric` |

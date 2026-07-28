@@ -4,6 +4,7 @@ pub mod cross_source_resolver;
 pub mod diagnostics;
 pub mod discover_home;
 pub mod image_proxy;
+pub mod kugou_qr_login;
 pub mod netease_qr_login;
 pub mod podcast;
 mod qq_mqtt_login;

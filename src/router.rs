@@ -590,6 +590,15 @@ async fn provider_login_qr_key(State(state): State<AppState>, Path(pid): Path<St
             }),
             Err(err) => internal_error(err.to_string()),
         },
+        "kugou" => match state.services.kugou_qr_login.create_key().await {
+            Ok(data) => ok(data),
+            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+                StatusCode::NOT_IMPLEMENTED,
+                "NOT_IMPLEMENTED",
+                "kugou qr login adapter is not configured",
+            ),
+            Err(err) => internal_error(err.to_string()),
+        },
         "netease" => match state.services.netease_qr_login.create_key().await {
             Ok(data) => ok(data),
             Err(err) => internal_error(err.to_string()),
@@ -617,6 +626,15 @@ async fn provider_login_qr_create(
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
         },
+        "kugou" => match state.services.kugou_qr_login.create_image(&key).await {
+            Ok(data) => ok(data),
+            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+                StatusCode::NOT_IMPLEMENTED,
+                "NOT_IMPLEMENTED",
+                "kugou qr login adapter is not configured",
+            ),
+            Err(err) => bad_request(err.to_string()),
+        },
         "netease" => match state.services.netease_qr_login.create_image(&key).await {
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
@@ -642,6 +660,15 @@ async fn provider_login_qr_check(
         },
         "soda" => match state.services.soda_qr_login.check(&key).await {
             Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
+        "kugou" => match state.services.kugou_qr_login.check(&key).await {
+            Ok(data) => ok(data),
+            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+                StatusCode::NOT_IMPLEMENTED,
+                "NOT_IMPLEMENTED",
+                "kugou qr login adapter is not configured",
+            ),
             Err(err) => bad_request(err.to_string()),
         },
         "netease" => match state.services.netease_qr_login.check(&key).await {
