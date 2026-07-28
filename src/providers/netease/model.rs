@@ -56,7 +56,7 @@ pub struct NeteaseLyric {
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseAlbumListResp {
     data: Vec<Album>,
-    has_more: bool,
+    //has_more: bool,
 }
 
 impl NeteaseAlbumListResp {
@@ -141,8 +141,6 @@ pub(super) struct NeteaseSearchAlbumResp {
 #[derive(Deserialize)]
 struct NeteaseSearchAlbumData {
     albums: Vec<NeteaseSearchAlbum>,
-    #[serde(rename = "albumCount")]
-    album_count: u64,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +154,6 @@ struct NeteaseSearchAlbum {
 
 #[derive(Deserialize)]
 struct NeteaseSearchAlbumArtist {
-    id: u64,
     name: String,
 }
 

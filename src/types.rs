@@ -63,16 +63,6 @@ pub enum VipLevel {
     None,
 }
 
-impl VipLevel {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Svip => "svip",
-            Self::Vip => "vip",
-            Self::None => "none",
-        }
-    }
-}
-
 /// 搜索类型
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
