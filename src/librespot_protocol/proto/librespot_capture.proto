@@ -1,0 +1,583 @@
+// Protobuf payloads used on the Spotify Access Point connection.
+//
+// This file consolidates the capture-relevant, dependency-free schemas already
+// present in this repository. It is intentionally not part of protocol/build.rs.
+//
+// An AP TCP stream is not a protobuf stream:
+//   1. Before the Shannon session is established, ClientHello and
+//      APResponseMessage have a 2-byte prefix and a 4-byte big-endian length.
+//   2. Afterward, every AP packet is Shannon encrypted. Once decrypted, it is
+//      [command: 1 byte][payload length: 2 bytes, big-endian][payload][MAC: 4 bytes].
+//   3. Decode the payload according to the command. Login (0xab) carries
+//      ClientResponseEncrypted, APWelcome (0xac) carries APWelcome, AuthFailure
+//      (0xad) carries APLoginFailed, and Mercury packets (0xb2 through 0xb5)
+//      contain a separate multipart envelope whose first part is Header.
+//
+// The Mercury multipart envelope is implemented in core/src/mercury/types.rs
+// and core/src/mercury/mod.rs; it is deliberately not represented as a protobuf
+// message because its fields are binary length-prefixed values.
+
+syntax = "proto2";
+
+// Source: keyexchange.proto
+message ClientHello {
+    required BuildInfo build_info = 0xa;
+    repeated Fingerprint fingerprints_supported = 0x14;
+    repeated Cryptosuite cryptosuites_supported = 0x1e;
+    repeated Powscheme powschemes_supported = 0x28;
+    required LoginCryptoHelloUnion login_crypto_hello = 0x32;
+    required bytes client_nonce = 0x3c;
+    optional bytes padding = 0x46;
+    optional FeatureSet feature_set = 0x50;
+}
+
+message BuildInfo {
+    required Product product = 0xa;
+    repeated ProductFlags product_flags = 0x14;
+    required Platform platform = 0x1e;
+    required uint64 version = 0x28;
+}
+
+enum Product {
+    PRODUCT_CLIENT = 0x0;
+    PRODUCT_LIBSPOTIFY = 0x1;
+    PRODUCT_MOBILE = 0x2;
+    PRODUCT_PARTNER = 0x3;
+    PRODUCT_LIBSPOTIFY_EMBEDDED = 0x5;
+}
+
+enum ProductFlags {
+    PRODUCT_FLAG_NONE = 0x0;
+    PRODUCT_FLAG_DEV_BUILD = 0x1;
+}
+
+enum Platform {
+    PLATFORM_WIN32_X86 = 0x0;
+    PLATFORM_OSX_X86 = 0x1;
+    PLATFORM_LINUX_X86 = 0x2;
+    PLATFORM_IPHONE_ARM = 0x3;
+    PLATFORM_S60_ARM = 0x4;
+    PLATFORM_OSX_PPC = 0x5;
+    PLATFORM_ANDROID_ARM = 0x6;
+    PLATFORM_WINDOWS_CE_ARM = 0x7;
+    PLATFORM_LINUX_X86_64 = 0x8;
+    PLATFORM_OSX_X86_64 = 0x9;
+    PLATFORM_PALM_ARM = 0xa;
+    PLATFORM_LINUX_SH = 0xb;
+    PLATFORM_FREEBSD_X86 = 0xc;
+    PLATFORM_FREEBSD_X86_64 = 0xd;
+    PLATFORM_BLACKBERRY_ARM = 0xe;
+    PLATFORM_SONOS = 0xf;
+    PLATFORM_LINUX_MIPS = 0x10;
+    PLATFORM_LINUX_ARM = 0x11;
+    PLATFORM_LOGITECH_ARM = 0x12;
+    PLATFORM_LINUX_BLACKFIN = 0x13;
+    PLATFORM_WP7_ARM = 0x14;
+    PLATFORM_ONKYO_ARM = 0x15;
+    PLATFORM_QNXNTO_ARM = 0x16;
+    PLATFORM_BCO_ARM = 0x17;
+    PLATFORM_WEBPLAYER = 0x18;
+    PLATFORM_WP8_ARM = 0x19;
+    PLATFORM_WP8_X86 = 0x1a;
+    PLATFORM_WINRT_ARM = 0x1b;
+    PLATFORM_WINRT_X86 = 0x1c;
+    PLATFORM_WINRT_X86_64 = 0x1d;
+    PLATFORM_FRONTIER = 0x1e;
+    PLATFORM_AMIGA_PPC = 0x1f;
+    PLATFORM_NANRADIO_NRX901 = 0x20;
+    PLATFORM_HARMAN_ARM = 0x21;
+    PLATFORM_SONY_PS3 = 0x22;
+    PLATFORM_SONY_PS4 = 0x23;
+    PLATFORM_IPHONE_ARM64 = 0x24;
+    PLATFORM_RTEMS_PPC = 0x25;
+    PLATFORM_GENERIC_PARTNER = 0x26;
+    PLATFORM_WIN32_X86_64 = 0x27;
+    PLATFORM_WATCHOS = 0x28;
+}
+
+enum Fingerprint {
+    FINGERPRINT_GRAIN = 0x0;
+    FINGERPRINT_HMAC_RIPEMD = 0x1;
+}
+
+enum Cryptosuite {
+    CRYPTO_SUITE_SHANNON = 0x0;
+    CRYPTO_SUITE_RC4_SHA1_HMAC = 0x1;
+}
+
+enum Powscheme {
+    POW_HASH_CASH = 0x0;
+}
+
+message LoginCryptoHelloUnion {
+    optional LoginCryptoDiffieHellmanHello diffie_hellman = 0xa;
+}
+
+message LoginCryptoDiffieHellmanHello {
+    required bytes gc = 0xa;
+    required uint32 server_keys_known = 0x14;
+}
+
+message FeatureSet {
+    optional bool autoupdate2 = 0x1;
+    optional bool current_location = 0x2;
+}
+
+message APResponseMessage {
+    optional APChallenge challenge = 0xa;
+    optional UpgradeRequiredMessage upgrade = 0x14;
+    optional APLoginFailed login_failed = 0x1e;
+}
+
+message APChallenge {
+    required LoginCryptoChallengeUnion login_crypto_challenge = 0xa;
+    required FingerprintChallengeUnion fingerprint_challenge = 0x14;
+    required PoWChallengeUnion pow_challenge = 0x1e;
+    required CryptoChallengeUnion crypto_challenge = 0x28;
+    required bytes server_nonce = 0x32;
+    optional bytes padding = 0x3c;
+}
+
+message LoginCryptoChallengeUnion {
+    optional LoginCryptoDiffieHellmanChallenge diffie_hellman = 0xa;
+}
+
+message LoginCryptoDiffieHellmanChallenge {
+    required bytes gs = 0xa;
+    required int32 server_signature_key = 0x14;
+    required bytes gs_signature = 0x1e;
+}
+
+message FingerprintChallengeUnion {
+    optional FingerprintGrainChallenge grain = 0xa;
+    optional FingerprintHmacRipemdChallenge hmac_ripemd = 0x14;
+}
+
+message FingerprintGrainChallenge {
+    required bytes kek = 0xa;
+}
+
+message FingerprintHmacRipemdChallenge {
+    required bytes challenge = 0xa;
+}
+
+message PoWChallengeUnion {
+    optional PoWHashCashChallenge hash_cash = 0xa;
+}
+
+message PoWHashCashChallenge {
+    optional bytes prefix = 0xa;
+    optional int32 length = 0x14;
+    optional int32 target = 0x1e;
+}
+
+message CryptoChallengeUnion {
+    optional CryptoShannonChallenge shannon = 0xa;
+    optional CryptoRc4Sha1HmacChallenge rc4_sha1_hmac = 0x14;
+}
+
+message CryptoShannonChallenge {}
+message CryptoRc4Sha1HmacChallenge {}
+
+message UpgradeRequiredMessage {
+    required bytes upgrade_signed_part = 0xa;
+    required bytes signature = 0x14;
+    optional string http_suffix = 0x1e;
+}
+
+message APLoginFailed {
+    required ErrorCode error_code = 0xa;
+    optional int32 retry_delay = 0x14;
+    optional int32 expiry = 0x1e;
+    optional string error_description = 0x28;
+}
+
+enum ErrorCode {
+    ProtocolError = 0x0;
+    TryAnotherAP = 0x2;
+    BadConnectionId = 0x5;
+    TravelRestriction = 0x9;
+    PremiumAccountRequired = 0xb;
+    BadCredentials = 0xc;
+    CouldNotValidateCredentials = 0xd;
+    AccountExists = 0xe;
+    ExtraVerificationRequired = 0xf;
+    InvalidAppKey = 0x10;
+    ApplicationBanned = 0x11;
+}
+
+message ClientResponsePlaintext {
+    required LoginCryptoResponseUnion login_crypto_response = 0xa;
+    required PoWResponseUnion pow_response = 0x14;
+    required CryptoResponseUnion crypto_response = 0x1e;
+}
+
+message LoginCryptoResponseUnion {
+    optional LoginCryptoDiffieHellmanResponse diffie_hellman = 0xa;
+}
+
+message LoginCryptoDiffieHellmanResponse {
+    required bytes hmac = 0xa;
+}
+
+message PoWResponseUnion {
+    optional PoWHashCashResponse hash_cash = 0xa;
+}
+
+message PoWHashCashResponse {
+    required bytes hash_suffix = 0xa;
+}
+
+message CryptoResponseUnion {
+    optional CryptoShannonResponse shannon = 0xa;
+    optional CryptoRc4Sha1HmacResponse rc4_sha1_hmac = 0x14;
+}
+
+message CryptoShannonResponse {
+    optional int32 dummy = 0x1;
+}
+
+message CryptoRc4Sha1HmacResponse {
+    optional int32 dummy = 0x1;
+}
+
+// Source: authentication.proto
+message ClientResponseEncrypted {
+    required LoginCredentials login_credentials = 0xa;
+    optional AccountCreation account_creation = 0x14;
+    optional FingerprintResponseUnion fingerprint_response = 0x1e;
+    optional PeerTicketUnion peer_ticket = 0x28;
+    required SystemInfo system_info = 0x32;
+    optional string platform_model = 0x3c;
+    optional string version_string = 0x46;
+    optional LibspotifyAppKey appkey = 0x50;
+    optional ClientInfo client_info = 0x5a;
+}
+
+message LoginCredentials {
+    optional string username = 0xa;
+    required AuthenticationType typ = 0x14;
+    optional bytes auth_data = 0x1e;
+}
+
+enum AuthenticationType {
+    AUTHENTICATION_USER_PASS = 0x0;
+    AUTHENTICATION_STORED_SPOTIFY_CREDENTIALS = 0x1;
+    AUTHENTICATION_STORED_FACEBOOK_CREDENTIALS = 0x2;
+    AUTHENTICATION_SPOTIFY_TOKEN = 0x3;
+    AUTHENTICATION_FACEBOOK_TOKEN = 0x4;
+}
+
+enum AccountCreation {
+    ACCOUNT_CREATION_ALWAYS_PROMPT = 0x1;
+    ACCOUNT_CREATION_ALWAYS_CREATE = 0x3;
+}
+
+message FingerprintResponseUnion {
+    optional FingerprintGrainResponse grain = 0xa;
+    optional FingerprintHmacRipemdResponse hmac_ripemd = 0x14;
+}
+
+message FingerprintGrainResponse {
+    required bytes encrypted_key = 0xa;
+}
+
+message FingerprintHmacRipemdResponse {
+    required bytes hmac = 0xa;
+}
+
+message PeerTicketUnion {
+    optional PeerTicketPublicKey public_key = 0xa;
+    optional PeerTicketOld old_ticket = 0x14;
+}
+
+message PeerTicketPublicKey {
+    required bytes public_key = 0xa;
+}
+
+message PeerTicketOld {
+    required bytes peer_ticket = 0xa;
+    required bytes peer_ticket_signature = 0x14;
+}
+
+message SystemInfo {
+    required CpuFamily cpu_family = 0xa;
+    optional uint32 cpu_subtype = 0x14;
+    optional uint32 cpu_ext = 0x1e;
+    optional Brand brand = 0x28;
+    optional uint32 brand_flags = 0x32;
+    required Os os = 0x3c;
+    optional uint32 os_version = 0x46;
+    optional uint32 os_ext = 0x50;
+    optional string system_information_string = 0x5a;
+    optional string device_id = 0x64;
+}
+
+enum CpuFamily {
+    CPU_UNKNOWN = 0x0;
+    CPU_X86 = 0x1;
+    CPU_X86_64 = 0x2;
+    CPU_PPC = 0x3;
+    CPU_PPC_64 = 0x4;
+    CPU_ARM = 0x5;
+    CPU_IA64 = 0x6;
+    CPU_SH = 0x7;
+    CPU_MIPS = 0x8;
+    CPU_BLACKFIN = 0x9;
+}
+
+enum Brand {
+    BRAND_UNBRANDED = 0x0;
+    BRAND_INQ = 0x1;
+    BRAND_HTC = 0x2;
+    BRAND_NOKIA = 0x3;
+}
+
+enum Os {
+    OS_UNKNOWN = 0x0;
+    OS_WINDOWS = 0x1;
+    OS_OSX = 0x2;
+    OS_IPHONE = 0x3;
+    OS_S60 = 0x4;
+    OS_LINUX = 0x5;
+    OS_WINDOWS_CE = 0x6;
+    OS_ANDROID = 0x7;
+    OS_PALM = 0x8;
+    OS_FREEBSD = 0x9;
+    OS_BLACKBERRY = 0xa;
+    OS_SONOS = 0xb;
+    OS_LOGITECH = 0xc;
+    OS_WP7 = 0xd;
+    OS_ONKYO = 0xe;
+    OS_PHILIPS = 0xf;
+    OS_WD = 0x10;
+    OS_VOLVO = 0x11;
+    OS_TIVO = 0x12;
+    OS_AWOX = 0x13;
+    OS_MEEGO = 0x14;
+    OS_QNXNTO = 0x15;
+    OS_BCO = 0x16;
+}
+
+message LibspotifyAppKey {
+    required uint32 version = 0x1;
+    required bytes devkey = 0x2;
+    required bytes signature = 0x3;
+    required string useragent = 0x4;
+    required bytes callback_hash = 0x5;
+}
+
+message ClientInfo {
+    optional bool limited = 0x1;
+    optional ClientInfoFacebook fb = 0x2;
+    optional string language = 0x3;
+}
+
+message ClientInfoFacebook {
+    optional string machine_id = 0x1;
+}
+
+message APWelcome {
+    required string canonical_username = 0xa;
+    required AccountType account_type_logged_in = 0x14;
+    required AccountType credentials_type_logged_in = 0x19;
+    required AuthenticationType reusable_auth_credentials_type = 0x1e;
+    required bytes reusable_auth_credentials = 0x28;
+    optional bytes lfs_secret = 0x32;
+    optional AccountInfo account_info = 0x3c;
+    optional AccountInfoFacebook fb = 0x46;
+}
+
+enum AccountType {
+    Spotify = 0x0;
+    Facebook = 0x1;
+}
+
+message AccountInfo {
+    optional AccountInfoSpotify spotify = 0x1;
+    optional AccountInfoFacebook facebook = 0x2;
+}
+
+message AccountInfoSpotify {}
+
+message AccountInfoFacebook {
+    optional string access_token = 0x1;
+    optional string machine_id = 0x2;
+}
+
+// Source: mercury.proto
+message MercuryMultiGetRequest {
+    repeated MercuryRequest request = 0x1;
+}
+
+message MercuryMultiGetReply {
+    repeated MercuryReply reply = 0x1;
+}
+
+message MercuryRequest {
+    optional string uri = 0x1;
+    optional string content_type = 0x2;
+    optional bytes body = 0x3;
+    optional bytes etag = 0x4;
+}
+
+message MercuryReply {
+    optional sint32 status_code = 0x1;
+    optional string status_message = 0x2;
+    optional CachePolicy cache_policy = 0x3;
+    enum CachePolicy {
+        CACHE_NO = 0x1;
+        CACHE_PRIVATE = 0x2;
+        CACHE_PUBLIC = 0x3;
+    }
+    optional sint32 ttl = 0x4;
+    optional bytes etag = 0x5;
+    optional string content_type = 0x6;
+    optional bytes body = 0x7;
+}
+
+message Header {
+    optional string uri = 0x01;
+    optional string content_type = 0x02;
+    optional string method = 0x03;
+    optional sint32 status_code = 0x04;
+    repeated UserField user_fields = 0x06;
+}
+
+message UserField {
+    optional string key = 0x01;
+    optional bytes value = 0x02;
+}
+
+// Source: spirc.proto. This is legacy Connect/Spirc payload format.
+message Frame {
+    optional uint32 version = 0x1;
+    optional string ident = 0x2;
+    optional string protocol_version = 0x3;
+    optional uint32 seq_nr = 0x4;
+    optional MessageType typ = 0x5;
+    optional DeviceState device_state = 0x7;
+    optional Goodbye goodbye = 0xb;
+    optional State state = 0xc;
+    optional uint32 position = 0xd;
+    optional uint32 volume = 0xe;
+    optional int64 state_update_id = 0x11;
+    repeated string recipient = 0x12;
+    optional bytes context_player_state = 0x13;
+    optional string new_name = 0x14;
+    optional Metadata metadata = 0x19;
+}
+
+enum MessageType {
+    kMessageTypeHello = 0x1;
+    kMessageTypeGoodbye = 0x2;
+    kMessageTypeProbe = 0x3;
+    kMessageTypeNotify = 0xa;
+    kMessageTypeLoad = 0x14;
+    kMessageTypePlay = 0x15;
+    kMessageTypePause = 0x16;
+    kMessageTypePlayPause = 0x17;
+    kMessageTypeSeek = 0x18;
+    kMessageTypePrev = 0x19;
+    kMessageTypeNext = 0x1a;
+    kMessageTypeVolume = 0x1b;
+    kMessageTypeShuffle = 0x1c;
+    kMessageTypeRepeat = 0x1d;
+    kMessageTypeVolumeDown = 0x1f;
+    kMessageTypeVolumeUp = 0x20;
+    kMessageTypeReplace = 0x21;
+    kMessageTypeLogout = 0x22;
+    kMessageTypeAction = 0x23;
+    kMessageTypeRename = 0x24;
+    kMessageTypeUpdateMetadata = 0x80;
+}
+
+message DeviceState {
+    optional string sw_version = 0x1;
+    optional bool is_active = 0xa;
+    optional bool can_play = 0xb;
+    optional uint32 volume = 0xc;
+    optional string name = 0xd;
+    optional uint32 error_code = 0xe;
+    optional int64 became_active_at = 0xf;
+    optional string error_message = 0x10;
+    repeated Capability capabilities = 0x11;
+    optional string context_player_error = 0x14;
+    repeated Metadata metadata = 0x19;
+}
+
+message Capability {
+    optional CapabilityType typ = 0x1;
+    repeated int64 intValue = 0x2;
+    repeated string stringValue = 0x3;
+}
+
+enum CapabilityType {
+    kSupportedContexts = 0x1;
+    kCanBePlayer = 0x2;
+    kRestrictToLocal = 0x3;
+    kDeviceType = 0x4;
+    kGaiaEqConnectId = 0x5;
+    kSupportsLogout = 0x6;
+    kIsObservable = 0x7;
+    kVolumeSteps = 0x8;
+    kSupportedTypes = 0x9;
+    kCommandAcks = 0xa;
+    kSupportsRename = 0xb;
+    kHidden = 0xc;
+    kSupportsPlaylistV2 = 0xd;
+    kSupportsExternalEpisodes = 0xe;
+}
+
+message Goodbye {
+    optional string reason = 0x1;
+}
+
+message State {
+    optional string context_uri = 0x2;
+    optional uint32 index = 0x3;
+    optional uint32 position_ms = 0x4;
+    optional PlayStatus status = 0x5;
+    optional uint64 position_measured_at = 0x7;
+    optional string context_description = 0x8;
+    optional bool shuffle = 0xd;
+    optional bool repeat = 0xe;
+    optional string last_command_ident = 0x14;
+    optional uint32 last_command_msgid = 0x15;
+    optional bool playing_from_fallback = 0x18;
+    optional uint32 row = 0x19;
+    optional uint32 playing_track_index = 0x1a;
+    repeated TrackRef track = 0x1b;
+    optional Ad ad = 0x1c;
+}
+
+enum PlayStatus {
+    kPlayStatusStop = 0x0;
+    kPlayStatusPlay = 0x1;
+    kPlayStatusPause = 0x2;
+    kPlayStatusLoading = 0x3;
+}
+
+message TrackRef {
+    optional bytes gid = 0x1;
+    optional string uri = 0x2;
+    optional bool queued = 0x3;
+    optional string context = 0x4;
+}
+
+message Ad {
+    optional int32 next = 0x1;
+    optional bytes ogg_fid = 0x2;
+    optional bytes image_fid = 0x3;
+    optional int32 duration = 0x4;
+    optional string click_url = 0x5;
+    optional string impression_url = 0x6;
+    optional string product = 0x7;
+    optional string advertiser = 0x8;
+    optional bytes gid = 0x9;
+}
+
+message Metadata {
+    optional string type = 0x1;
+    optional string metadata = 0x2;
+}

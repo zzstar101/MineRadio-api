@@ -1,17 +1,17 @@
 use std::{env, io::Read, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use librespot_audio::{AudioDecrypt, AudioFile};
-use librespot_core::{
-    FileId, Session, SpotifyId, SpotifyUri, authentication::Credentials, cdn_url::CdnUrl,
-    config::SessionConfig, error::ErrorKind,
-};
-use librespot_metadata::audio::{AudioFileFormat, AudioFiles, AudioItem};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::{
+    librespot_audio::{AudioDecrypt, AudioFile},
+    librespot_core::{
+        FileId, Session, SpotifyId, SpotifyUri, authentication::Credentials, cdn_url::CdnUrl,
+        config::SessionConfig, error::ErrorKind,
+    },
+    librespot_metadata::audio::{AudioFileFormat, AudioFiles, AudioItem},
     providers::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
@@ -605,7 +605,7 @@ fn audio_mime_type(format: AudioFileFormat) -> &'static str {
     AudioFiles::mime_type(format).unwrap_or("application/octet-stream")
 }
 
-fn librespot_error(error: librespot_core::Error) -> ProviderError {
+fn librespot_error(error: crate::librespot_core::Error) -> ProviderError {
     let code = match error.kind {
         ErrorKind::Unauthenticated | ErrorKind::PermissionDenied => {
             ProviderErrorCode::LoginRequired
