@@ -96,8 +96,8 @@
 | 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `SpotifyAdapter::shared` |
 | 二维码登录 | [ ] | [ ] | 未建立 Spotify QR 登录服务 |
 | 搜索 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `search_track` |
-| 播放地址 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `song_url`（官方 API 不提供音频直链） |
-| 音质列表 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `track_qualities`（官方 API 不声明可用音质） |
+| 播放地址 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `song_url`，通过 librespot 音频代理返回播放地址 |
+| 音质列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `track_qualities`，调用 `SpotifyClient::available_qualities` |
 | 歌词 | [ ] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `lyric`（官方 API 不提供歌词） |
 | 歌单列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `playlist_list` |
 | 歌单详情 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `playlist_detail` |
