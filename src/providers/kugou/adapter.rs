@@ -18,9 +18,9 @@ use crate::{
     },
     services::auth_session,
     types::{
-        LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId,
-        ProviderLoginStatus, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track,
-        TrackQualityAvailability, TrackQualityOption,
+        AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
 };
 
@@ -129,16 +129,15 @@ impl KugouAdapter {
     }
 
     async fn favorite_playlist_id(&self) -> ProviderResult<String> {
-        let body = self.client.playlist_list().await?;
-        playlist_items(&body)
+        let body = self.client.user_collection_list().await?;
+        body.standardize_playlists()
+            .unwrap_or_default()
             .into_iter()
             .find(|item| {
-                item.get("is_default").and_then(Value::as_i64) == Some(1)
-                    || item.get("default").and_then(Value::as_i64) == Some(1)
-                    || item_name(item).to_ascii_lowercase().contains("favorite")
-                    || item_name(item).to_ascii_lowercase().contains("liked")
+                item.name.to_ascii_lowercase().contains("favorite")
+                    || item.name.to_ascii_lowercase().contains("liked")
             })
-            .and_then(playlist_id)
+            .map(|item| item.id)
             .ok_or_else(|| invalid_response("kugou favorite playlist not found"))
     }
 }
@@ -293,26 +292,12 @@ impl ProviderAdapter for KugouAdapter {
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        let body = self.client.playlist_list().await?;
-        Ok(playlist_items(&body)
-            .into_iter()
-            .filter_map(|item| {
-                let id = playlist_id(item)?;
-                Some(PlaylistSummary {
-                    provider: ProviderId::Kugou,
-                    id,
-                    name: item_name(item),
-                    cover_url: cover_url(item),
-                    track_count: number(
-                        item,
-                        &["count", "m_count", "song_count", "total", "list_count"],
-                    )
-                    .and_then(|value| value.try_into().ok()),
-                    track_ids: Vec::new(),
-                    collected: None,
-                })
-            })
-            .collect())
+        self
+            .client
+            .user_collection_list()
+            .await?
+            .standardize_playlists()
+            .ok_or_else(|| no_result("playlist_list"))
     }
 
     async fn playlist_detail(
@@ -335,6 +320,74 @@ impl ProviderAdapter for KugouAdapter {
             collected: None,
             tracks,
             has_more: Some(has_more),
+        })
+    }
+
+    async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
+        self
+            .client
+            .user_collection_list()
+            .await?
+            .standardize_albums()
+            .ok_or_else(|| no_result("album_list"))
+    }
+
+    async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
+        let detail_body = self.client.album_detail(id).await?;
+        let page_size = limit.clamp(1, 50);
+        let page = offset / page_size + 1;
+        let page_offset = offset % page_size;
+        let request_size = (page_size + page_offset).min(50);
+        let songs_body = self.client.album_songs(id, page, request_size).await?;
+        let raw_tracks = album_song_items(&songs_body);
+        let tracks = raw_tracks
+            .into_iter()
+            .filter_map(|raw| {
+                let (track, meta) = map_kugou_song(raw);
+                (!track.source_id.is_empty()).then(|| {
+                    self.remember(&track, meta);
+                    track
+                })
+            })
+            .skip(page_offset as usize)
+            .take(page_size as usize)
+            .collect::<Vec<_>>();
+        let album = album_info(&detail_body, id)
+            .or_else(|| album_song_items(&songs_body).into_iter().next());
+        let first_track = tracks.first();
+        let track_count = album_total(&songs_body)
+            .or_else(|| (!tracks.is_empty()).then_some(tracks.len() as u32 + offset));
+        let album_id = album
+            .map(|value| string(value, &["album_id", "AlbumID"]))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| id.to_owned());
+        let name = album
+            .map(|value| string(value, &["album_name", "AlbumName", "name"]))
+            .filter(|value| !value.is_empty())
+            .or_else(|| first_track.map(|track| track.album.clone()))
+            .unwrap_or_default();
+        let artists = album
+            .map(album_artists)
+            .filter(|artists| !artists.is_empty())
+            .or_else(|| first_track.map(|track| track.artists.clone()))
+            .unwrap_or_default();
+        let cover_url = album
+            .map(album_cover_url)
+            .filter(|value| !value.is_empty())
+            .or_else(|| first_track.map(|track| track.cover_url.clone()))
+            .unwrap_or_default();
+        let has_more = track_count.map(|total| offset + (tracks.len() as u32) < total);
+        Ok(AlbumDetail {
+            provider: ProviderId::Kugou,
+            id: album_id,
+            name,
+            artists,
+            cover_url,
+            track_count,
+            track_ids: tracks.iter().map(|track| track.id.clone()).collect(),
+            collected: None,
+            tracks,
+            has_more,
         })
     }
 
@@ -474,6 +527,109 @@ impl KugouAdapter {
     }
 }
 
+fn album_song_items(body: &Value) -> Vec<&Value> {
+    if let Some(items) = body.as_array() {
+        return items.iter().collect();
+    }
+    for path in [
+        "/data/info",
+        "/data/list",
+        "/data/lists",
+        "/data/songs",
+        "/data/album_audio",
+        "/info",
+        "/list",
+        "/lists",
+        "/songs",
+    ] {
+        if let Some(items) = body.pointer(path).and_then(Value::as_array) {
+            return items.iter().collect();
+        }
+    }
+    Vec::new()
+}
+
+fn album_info<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
+    let data = body.get("data").unwrap_or(body);
+    if let Some(items) = data.as_array() {
+        return items
+            .iter()
+            .find(|item| string(item, &["album_id", "AlbumID"]) == id)
+            .or_else(|| items.first());
+    }
+    ["album", "albums", "info"]
+        .into_iter()
+        .find_map(|key| data.get(key))
+        .and_then(|value| {
+            value
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| string(item, &["album_id", "AlbumID"]) == id)
+                        .or_else(|| items.first())
+                })
+                .or_else(|| value.is_object().then_some(value))
+        })
+        .or_else(|| data.is_object().then_some(data))
+}
+
+fn album_total(body: &Value) -> Option<u32> {
+    [
+        "/data/total",
+        "/data/total_count",
+        "/data/count",
+        "/total",
+        "/total_count",
+        "/count",
+    ]
+    .into_iter()
+    .find_map(|path| body.pointer(path).and_then(value_u32))
+}
+
+fn album_artists(album: &Value) -> Vec<String> {
+    if let Some(authors) = album.get("authors").and_then(Value::as_array) {
+        let artists = authors
+            .iter()
+            .map(|author| string(author, &["author_name", "name", "AuthorName"]))
+            .filter(|artist| !artist.is_empty())
+            .collect::<Vec<_>>();
+        if !artists.is_empty() {
+            return artists;
+        }
+    }
+    split_artist_names(&string(
+        album,
+        &["author_name", "authors", "artist", "singer"],
+    ))
+}
+
+fn album_cover_url(album: &Value) -> String {
+    string(
+        album,
+        &["sizable_cover", "album_img", "album_image", "cover", "img"],
+    )
+    .replace("{size}", "400")
+    .replace("{width}", "400")
+    .replace("{height}", "400")
+}
+
+fn split_artist_names(value: &str) -> Vec<String> {
+    value
+        .split([',', '/', '&', ';'])
+        .map(str::trim)
+        .filter(|artist| !artist.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn value_u32(value: &Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
 fn search_items(body: &Value) -> impl Iterator<Item = &Value> {
     body.pointer("/data/lists")
         .or_else(|| body.get("lists"))
@@ -481,18 +637,7 @@ fn search_items(body: &Value) -> impl Iterator<Item = &Value> {
         .into_iter()
         .flatten()
 }
-fn playlist_items(body: &Value) -> Vec<&Value> {
-    let data = body.get("data").unwrap_or(body);
-    if let Some(items) = data.get("info").and_then(Value::as_array) {
-        return items.iter().collect();
-    }
-    let data = data.get("info").unwrap_or(data);
-    ["info", "collect", "love", "self", "list"]
-        .into_iter()
-        .filter_map(move |key| data.get(key).and_then(Value::as_array))
-        .flatten()
-        .collect()
-}
+
 fn playlist_track_items(body: &Value) -> Vec<&Value> {
     let data = body.get("data").unwrap_or(body);
     let chunk = data
@@ -511,35 +656,14 @@ fn playlist_track_items(body: &Value) -> Vec<&Value> {
         })
         .unwrap_or_default()
 }
+
 fn playlist_total(body: &Value) -> u32 {
     body.pointer("/data/count")
         .and_then(Value::as_u64)
         .unwrap_or_default()
         .min(u32::MAX as u64) as u32
 }
-fn playlist_id(item: &Value) -> Option<String> {
-    let id = string(
-        item,
-        &[
-            "global_collection_id",
-            "specialid",
-            "listid",
-            "list_id",
-            "id",
-        ],
-    );
-    (!id.is_empty()).then_some(id)
-}
-fn item_name(item: &Value) -> String {
-    string(item, &["name", "listname", "specialname", "title"])
-}
-fn cover_url(item: &Value) -> String {
-    string(
-        item,
-        &["pic", "img", "imgurl", "sizable_cover", "create_user_pic"],
-    )
-    .replace("{size}", "240")
-}
+
 fn string(item: &Value, keys: &[&str]) -> String {
     keys.iter()
         .find_map(|key| item.get(*key))
@@ -551,6 +675,7 @@ fn string(item: &Value, keys: &[&str]) -> String {
         })
         .unwrap_or_default()
 }
+
 fn number(item: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| item.get(*key))
@@ -560,6 +685,7 @@ fn number(item: &Value, keys: &[&str]) -> Option<u64> {
                 .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
         })
 }
+
 fn parse_playlist_id(id: &str) -> Option<u64> {
     if let Ok(id) = id.parse() {
         return Some(id);
@@ -570,6 +696,7 @@ fn parse_playlist_id(id: &str) -> Option<u64> {
         .collect::<Vec<_>>();
     parts.get(2)?.parse().ok()
 }
+
 fn normalize_quality(value: Option<&str>) -> &'static str {
     match value.unwrap_or_default().to_ascii_lowercase().as_str() {
         "jymaster" | "viper_tape" => "jymaster",
@@ -589,6 +716,7 @@ fn quality_parameter(quality: &str) -> &'static str {
         _ => "128",
     }
 }
+
 fn hash_candidates<'a>(
     default_hash: &'a str,
     meta: &'a KugouTrackMeta,
@@ -610,6 +738,7 @@ fn hash_candidates<'a>(
         .filter_map(|(level, hash)| (!hash.is_empty()).then_some((*hash, *level)))
         .collect()
 }
+
 fn play_url(body: &Value) -> Option<String> {
     [
         "/url/0",
@@ -628,6 +757,7 @@ fn play_url(body: &Value) -> Option<String> {
     .map(|url| url.replace("\\/", "/"))
     .filter(|url| !url.is_empty())
 }
+
 fn empty_lyric(track: &Track) -> LyricPayload {
     LyricPayload {
         provider: ProviderId::Kugou,
@@ -635,6 +765,18 @@ fn empty_lyric(track: &Track) -> LyricPayload {
         ..Default::default()
     }
 }
+
+fn no_result(action: &str) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::NoResult,
+        provider: ProviderId::Qq,
+        message: format!("{} no result", action),
+        retryable: false,
+        action: Some(action.to_string()),
+        raw_message: None,
+    }
+}
+
 fn invalid_response(message: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::InvalidResponse,

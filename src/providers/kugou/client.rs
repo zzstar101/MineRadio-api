@@ -17,8 +17,8 @@ use crate::providers::{
 use crate::services::auth_session;
 
 use super::model::{
-    KugouAddSongRequest, KugouAuth, KugouDeleteSongRequest, KugouLyricResp, KugouLyricSearchResp,
-    KugouPlaylistListRequest, KugouPlaylistTracksRequest,
+    KugouAddSongRequest, KugouAuth, KugouCollectionResp, KugouDeleteSongRequest, KugouLyricResp,
+    KugouLyricSearchResp, KugouPlaylistListRequest, KugouPlaylistTracksRequest,
 };
 
 const GATEWAY_URL: &str = "https://gateway.kugou.com";
@@ -298,7 +298,7 @@ impl KugouClient {
         .await
     }
 
-    pub(super) async fn playlist_list(&self) -> ProviderResult<Value> {
+    pub(super) async fn user_collection_list(&self) -> ProviderResult<KugouCollectionResp> {
         let (cookie, auth) = self.current_auth().await;
         self.ensure_playback(&auth)?;
         let payload = KugouPlaylistListRequest {
@@ -309,14 +309,23 @@ impl KugouClient {
             page: 1,
             pagesize: 50,
         };
-        self.h5_json(
-            "/v7/get_all_list",
-            "cloudlist.service.kugou.com",
-            &auth,
-            cookie,
-            &payload,
-        )
-        .await
+        let body = self
+            .h5_json(
+                "/v7/get_all_list",
+                "cloudlist.service.kugou.com",
+                &auth,
+                cookie,
+                &payload,
+            )
+            .await?;
+        serde_json::from_value(body).map_err(|error| ProviderError {
+            code: ProviderErrorCode::InvalidResponse,
+            provider: ProviderId::Kugou,
+            message: format!("decode kugou collection response: {error}"),
+            retryable: false,
+            action: Some("user_collection_list".to_owned()),
+            raw_message: None,
+        })
     }
 
     pub(super) async fn playlist_tracks_page(
@@ -377,6 +386,42 @@ impl KugouClient {
             &auth,
             cookie,
             payload,
+        )
+        .await
+    }
+
+    pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<Value> {
+        let body = serde_json::json!({
+            "data": [{ "album_id": id }],
+            "is_buy": 0,
+            "fields": "album_id,album_name,publish_date,sizable_cover,intro,language,is_publish,heat,type,quality,authors,exclusive,author_name,trans_param"
+        });
+        self.android_json(
+            "/kmr/v2/albums",
+            "openapi.kugou.com",
+            self.current_cookie().await,
+            &body,
+        )
+        .await
+    }
+
+    pub(super) async fn album_songs(
+        &self,
+        id: &str,
+        page: u32,
+        pagesize: u32,
+    ) -> ProviderResult<Value> {
+        let body = serde_json::json!({
+            "album_id": id,
+            "is_buy": "",
+            "page": page.max(1),
+            "pagesize": pagesize.clamp(1, 50)
+        });
+        self.android_json(
+            "/v1/album_audio/lite",
+            "openapi.kugou.com",
+            self.current_cookie().await,
+            &body,
         )
         .await
     }
@@ -506,6 +551,27 @@ impl KugouClient {
             self.h5_request(Method::POST, path, router, auth, cookie, Some(payload))?;
         request.params.insert("plat".to_owned(), Value::from(1));
         self.sign_h5_request(&mut request);
+        Ok(self.request(request).await?.body)
+    }
+
+    async fn android_json<T: Serialize>(
+        &self,
+        path: &str,
+        router: &str,
+        cookie: KugouCookie,
+        payload: &T,
+    ) -> ProviderResult<Value> {
+        let body =
+            serde_json::to_value(payload).map_err(|error| unavailable_error(error.to_string()))?;
+        let mut request = KugouRequest::new(Method::POST, path);
+        request.body = Some(KugouRequestBody::Json(body));
+        request.cookie = cookie;
+        request
+            .headers
+            .insert("x-router".to_owned(), router.to_owned());
+        request
+            .headers
+            .insert("kg-tid".to_owned(), "255".to_owned());
         Ok(self.request(request).await?.body)
     }
 

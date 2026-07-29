@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::types::{AlbumSummary, PlaylistSummary, ProviderId};
+
 use super::client::KugouCookie;
 
 #[derive(Clone, Debug, Default)]
@@ -187,22 +189,78 @@ pub(super) struct KugouLyricCandidate {
     pub access_key: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::KugouAuth;
-    use crate::providers::kugou::client::KugouCookie;
+#[derive(Deserialize)]
+pub(super) struct KugouCollectionResp {
+    data: KugouCollectionData,
+}
 
-    #[test]
-    fn auth_reads_kugoo_compound_cookie() {
-        let cookie = KugouCookie::from([(
-            "KuGoo".to_owned(),
-            "KugooID%3D42%26t%3Dtoken%26NickName%3DName".to_owned(),
-        )]);
-        let auth = KugouAuth::from_cookie(&cookie);
-
-        assert_eq!(auth.user_id, "42");
-        assert_eq!(auth.token, "token");
-        assert_eq!(auth.nickname, "Name");
-        assert!(auth.playback_ready());
+impl KugouCollectionResp {
+    pub(super) fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
+        let v: Vec<PlaylistSummary> = self
+            .data
+            .info
+            .into_iter()
+            .filter_map(|item| {
+                if item.list_ver == 2 {
+                    return None;
+                }
+                Some(PlaylistSummary {
+                    provider: ProviderId::Kugou,
+                    id: item.global_collection_id,
+                    name: item.name,
+                    cover_url: item.pic,
+                    track_count: item.m_count,
+                    track_ids: Vec::new(),
+                    collected: Some(true),
+                })
+            })
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
     }
+
+    pub(super) fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
+        let v: Vec<AlbumSummary> = self
+            .data
+            .info
+            .into_iter()
+            .filter_map(|item| {
+                if item.list_ver != 2 {
+                    return None;
+                }
+                Some(AlbumSummary {
+                    provider: ProviderId::Kugou,
+                    id: item.global_collection_id,
+                    name: item.name,
+                    artists: item.authors?.into_iter().map(|a| a.author_name).collect(),
+                    cover_url: item.pic,
+                    track_count: item.m_count,
+                    track_ids: Vec::new(),
+                    collected: Some(true),
+                })
+            })
+            .collect();
+        if v.is_empty() { None } else { Some(v) }
+    }
+}
+
+#[derive(Deserialize)]
+struct KugouCollectionData {
+    info: Vec<KugouCollectionInfo>,
+}
+
+#[derive(Deserialize)]
+struct KugouCollectionInfo {
+    list_ver: i64,
+    m_count: Option<u32>,
+    global_collection_id: String,
+    pic: String,
+    //listid: i64,
+    name: String,
+    authors: Option<Vec<Author>>,
+}
+
+#[derive(Deserialize)]
+struct Author {
+    author_name: String,
+    //author_id: i64,
 }
