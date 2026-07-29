@@ -218,7 +218,8 @@ impl KugouQrLoginApi for KugouQrHttpApi {
                 .user_id
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("KUGOU_QR_USER_ID_MISSING"))?;
-            result.cookie = Some(self.exchange_token(&device, token, user_id).await?);
+            let cookie = self.exchange_token(&device, token, user_id).await?;
+            result.cookie = Some(ensure_cookie_pair(&cookie, "dfid", &device.dfid));
         }
         if result.expired == Some(true) || result.logged_in {
             self.devices.lock().await.remove(&key);
@@ -700,6 +701,22 @@ fn cookie_header_from_text(cookie: &str) -> Option<String> {
     (!cookie.is_empty() && cookie.contains('=')).then(|| cookie.to_owned())
 }
 
+fn ensure_cookie_pair(cookie: &str, name: &str, value: &str) -> String {
+    let cookie = cookie.trim();
+    if cookie.split(';').any(|part| {
+        part.trim()
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case(name))
+    }) || value.trim().is_empty()
+    {
+        return cookie.to_owned();
+    }
+    if cookie.is_empty() {
+        format!("{name}={value}")
+    } else {
+        format!("{cookie}; {name}={value}")
+    }
+}
 
 fn current_time_millis() -> u128 {
     SystemTime::now()
@@ -920,6 +937,26 @@ mod tests {
         );
 
         assert_eq!(cookie.as_deref(), Some("KuGoo=KugooID=42; mid=demo-mid"));
+    }
+
+    #[test]
+    fn appends_registered_dfid_to_exchange_cookie() {
+        assert_eq!(
+            ensure_cookie_pair("KuGoo=demo-cookie; mid=demo-mid", "dfid", "demo-dfid"),
+            "KuGoo=demo-cookie; mid=demo-mid; dfid=demo-dfid"
+        );
+    }
+
+    #[test]
+    fn preserves_existing_dfid_in_exchange_cookie() {
+        assert_eq!(
+            ensure_cookie_pair(
+                "KuGoo=demo-cookie; dfid=returned-dfid",
+                "dfid",
+                "registered-dfid"
+            ),
+            "KuGoo=demo-cookie; dfid=returned-dfid"
+        );
     }
 
     #[test]
