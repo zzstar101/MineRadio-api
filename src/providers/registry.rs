@@ -67,7 +67,7 @@ const SODA_CAPABILITIES: [&str; 15] = [
     "albumDetail",
 ];
 
-const KUGOU_CAPABILITIES: [&str; 13] = [
+const KUGOU_CAPABILITIES: [&str; 15] = [
     "search",
     "songUrl",
     "quality",
@@ -80,6 +80,8 @@ const KUGOU_CAPABILITIES: [&str; 13] = [
     "likeCheck",
     "addToPlaylist",
     "delFromPlaylist",
+    "albumList",
+    "albumDetail",
     "register",
 ];
 
@@ -195,5 +197,18 @@ mod tests {
 
         assert!(spotify.capabilities.contains(&"search"));
         assert!(spotify.capabilities.contains(&"albumList"));
+    }
+
+    #[test]
+    fn kugou_is_listed_with_album_capabilities() {
+        let matrix = build_capability_matrix();
+        let kugou = matrix
+            .providers
+            .iter()
+            .find(|entry| entry.provider_id == ProviderId::Kugou)
+            .unwrap();
+
+        assert!(kugou.capabilities.contains(&"albumList"));
+        assert!(kugou.capabilities.contains(&"albumDetail"));
     }
 }
