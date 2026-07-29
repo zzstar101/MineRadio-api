@@ -382,19 +382,17 @@ impl KugouClient {
     }
 
     pub(super) async fn lyric_search(&self, hash: &str) -> ProviderResult<KugouLyricSearchResp> {
-        let mut request = KugouRequest::new(Method::GET, "/v1/search");
+        let mut request = KugouRequest::new(Method::GET, "/search");
         request.base_url = Some("https://lyrics.kugou.com".to_owned());
         request.clear_default_params = true;
         request.skip_signature = true;
         request.params = KugouParams::from([
-            ("album_audio_id".to_owned(), Value::from(0)),
-            ("appid".to_owned(), Value::from(APP_ID)),
-            ("clientver".to_owned(), Value::from(CLIENT_VERSION)),
-            ("duration".to_owned(), Value::from(0)),
-            ("hash".to_owned(), Value::String(hash.to_owned())),
+            ("client".to_owned(), Value::String("pc".to_owned())),
             ("keyword".to_owned(), Value::String(String::new())),
-            ("lrctxt".to_owned(), Value::from(1)),
             ("man".to_owned(), Value::String("no".to_owned())),
+            ("hash".to_owned(), Value::String(hash.to_ascii_lowercase())),
+            ("timelength".to_owned(), Value::from(0)),
+            ("ver".to_owned(), Value::from(1)),
         ]);
         request.cookie = self.current_cookie().await;
         self.request_model(request, "lyric_search").await
