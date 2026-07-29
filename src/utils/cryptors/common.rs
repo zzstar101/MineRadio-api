@@ -6,10 +6,7 @@ use aes::Aes128;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit, block_padding::Pkcs7};
 use anyhow::{Context, anyhow};
 use base64::{Engine as _, engine::general_purpose};
-use md5::{Digest, Md5};
-use rsa::{BigUint, Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey, traits::PublicKeyParts};
-
-const KUGOU_REGISTER_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGWXngpeIW5GxoQGao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB\n-----END PUBLIC KEY-----";
+use rsa::{BigUint, RsaPublicKey, pkcs8::DecodePublicKey, traits::PublicKeyParts};
 
 const RSA_BLOCK_SIZE: usize = 128;
 
@@ -108,44 +105,6 @@ pub fn encrypt_rsa(plaintext: &str, public_key: &str) -> Result<String, String> 
     Ok(to_hex_lower(&output))
 }
 
-pub fn encrypt_kugou_register_payload(data: &str, random_key: &str) -> Result<String, String> {
-    let digest = to_hex_lower(&Md5::digest(random_key.as_bytes()));
-    encrypt_aes(
-        data,
-        AesMode::Cbc,
-        &digest[..16],
-        &digest[16..],
-        CipherOutputFormat::Base64,
-    )
-}
-
-pub fn decrypt_kugou_register_payload(
-    base64_ciphertext: &str,
-    random_key: &str,
-) -> Result<Vec<u8>, String> {
-    let digest = to_hex_lower(&Md5::digest(random_key.as_bytes()));
-    decrypt_aes(
-        base64_ciphertext,
-        AesMode::Cbc,
-        &digest[..16],
-        &digest[16..],
-        CipherOutputFormat::Base64,
-    )
-}
-
-pub fn encrypt_kugou_register_rsa(plaintext: &str) -> Result<String, String> {
-    let public_key = parse_rsa_public_key(KUGOU_REGISTER_PUBLIC_KEY)
-        .map_err(|err| format!("invalid Kugou register RSA public key: {err}"))?;
-    let encrypted = public_key
-        .encrypt(
-            &mut rsa::rand_core::OsRng,
-            Pkcs1v15Encrypt,
-            plaintext.as_bytes(),
-        )
-        .map_err(|err| format!("Kugou register RSA encryption failed: {err}"))?;
-    Ok(to_hex_lower(&encrypted))
-}
-
 pub fn to_hex_upper(bytes: &[u8]) -> String {
     encode_hex(bytes, b"0123456789ABCDEF")
 }
@@ -206,7 +165,7 @@ fn decrypt_ecb(ciphertext: &[u8], key: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(decrypted.to_vec())
 }
 
-fn parse_rsa_public_key(public_key: &str) -> anyhow::Result<RsaPublicKey> {
+pub(crate) fn parse_rsa_public_key(public_key: &str) -> anyhow::Result<RsaPublicKey> {
     if let Ok(parsed) = RsaPublicKey::from_public_key_pem(public_key) {
         return Ok(parsed);
     }
@@ -283,21 +242,5 @@ mod tests {
             String::from_utf8(decrypted).unwrap(),
             r#"{"hello":"world"}"#
         );
-    }
-
-    #[test]
-    fn kugou_register_payload_round_trips() {
-        let encrypted = encrypt_kugou_register_payload("{\"uuid\":\"demo\"}", "abc123").unwrap();
-        let decrypted = decrypt_kugou_register_payload(&encrypted, "abc123").unwrap();
-
-        assert_eq!(String::from_utf8(decrypted).unwrap(), "{\"uuid\":\"demo\"}");
-    }
-
-    #[test]
-    fn kugou_register_rsa_uses_a_1024_bit_block() {
-        let encrypted =
-            encrypt_kugou_register_rsa(r#"{"aes":"abc123","uid":0,"token":""}"#).unwrap();
-
-        assert_eq!(encrypted.len(), 256);
     }
 }

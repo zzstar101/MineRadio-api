@@ -4,6 +4,16 @@ use base64::Engine;
 use rand::RngExt;
 use sha1::{Digest, Sha1};
 
+pub mod audio;
+pub mod lyric;
+
+#[allow(unused_imports)]
+pub use audio::{
+    EncryptedTail, TailFormat, decrypt_file, derive_qmc2_key, derive_qmc2_key_from_ekey,
+    parse_encrypted_tail, qmc2_decrypt_in_place,
+};
+pub use lyric::{decrypt_qrc, decrypt_qrc_file};
+
 const GUID_CHARSET: &[u8] = b"ABCDEF1234567890";
 const HASH33_MASK: u64 = 2_147_483_647;
 const HASH33_INIT: u64 = 5_381;

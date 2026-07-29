@@ -11,7 +11,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::crypto::{AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa};
+use super::super::common::{AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa};
 
 const IV: &str = "0102030405060708";
 const PRESET_KEY: &str = "0CoJUm6Qyw8W8jud";

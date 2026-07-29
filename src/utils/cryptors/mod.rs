@@ -2,20 +2,21 @@
 // These crypto helpers are intentionally kept as forward-compatible utilities and
 // will be enabled as more sidecar features migrate to Rust.
 
-pub mod crypto;
-pub mod krc;
+pub mod common;
+pub mod kugou;
 pub mod netease;
 pub mod qq;
-pub mod qrc;
 
 #[allow(unused_imports)]
-pub use crypto::{
-    AesMode, CipherOutputFormat, decrypt_aes, decrypt_kugou_register_payload, encrypt_aes,
-    encrypt_kugou_register_payload, encrypt_kugou_register_rsa, encrypt_rsa, from_hex,
-    to_hex_lower, to_hex_upper,
+pub use common::{
+    AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa, from_hex, to_hex_lower,
+    to_hex_upper,
 };
 #[allow(unused_imports)]
-pub use krc::decrypt_krc;
+pub use kugou::{
+    decrypt_krc, decrypt_kugou_register_payload, encrypt_kugou_register_payload,
+    encrypt_kugou_register_rsa,
+};
 #[allow(unused_imports)]
 pub use netease::{
     EapiBody, EapiParams, EapiReqDecrypted, LinuxapiParams, WeapiParams, decrypt_eapi,
@@ -23,4 +24,4 @@ pub use netease::{
     encrypt_weapi_rsa, generate_weapi_secret_key,
 };
 #[allow(unused_imports)]
-pub use qrc::{decrypt_qrc, decrypt_qrc_file};
+pub use qq::{decrypt_qrc, decrypt_qrc_file};
