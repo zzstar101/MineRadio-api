@@ -215,7 +215,7 @@ impl KugouCollectionResp {
                 })
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 
     pub(super) fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
@@ -239,7 +239,7 @@ impl KugouCollectionResp {
                 })
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 

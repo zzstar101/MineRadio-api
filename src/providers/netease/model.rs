@@ -39,11 +39,7 @@ impl From<NeteaseLyricV1Resp> for NeteaseLyricResp {
         let inner = v1.lrc;
         Self {
             lrc: NeteaseLyric {
-                lyric: if inner.lyric.is_empty() {
-                    None
-                } else {
-                    Some(inner.lyric)
-                },
+                lyric: (!inner.lyric.is_empty()).then_some(inner.lyric),
             },
             tlyric: inner.tlyric.unwrap_or(NeteaseLyric { lyric: None }),
             yrc: inner.yrc.unwrap_or(NeteaseLyric { lyric: None }),
@@ -65,9 +61,6 @@ pub(super) struct NeteaseAlbumListResp {
 
 impl NeteaseAlbumListResp {
     pub(super) fn standardize(self) -> Option<Vec<AlbumSummary>> {
-        if self.data.is_empty() {
-            return None;
-        }
         let v: Vec<AlbumSummary> = self
             .data
             .into_iter()
@@ -155,9 +148,6 @@ struct NeteaseSearchAlbum {
 
 impl NeteaseSearchAlbumResp {
     pub(super) fn standardize(self) -> Option<Vec<AlbumSummary>> {
-        if self.result.albums.is_empty() {
-            return None;
-        }
         let v: Vec<AlbumSummary> = self
             .result
             .albums
@@ -173,7 +163,7 @@ impl NeteaseSearchAlbumResp {
                 collected: None,
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -198,9 +188,6 @@ struct NeteaseSearchPlaylist {
 
 impl NeteaseSearchPlaylistResp {
     pub(super) fn standardize(self) -> Option<Vec<PlaylistSummary>> {
-        if self.result.playlists.is_empty() {
-            return None;
-        }
         let v: Vec<PlaylistSummary> = self
             .result
             .playlists
@@ -215,7 +202,7 @@ impl NeteaseSearchPlaylistResp {
                 collected: None,
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 

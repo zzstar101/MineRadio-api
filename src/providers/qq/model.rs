@@ -72,16 +72,12 @@ impl QqTrackDetailResp {
     pub fn standardize(self) -> Option<TrackQualityAvailability> {
         let t = self.req_0.data.track_info;
         let qualities = t.file.standardize(Some(t.mid.clone()));
-        if qualities.is_empty() {
-            None
-        } else {
-            Some(TrackQualityAvailability {
-                provider: ProviderId::Qq,
-                track_id: t.mid,
-                default_quality: qualities.first().map(|item| item.request_quality.clone()),
-                qualities,
-            })
-        }
+        (!qualities.is_empty()).then_some(TrackQualityAvailability {
+            provider: ProviderId::Qq,
+            track_id: t.mid,
+            default_quality: qualities.first().map(|item| item.request_quality.clone()),
+            qualities,
+        })
     }
 }
 #[derive(Debug, Deserialize)]
@@ -168,7 +164,7 @@ impl QqPlaylistList1Resp {
                 collected: Some(true),
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -244,7 +240,7 @@ impl QqPlaylistList2Resp {
                 collected: Some(true),
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -613,9 +609,6 @@ struct QqMultiSearchSonglist {
 impl QqMultiSearchResp {
     pub(super) fn standardize_albums(self) -> Option<Vec<AlbumSummary>> {
         let list = self.result.data.body.album?.list;
-        if list.is_empty() {
-            return None;
-        }
         let v: Vec<AlbumSummary> = list
             .into_iter()
             .map(|a| AlbumSummary {
@@ -634,14 +627,11 @@ impl QqMultiSearchResp {
                 collected: None,
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 
     pub(super) fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
         let list = self.result.data.body.songlist?.list;
-        if list.is_empty() {
-            return None;
-        }
         let v: Vec<PlaylistSummary> = list
             .into_iter()
             .map(|s| PlaylistSummary {
@@ -654,14 +644,11 @@ impl QqMultiSearchResp {
                 collected: None,
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 
     pub(super) fn standardize_songs(self) -> Option<Vec<Track>> {
         let list = self.result.data.body.song?.list;
-        if list.is_empty() {
-            return None;
-        }
         let v: Vec<Track> = list
             .into_iter()
             .map(|s| {
@@ -692,7 +679,7 @@ impl QqMultiSearchResp {
                 }
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -711,13 +698,9 @@ impl QqLoginStatusResp {
             ..Default::default()
         };
 
-        if !creator.nick.trim().is_empty() {
-            status.nickname = Some(creator.nick);
-        }
+        status.nickname = (!creator.nick.trim().is_empty()).then_some(creator.nick);
         status.avatar_url = (!creator.headpic.is_empty()).then_some(creator.headpic);
-        if !user_id.is_empty() {
-            status.user_id = Some(user_id.clone());
-        }
+        status.user_id = (!user_id.is_empty()).then_some(user_id.clone());
         let mut expired_vip_icon = None;
         let mut active_vip_icon = None;
         for icon in &vip_icon_response.get_vip_icon.data.user_info_ui.iconlist {

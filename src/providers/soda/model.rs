@@ -146,7 +146,7 @@ impl SodaPlaylistListResp {
             .into_iter()
             .map(|p| p.standardize())
             .collect();
-        if res.is_empty() { None } else { Some(res) }
+        (!res.is_empty()).then_some(res)
     }
 }
 
@@ -167,21 +167,17 @@ impl SodaPlaylistDetailResp {
             .into_iter()
             .map(|m| m.entity.track_wrapper.track.standardize())
             .collect();
-        if tracks.is_empty() {
-            None
-        } else {
-            Some(PlaylistDetail {
-                provider: ProviderId::Soda,
-                id: p.id,
-                name: p.title,
-                cover_url: p.url_cover.standardize(),
-                track_count: p.count_tracks,
-                track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
-                collected: p.state.and_then(|s| s.is_collected),
-                has_more: self.has_more,
-                tracks,
-            })
-        }
+        (!tracks.is_empty()).then_some(PlaylistDetail {
+            provider: ProviderId::Soda,
+            id: p.id,
+            name: p.title,
+            cover_url: p.url_cover.standardize(),
+            track_count: p.count_tracks,
+            track_ids: tracks.iter().map(|t| t.id.clone()).collect(),
+            collected: p.state.and_then(|s| s.is_collected),
+            has_more: self.has_more,
+            tracks,
+        })
     }
 }
 
@@ -223,7 +219,7 @@ impl SodaCollectionListResp {
             .filter_map(|collection| collection.album)
             .map(|album| album.standardize())
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
     pub fn standardize_playlists(self) -> Option<Vec<PlaylistSummary>> {
         let v: Vec<PlaylistSummary> = self
@@ -232,7 +228,7 @@ impl SodaCollectionListResp {
             .filter_map(|collection| collection.playlist)
             .map(|playlist| playlist.standardize())
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -554,7 +550,7 @@ impl SodaTrack {
                 })
             })
             .collect();
-        if s.is_empty() { None } else { Some(s) }
+        (!s.is_empty()).then_some(s)
     }
 }
 
