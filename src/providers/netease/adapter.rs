@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -24,10 +28,7 @@ use crate::{
 
 use super::{
     client::NeteaseClient,
-    map::{
-        map_hana_playlist_to_detail, map_hana_playlist_to_summary, map_hana_song_to_track,
-        map_playable, normalize_provider_image_url,
-    },
+    map::{map_hana_song_to_track, map_playable},
 };
 
 #[derive(Clone, Copy)]
@@ -95,18 +96,18 @@ const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
     },
 ];
 
-const NETEASE_VIP_LEVEL_NAMES: [&str; 11] = [
-    "", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾",
-];
-
 #[derive(Clone, Default)]
 pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
+    album_cache: Arc<Mutex<HashMap<String, (Vec<Track>, Instant)>>>,
 }
 
 impl NeteaseAdapter {
     pub fn new(client: Arc<NeteaseClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            album_cache: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     async fn login_status_internal(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -130,28 +131,19 @@ impl NeteaseAdapter {
                 ..Default::default()
             });
         }
-
-        let body = self.client.login_status().await?;
-        let profile = body.get("profile");
-        let Some(profile) = profile else {
-            return Ok(ProviderLoginStatus {
-                provider: ProviderId::Netease,
-                logged_in: false,
-                ..Default::default()
-            });
+        let login_status = self.client.login_status().await?.standardize();
+        let Some(user_id) = login_status
+            .user_id
+            .clone()
+            .filter(|user_id| !user_id.is_empty())
+        else {
+            return Ok(login_status);
         };
-
-        let user_id = profile
-            .get("userId")
-            .map(read_id_like)
-            .filter(|value| !value.is_empty());
-        let vip_info = if let Some(user_id) = user_id.as_deref() {
-            Some(self.client.vip_info(user_id).await?)
-        } else {
-            None
-        };
-
-        Ok(map_netease_vip_status(profile, vip_info.as_ref()))
+        Ok(self
+            .client
+            .vip_info(&user_id)
+            .await?
+            .standardize(login_status))
     }
 }
 
@@ -485,26 +477,16 @@ impl ProviderAdapter for NeteaseAdapter {
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
         self.client.ensure_login().await?;
-        let status_body = self.client.login_status().await?;
-        let profile = status_body.get("profile");
-        let uid = profile
-            .and_then(|value| value.get("userId"))
-            .map(read_id_like)
-            .unwrap_or_default();
+        let uid = self.client.login_status().await?.standardize().user_id;
+        let uid = uid.unwrap_or_default();
         if uid.is_empty() {
-            return Ok(Vec::new());
+            return Err(unavailable("missing uid".to_owned()));
         }
-        let body = self.client.user_playlist(&uid, 60).await?;
-        Ok(body
-            .get("playlist")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .map(|item| map_hana_playlist_to_summary(item, None))
-                    .collect()
-            })
-            .unwrap_or_default())
+        self.client
+            .playlist_list(&uid, 60)
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("playlist_list"))
     }
 
     async fn playlist_detail(
@@ -513,18 +495,11 @@ impl ProviderAdapter for NeteaseAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
-        let body = self.client.playlist_detail(id, offset, limit).await?;
-        let Some(playlist) = body.get("playlist") else {
-            return Err(ProviderError {
-                code: ProviderErrorCode::NoPlaylist,
-                provider: ProviderId::Netease,
-                message: format!("netease playlist {id} missing payload"),
-                retryable: false,
-                action: None,
-                raw_message: Some(body.to_string()),
-            });
-        };
-        Ok(map_hana_playlist_to_detail(playlist, Some(id)))
+        Ok(self
+            .client
+            .playlist_detail(id, offset, limit)
+            .await?
+            .standardize())
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -537,13 +512,60 @@ impl ProviderAdapter for NeteaseAdapter {
             .unwrap_or_default())
     }
 
-    async fn album_detail(
-        &self,
-        id: &str,
-        _offset: u32,
-        _limit: u32,
-    ) -> ProviderResult<AlbumDetail> {
-        Ok(self.client.album_detail(id).await?.standardize())
+    async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
+        {
+            let cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((tracks, expires_at)) = cache.get(id) {
+                if *expires_at > Instant::now() {
+                    let start = offset as usize;
+                    let end = (start + limit as usize).min(tracks.len());
+                    let sliced = if start < tracks.len() {
+                        tracks[start..end].to_vec()
+                    } else {
+                        vec![]
+                    };
+                    let has_more = (offset + limit) < tracks.len() as u32;
+                    return Ok(AlbumDetail {
+                        provider: ProviderId::Netease,
+                        id: id.to_owned(),
+                        name: String::new(),
+                        artists: vec![],
+                        cover_url: String::new(),
+                        track_count: Some(tracks.len() as u32),
+                        track_ids: sliced.iter().map(|t| t.source_id.clone()).collect(),
+                        collected: None,
+                        tracks: sliced,
+                        has_more: Some(has_more),
+                    });
+                }
+            }
+        }
+
+        let mut detail = self.client.album_detail(id).await?.standardize();
+
+        {
+            let mut cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.insert(
+                id.to_owned(),
+                (
+                    detail.tracks.clone(),
+                    Instant::now() + Duration::from_secs(300),
+                ),
+            );
+        }
+
+        let total = detail.tracks.len() as u32;
+        let start = offset as usize;
+        let end = (start + limit as usize).min(detail.tracks.len());
+        if start < detail.tracks.len() {
+            detail.tracks = detail.tracks[start..end].to_vec();
+            detail.track_ids = detail.track_ids[start..end].to_vec();
+        } else {
+            detail.tracks = vec![];
+            detail.track_ids = vec![];
+        }
+        detail.has_more = Some((offset + limit) < total);
+        Ok(detail)
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -830,344 +852,26 @@ fn state_error(state: PlayableState, id: &str) -> ProviderError {
     }
 }
 
-fn map_netease_vip_status(profile: &Value, vip_info_body: Option<&Value>) -> ProviderLoginStatus {
-    let candidates = netease_candidate_values(profile, vip_info_body);
-    let nickname = profile
-        .get("nickname")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let avatar_url = profile
-        .get("avatarUrl")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let user_id = profile
-        .get("userId")
-        .map(read_id_like)
-        .filter(|value| !value.is_empty());
-    let vip_type = first_number(&candidates, &["vipType", "vip_type", "redVipType"]);
-    let vip_level_raw = first_string(
-        &candidates,
-        &["vipLevel", "vip_level", "levelName", "vipLevelName"],
-    );
-    let raw_label = usable_vip_label(&first_string(
-        &candidates,
-        &[
-            "vipLabel",
-            "vip_label",
-            "vipName",
-            "memberName",
-            "packageName",
-            "productName",
-            "displayName",
-        ],
-    ));
-    let vip_icon_url = normalize_vip_icon_url(&first_string(
-        &candidates,
-        &[
-            "redVipLevelIcon",
-            "vipIconUrl",
-            "vipIcon",
-            "vipLevelIcon",
-            "levelIconUrl",
-            "dynamicIconUrl",
-            "iconUrl",
-            "iconURL",
-            "icon",
-            "logoUrl",
-            "imgUrl",
-            "imageUrl",
-            "picUrl",
-            "levelIcon",
-            "rightsIcon",
-        ],
-    ));
-    let text = format!("{} {}", vip_level_raw, raw_label).to_ascii_lowercase();
-    let explicit_is_vip = first_flag(&candidates, &["isVip", "vip", "isRedVip", "isMusicPackage"]);
-    let explicit_is_svip = first_flag(&candidates, &["isSvip", "svip", "isSuperVip", "isBlackVip"]);
-    let vip_level = if text.contains("svip")
-        || text.contains("super")
-        || text.contains("黑胶svip")
-        || text.contains("超级")
-        || explicit_is_svip == Some(true)
-        || vip_type.unwrap_or_default() >= 10
-    {
-        VipLevel::Svip
-    } else if text.contains("vip")
-        || text.contains("黑胶")
-        || text.contains("会员")
-        || explicit_is_vip == Some(true)
-        || vip_type.unwrap_or_default() > 0
-    {
-        VipLevel::Vip
-    } else {
-        VipLevel::None
-    };
-    let raw_vip_tier = first_number(
-        &candidates,
-        &[
-            "redVipLevel",
-            "vipTier",
-            "vipLevelValue",
-            "vip_level_value",
-            "level",
-            "grade",
-            "growthLevel",
-            "musicPackageLevel",
-        ],
-    )
-    .or_else(|| parse_vip_tier_from_text(&vip_level_raw))
-    .or_else(|| parse_vip_tier_from_text(&raw_label));
-    let vip_tier = (vip_level != VipLevel::None)
-        .then_some(raw_vip_tier)
-        .flatten();
-    let vip_level_name = vip_level_name_of(vip_tier);
-    let base_label = if !raw_label.is_empty() {
-        raw_label
-    } else if vip_level == VipLevel::Svip {
-        "黑胶SVIP".to_owned()
-    } else if vip_level == VipLevel::Vip {
-        "黑胶VIP".to_owned()
-    } else {
-        String::new()
-    };
-    let vip_label = append_vip_tier(&base_label, vip_level_name.as_deref());
-
-    ProviderLoginStatus {
+fn no_result(action: &str) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::NoResult,
         provider: ProviderId::Netease,
-        logged_in: true,
-        nickname,
-        user_id,
-        avatar_url,
-        vip_type,
-        vip_level: Some(vip_level.to_owned()),
-        is_vip: Some(vip_level != VipLevel::None),
-        is_svip: Some(vip_level == VipLevel::Svip),
-        vip_label: (!vip_label.is_empty()).then_some(vip_label),
-        vip_icon: match vip_level {
-            VipLevel::Svip => Some("netease-svip".to_owned()),
-            VipLevel::Vip => Some("netease-vip".to_owned()),
-            _ => None,
-        },
-        vip_icon_url,
-        vip_tier,
-        vip_level_name,
+        message: format!("{} no result", action),
+        retryable: false,
+        action: Some(action.to_string()),
+        raw_message: None,
     }
 }
 
-fn netease_candidate_values<'a>(
-    profile: &'a Value,
-    vip_info_body: Option<&'a Value>,
-) -> Vec<&'a Value> {
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    collect_object_candidates(profile, &mut out, &mut seen, 0);
-    if let Some(vip_info_body) = vip_info_body {
-        collect_object_candidates(vip_info_body, &mut out, &mut seen, 0);
+fn unavailable(message: String) -> ProviderError {
+    ProviderError {
+        code: ProviderErrorCode::Unavailable,
+        provider: ProviderId::Netease,
+        message,
+        retryable: false,
+        action: None,
+        raw_message: None,
     }
-    out
-}
-
-fn collect_object_candidates<'a>(
-    value: &'a Value,
-    out: &mut Vec<&'a Value>,
-    seen: &mut std::collections::HashSet<*const Value>,
-    depth: usize,
-) {
-    if depth > 5 {
-        return;
-    }
-    let ptr = value as *const Value;
-    if !seen.insert(ptr) {
-        return;
-    }
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                collect_object_candidates(item, out, seen, depth + 1);
-            }
-        }
-        Value::Object(map) => {
-            out.push(value);
-            for child in map.values() {
-                collect_object_candidates(child, out, seen, depth + 1);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn first_string(candidates: &[&Value], fields: &[&str]) -> String {
-    candidates
-        .iter()
-        .map(|value| read_string_field(value, fields))
-        .find(|value| !value.is_empty())
-        .unwrap_or_default()
-}
-
-fn first_number(candidates: &[&Value], fields: &[&str]) -> Option<i64> {
-    candidates
-        .iter()
-        .find_map(|value| read_number_field(value, fields))
-}
-
-fn first_flag(candidates: &[&Value], fields: &[&str]) -> Option<bool> {
-    candidates
-        .iter()
-        .find_map(|value| read_flag_field(value, fields))
-}
-
-fn read_string_field(value: &Value, fields: &[&str]) -> String {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        match value {
-            Value::String(value) => {
-                let text = value.trim();
-                if !text.is_empty() {
-                    return text.to_owned();
-                }
-            }
-            Value::Number(value) => return value.to_string(),
-            _ => {}
-        }
-    }
-    String::new()
-}
-
-fn read_number_field(value: &Value, fields: &[&str]) -> Option<i64> {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        match value {
-            Value::Number(number) => {
-                if let Some(number) = number.as_i64() {
-                    return Some(number);
-                }
-                if let Some(number) = number.as_u64().and_then(|value| i64::try_from(value).ok()) {
-                    return Some(number);
-                }
-            }
-            Value::String(text) => {
-                if let Ok(number) = text.trim().parse::<i64>() {
-                    return Some(number);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn read_flag_field(value: &Value, fields: &[&str]) -> Option<bool> {
-    for field in fields {
-        let Some(value) = value.get(*field) else {
-            continue;
-        };
-        match value {
-            Value::Bool(flag) => return Some(*flag),
-            Value::Number(number) => {
-                if let Some(number) = number.as_i64() {
-                    return Some(number > 0);
-                }
-            }
-            Value::String(text) => {
-                let text = text.trim().to_ascii_lowercase();
-                match text.as_str() {
-                    "1" | "true" | "yes" | "y" => return Some(true),
-                    "0" | "false" | "no" | "n" | "" => return Some(false),
-                    _ => {
-                        if let Ok(number) = text.parse::<i64>() {
-                            return Some(number > 0);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn vip_level_name_of(tier: Option<i64>) -> Option<String> {
-    let tier = tier?;
-    if tier <= 0 {
-        return None;
-    }
-    NETEASE_VIP_LEVEL_NAMES
-        .get(tier as usize)
-        .map(|value| (*value).to_owned())
-        .or_else(|| Some(tier.to_string()))
-}
-
-fn parse_vip_tier_from_text(text: &str) -> Option<i64> {
-    let digits = text
-        .split(|ch: char| !ch.is_ascii_digit())
-        .find(|part| !part.is_empty())
-        .and_then(|part| part.parse::<i64>().ok())
-        .filter(|value| *value > 0);
-    if digits.is_some() {
-        return digits;
-    }
-    text.chars().find_map(|ch| match ch {
-        '一' | '壹' => Some(1),
-        '二' | '贰' => Some(2),
-        '三' | '叁' => Some(3),
-        '四' | '肆' => Some(4),
-        '五' | '伍' => Some(5),
-        '六' | '陆' => Some(6),
-        '七' | '柒' => Some(7),
-        '八' | '捌' => Some(8),
-        '九' | '玖' => Some(9),
-        '十' | '拾' => Some(10),
-        _ => None,
-    })
-}
-
-fn usable_vip_label(label: &str) -> String {
-    let cleaned = label.split_whitespace().collect::<String>();
-    let lower = cleaned.to_ascii_lowercase();
-    if lower.contains("vip")
-        || lower.contains("svip")
-        || cleaned.contains("黑胶")
-        || cleaned.contains("会员")
-    {
-        cleaned
-    } else {
-        String::new()
-    }
-}
-
-fn normalize_vip_icon_url(value: &str) -> Option<String> {
-    let text = value.trim();
-    if text.is_empty() {
-        return None;
-    }
-    if text.starts_with("//")
-        || text.len() >= 7 && text[..7].eq_ignore_ascii_case("http://")
-        || text.len() >= 8 && text[..8].eq_ignore_ascii_case("https://")
-    {
-        return Some(normalize_provider_image_url(text));
-    }
-    if text.starts_with("data:image/") {
-        return Some(text.to_owned());
-    }
-    None
-}
-
-fn append_vip_tier(label: &str, tier_name: Option<&str>) -> String {
-    let Some(tier_name) = tier_name else {
-        return label.to_owned();
-    };
-    if label.is_empty() || label.contains('·') || label.ends_with(tier_name) {
-        return label.to_owned();
-    }
-    format!("{label}·{tier_name}")
 }
 
 #[cfg(test)]
@@ -1176,48 +880,7 @@ mod tests {
 
     use crate::types::Track;
 
-    use super::{map_netease_vip_status, pick_song_url_datum, response_code};
-
-    #[test]
-    fn netease_login_status_merges_vip_detail_label_and_tier() {
-        let profile = json!({
-            "nickname": "n",
-            "avatarUrl": "u",
-            "userId": 42,
-            "vipType": 11
-        });
-        let vip_info = json!({
-            "vipInfoV2": {
-                "data": {
-                    "vipLabel": "黑胶SVIP",
-                    "redVipLevel": 6
-                }
-            },
-            "vipInfo": {
-                "data": {
-                    "redVipLevelIcon": "//p1.music.126.net/vip.png"
-                }
-            }
-        });
-
-        let status = map_netease_vip_status(&profile, Some(&vip_info));
-        assert_eq!(status.provider.as_str(), "netease");
-        assert!(status.logged_in);
-        assert_eq!(status.nickname.as_deref(), Some("n"));
-        assert_eq!(status.avatar_url.as_deref(), Some("u"));
-        assert_eq!(status.user_id.as_deref(), Some("42"));
-        assert_eq!(status.vip_type, Some(11));
-        assert_eq!(status.vip_level, Some(crate::types::VipLevel::Svip));
-        assert_eq!(status.is_vip, Some(true));
-        assert_eq!(status.is_svip, Some(true));
-        assert_eq!(status.vip_label.as_deref(), Some("黑胶SVIP·陆"));
-        assert_eq!(
-            status.vip_icon_url.as_deref(),
-            Some("https://p1.music.126.net/vip.png")
-        );
-        assert_eq!(status.vip_tier, Some(6));
-        assert_eq!(status.vip_level_name.as_deref(), Some("陆"));
-    }
+    use super::{pick_song_url_datum, response_code};
 
     #[test]
     fn song_url_datum_prefers_the_requested_track_id() {

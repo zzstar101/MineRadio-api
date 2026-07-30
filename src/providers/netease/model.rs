@@ -1,10 +1,14 @@
 use serde::Deserialize;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::types::{AlbumDetail, AlbumSummary, PlayableState, PlaylistSummary, ProviderId, Track};
+use crate::types::{
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
+    ProviderLoginStatus, Track, VipLevel,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NeteaseLyricResp {
+pub(super) struct NeteaseLyricResp {
     //lrc歌词
     pub(super) lrc: NeteaseLyric,
     //逐字歌词
@@ -48,7 +52,7 @@ impl From<NeteaseLyricV1Resp> for NeteaseLyricResp {
 }
 
 #[derive(Deserialize)]
-pub struct NeteaseLyric {
+pub(super) struct NeteaseLyric {
     pub(super) lyric: Option<String>,
 }
 
@@ -78,7 +82,7 @@ impl NeteaseAlbumListResp {
                 collected: Some(true),
             })
             .collect();
-        if v.is_empty() { None } else { Some(v) }
+        (!v.is_empty()).then_some(v)
     }
 }
 
@@ -129,9 +133,6 @@ impl NeteaseAlbumDetailResp {
     }
 }
 
-// ── 搜索响应模型（参考 netease-qq-music-api）──
-
-/// `/api/v1/search/album/get` 专辑搜索响应
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseSearchAlbumResp {
@@ -149,12 +150,7 @@ struct NeteaseSearchAlbum {
     id: u64,
     name: String,
     pic_url: String,
-    artist: NeteaseSearchAlbumArtist,
-}
-
-#[derive(Deserialize)]
-struct NeteaseSearchAlbumArtist {
-    name: String,
+    artist: NameOnly,
 }
 
 impl NeteaseSearchAlbumResp {
@@ -181,7 +177,6 @@ impl NeteaseSearchAlbumResp {
     }
 }
 
-/// `/api/v1/search/playlist/get` 歌单搜索响应
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseSearchPlaylistResp {
@@ -224,6 +219,275 @@ impl NeteaseSearchPlaylistResp {
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct NeteaseLoginStatusResp {
+    profile: Option<NeteaseLoginStatusProfile>,
+}
+
+impl NeteaseLoginStatusResp {
+    pub(crate) fn standardize(self) -> ProviderLoginStatus {
+        let Some(profile) = self.profile else {
+            return ProviderLoginStatus {
+                provider: ProviderId::Netease,
+                logged_in: false,
+                ..Default::default()
+            };
+        };
+
+        ProviderLoginStatus {
+            provider: ProviderId::Netease,
+            logged_in: true,
+            nickname: profile.nickname,
+            user_id: Some(profile.user_id.to_string()),
+            avatar_url: profile.avatar_url,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseLoginStatusProfile {
+    user_id: i64,
+    nickname: Option<String>,
+    avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct NeteasePlaylistListResp {
+    playlist: Vec<NeteasePlaylist>,
+}
+
+impl NeteasePlaylistListResp {
+    pub(super) fn standardize(self) -> Option<Vec<PlaylistSummary>> {
+        let v: Vec<PlaylistSummary> = self
+            .playlist
+            .into_iter()
+            .map(|l| PlaylistSummary {
+                provider: ProviderId::Netease,
+                id: l.id.to_string(),
+                name: l.name,
+                cover_url: l.cover_img_url,
+                track_count: l.track_count,
+                track_ids: vec![],
+                collected: Some(true),
+            })
+            .collect();
+        (!v.is_empty()).then_some(v)
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteasePlaylist {
+    track_count: Option<u32>,
+    cover_img_url: String,
+    name: String,
+    id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NeteasePlaylistDetailResp {
+    playlist: Playlist,
+}
+
+impl NeteasePlaylistDetailResp {
+    pub(super) fn standardize(self) -> PlaylistDetail {
+        let l = self.playlist;
+        let d = l.detail;
+        let mut track_ids = Vec::new();
+        let tracks = l
+            .tracks
+            .into_iter()
+            .map(|t| {
+                let s = t.song;
+                track_ids.push(s.id.to_string());
+                Track {
+                    id: s.id.to_string(),
+                    provider: ProviderId::Netease,
+                    source_id: s.id.to_string(),
+                    media_mid: None,
+                    title: s.name,
+                    artists: s.ar.into_iter().map(|a| a.name).collect(),
+                    album: t.al.name,
+                    cover_url: t.al.pic_url,
+                    quality_hints: vec!["standard".to_owned()],
+                    duration_ms: s.dt,
+                    playable_state: get_playable(s.fee),
+                    artwork_url: None,
+                }
+            })
+            .collect();
+        PlaylistDetail {
+            provider: ProviderId::Netease,
+            id: d.id.to_string(),
+            name: d.name,
+            cover_url: d.cover_img_url,
+            track_count: d.track_count,
+            track_ids,
+            collected: Some(l.subscribed),
+            tracks,
+            has_more: None,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Playlist {
+    #[serde(flatten)]
+    detail: NeteasePlaylist,
+    subscribed: bool,
+    tracks: Vec<NeteaseTrack>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseTrack {
+    #[serde(flatten)]
+    song: Song,
+    al: Al,
+}
+
+#[derive(Deserialize)]
+struct Al {
+    name: String,
+    #[serde(rename = "picUrl")]
+    pic_url: String,
+}
+
+#[derive(Deserialize)]
+pub(super) struct NeteaseVipInfoResp {
+    data: NeteaseVipInfoData,
+}
+
+const NETEASE_VIP_LEVEL_NAMES: [&str; 11] = [
+    "", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖", "拾",
+];
+
+impl NeteaseVipInfoResp {
+    pub(super) fn standardize(self, l: ProviderLoginStatus) -> ProviderLoginStatus {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or_default();
+        let redplus_active = self.data.redplus.is_active(now_ms);
+        let music_associator_active = self.data.associator.is_active(now_ms);
+        let vip_level = if redplus_active {
+            VipLevel::Svip
+        } else if music_associator_active {
+            VipLevel::Vip
+        } else {
+            VipLevel::None
+        };
+        println!("{:?}", self.data.associator.dynamic_icon_url);
+        let vip_icon_url = if redplus_active {
+            self.data
+                .redplus
+                .dynamic_icon_url
+                .or(self.data.redplus.icon_url)
+        } else if music_associator_active {
+            self.data
+                .associator
+                .dynamic_icon_url
+                .or(self.data.associator.icon_url)
+        } else {
+            None
+        };
+        let vip_tier = match vip_level {
+            VipLevel::Svip => Some(self.data.redplus.vip_level),
+            VipLevel::Vip => Some(self.data.associator.vip_level),
+            VipLevel::None => None,
+        }
+        .filter(|level| *level > 0);
+        let vip_type = match vip_level {
+            VipLevel::Svip => Some(11),
+            VipLevel::Vip => Some(1),
+            VipLevel::None => Some(0),
+        };
+        let vip_level_name = vip_tier.and_then(vip_level_name_of);
+        let vip_label = match vip_level {
+            VipLevel::Svip => Some("黑胶SVIP".to_owned()),
+            VipLevel::Vip => Some("黑胶VIP".to_owned()),
+            VipLevel::None => None,
+        };
+
+        ProviderLoginStatus {
+            vip_type,
+            vip_level: Some(vip_level),
+            is_vip: Some(vip_level != VipLevel::None),
+            is_svip: Some(vip_level == VipLevel::Svip),
+            vip_label,
+            vip_icon: match vip_level {
+                VipLevel::Svip => Some("netease-svip".to_owned()),
+                VipLevel::Vip => Some("netease-vip".to_owned()),
+                _ => None,
+            },
+            vip_icon_url,
+            vip_tier,
+            vip_level_name,
+            ..l
+        }
+    }
+}
+
+fn vip_level_name_of(tier: i64) -> Option<String> {
+    NETEASE_VIP_LEVEL_NAMES
+        .get(tier as usize)
+        .map(|value| (*value).to_owned())
+        .or_else(|| Some(tier.to_string()))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseVipInfoData {
+    //svip
+    redplus: Associator,
+    //vip
+    associator: Associator,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Associator {
+    expire_time: i64,
+    icon_url: Option<String>,
+    dynamic_icon_url: Option<String>,
+    vip_level: i64,
+}
+
+impl Associator {
+    fn is_active(&self, now_ms: i64) -> bool {
+        self.expire_time > now_ms
+    }
+}
+
+//reuseable
+#[derive(Deserialize)]
+struct NameOnly {
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Song {
+    ar: Vec<NameOnly>,
+    fee: u8,
+    name: String,
+    id: i64,
+    dt: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Album {
+    artists: Vec<NameOnly>,
+    pic_url: String,
+    name: String,
+    id: i64,
+    size: Option<u32>,
+}
+
 fn get_playable(fee: u8) -> PlayableState {
     match fee {
         0 => PlayableState::CopyrightUnavailable,
@@ -232,69 +496,4 @@ fn get_playable(fee: u8) -> PlayableState {
         8 => PlayableState::TrialOnly,
         _ => PlayableState::Unknown,
     }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Song {
-    ar: Vec<Artist>,
-    fee: u8,
-    /*h: H,
-    sq: H,
-    hr: H,
-    l: H,
-    m: H,*/
-    name: String,
-    id: i64,
-    dt: Option<u64>,
-}
-
-/*#[derive(Deserialize)]
-pub struct H {
-    br: i64,
-    fid: i64,
-    size: i64,
-    vd: i64,
-    sr: i64,
-}
-
- #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Privilege {
-    id: i64,
-    fee: i64,
-    free_trial_privilege: FreeTrialPrivilege,
-}
-
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FreeTrialPrivilege {
-    res_consumable: bool,
-    user_consumable: bool,
-    listen_type: i64,
-    cannot_listen_reason: i64,
-    play_reason: Option<serde_json::Value>,
-    free_limit_tag_type: Option<serde_json::Value>,
-}*/
-
-//reuseable
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Album {
-    artists: Vec<Artist>,
-    pic_url: String,
-    name: String,
-    id: i64,
-    size: Option<u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Artist {
-    /*#[serde(rename = "img1v1Id")]
-    img1_v1_id: f64,
-    pic_url: String,
-    id: i64,*/
-    name: String,
 }

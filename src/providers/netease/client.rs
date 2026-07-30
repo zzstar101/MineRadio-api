@@ -15,14 +15,15 @@ use crate::{
     providers::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
+        netease::model::{NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseVipInfoResp},
     },
     services::auth_session,
     utils::{encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
 
 use super::model::{
-    NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLyricResp, NeteaseLyricV1Resp,
-    NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp,
+    NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLoginStatusResp, NeteaseLyricResp,
+    NeteaseLyricV1Resp, NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp,
 };
 
 const API_DOMAIN: &str = "https://interface.music.163.com";
@@ -173,7 +174,7 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn lyric_new(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
+    pub(super) async fn lyric_new(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
         let v1: NeteaseLyricV1Resp = self
             .eapi_model(
                 "/api/song/lyric/v1",
@@ -196,7 +197,7 @@ impl NeteaseClient {
         Ok(v1.into())
     }
 
-    pub async fn lyric(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
+    pub(super) async fn lyric(&self, id: &str) -> ProviderResult<NeteaseLyricResp> {
         self.eapi_model(
             "/api/song/lyric",
             json!({
@@ -214,13 +215,13 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn playlist_detail(
+    pub(super) async fn playlist_detail(
         &self,
         id: &str,
         offset: u32,
         limit: u32,
-    ) -> ProviderResult<Value> {
-        self.request_eapi(
+    ) -> ProviderResult<NeteasePlaylistDetailResp> {
+        self.eapi_model(
             "/api/v6/playlist/detail",
             json!({
                 "id": id,
@@ -229,12 +230,17 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "playlist_detail",
         )
         .await
     }
 
-    pub async fn user_playlist(&self, uid: &str, limit: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+    pub(super) async fn playlist_list(
+        &self,
+        uid: &str,
+        limit: u32,
+    ) -> ProviderResult<NeteasePlaylistListResp> {
+        self.weapi_model(
             "/api/user/playlist",
             json!({
                 "uid": uid,
@@ -244,6 +250,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "playlist_list",
         )
         .await
     }
@@ -396,38 +403,30 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn login_status(&self) -> ProviderResult<Value> {
-        self.request_weapi(
+    pub async fn login_status(&self) -> ProviderResult<NeteaseLoginStatusResp> {
+        self.weapi_model(
             "/api/w/nuser/account/get",
             json!({ "e_r": false }),
             self.current_cookie().await.as_deref(),
+            "login_status",
         )
         .await
     }
 
-    pub async fn vip_info(&self, uid: &str) -> ProviderResult<Value> {
+    pub(super) async fn vip_info(&self, uid: &str) -> ProviderResult<NeteaseVipInfoResp> {
         let uid = uid.trim();
         if uid.is_empty() {
-            return Ok(json!({}));
+            return Err(unavailable_error("vip_info"));
         }
 
         let cookie = self.current_cookie().await;
-        let client_v2 = self
-            .request_weapi(
-                "/api/music-vip-membership/client/vip/info",
-                json!({ "userId": uid }),
-                cookie.as_deref(),
-            )
-            .await;
-        let legacy = self
-            .request_weapi(
-                "/api/music-vip-membership/front/vip/info",
-                json!({ "userId": uid }),
-                cookie.as_deref(),
-            )
-            .await;
-
-        merge_vip_info(client_v2, legacy)
+        self.weapi_model(
+            "/api/music-vip-membership/front/vip/info",
+            json!({ "userId": uid }),
+            cookie.as_deref(),
+            "vip_info",
+        )
+        .await
     }
 
     pub async fn logout(&self) -> ProviderResult<Value> {
@@ -728,29 +727,6 @@ impl Default for NeteaseClient {
     }
 }
 
-fn merge_vip_info(
-    client_v2: ProviderResult<Value>,
-    legacy: ProviderResult<Value>,
-) -> ProviderResult<Value> {
-    let mut body = serde_json::Map::new();
-
-    match (client_v2, legacy) {
-        (Ok(client_v2), Ok(legacy)) => {
-            body.insert("vipInfoV2".to_owned(), client_v2);
-            body.insert("vipInfo".to_owned(), legacy);
-        }
-        (Ok(client_v2), Err(_)) => {
-            body.insert("vipInfoV2".to_owned(), client_v2);
-        }
-        (Err(_), Ok(legacy)) => {
-            body.insert("vipInfo".to_owned(), legacy);
-        }
-        (Err(err), Err(_)) => return Err(err),
-    }
-
-    Ok(Value::Object(body))
-}
-
 fn parse_cookie_header(cookie: &str) -> HashMap<String, String> {
     cookie
         .split(';')
@@ -940,34 +916,5 @@ fn cookie_kv_from_set_cookie(header: String) -> Option<String> {
         None
     } else {
         Some(pair.to_owned())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{merge_vip_info, unavailable_error};
-    use serde_json::json;
-
-    #[test]
-    fn vip_info_keeps_a_successful_fallback_response() {
-        let body = merge_vip_info(
-            Ok(json!({ "level": 7 })),
-            Err(unavailable_error("down".to_owned())),
-        )
-        .unwrap();
-
-        assert_eq!(body["vipInfoV2"]["level"], 7);
-        assert!(body.get("vipInfo").is_none());
-    }
-
-    #[test]
-    fn vip_info_returns_an_error_when_all_requests_fail() {
-        let err = merge_vip_info(
-            Err(unavailable_error("v2 down".to_owned())),
-            Err(unavailable_error("legacy down".to_owned())),
-        )
-        .unwrap_err();
-
-        assert_eq!(err.message, "v2 down");
     }
 }

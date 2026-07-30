@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{PlayableState, PlaylistDetail, PlaylistSummary, ProviderId, Track};
+use crate::types::{PlayableState, ProviderId, Track};
 
 pub fn normalize_provider_image_url(url: &str) -> String {
     let value = url.trim();
@@ -91,76 +91,6 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
     }
 }
 
-pub fn map_hana_playlist_to_summary(raw: &Value, id_hint: Option<&str>) -> PlaylistSummary {
-    let id = raw
-        .get("id")
-        .map(value_to_string)
-        .filter(|value| !value.is_empty())
-        .or_else(|| id_hint.map(str::to_owned))
-        .unwrap_or_default();
-    let track_count = raw
-        .get("trackCount")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok());
-    let track_ids = raw
-        .get("trackIds")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    item.get("id").map(value_to_string).or_else(|| match item {
-                        Value::String(_) | Value::Number(_) => Some(value_to_string(item)),
-                        _ => None,
-                    })
-                })
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    PlaylistSummary {
-        provider: ProviderId::Netease,
-        id,
-        name: raw
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        cover_url: normalize_provider_image_url(
-            raw.get("coverImgUrl")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        ),
-        track_count,
-        track_ids,
-        collected: Some(raw.get("collected").and_then(Value::as_bool) == Some(true)),
-    }
-}
-
-pub fn map_hana_playlist_to_detail(raw: &Value, id_hint: Option<&str>) -> PlaylistDetail {
-    let summary = map_hana_playlist_to_summary(raw, id_hint);
-    let tracks = raw
-        .get("tracks")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(map_hana_song_to_track)
-        .collect();
-
-    PlaylistDetail {
-        provider: summary.provider,
-        id: summary.id,
-        name: summary.name,
-        cover_url: summary.cover_url,
-        track_count: summary.track_count,
-        track_ids: summary.track_ids,
-        collected: summary.collected,
-        has_more: None,
-        tracks,
-    }
-}
-
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -187,12 +117,5 @@ mod tests {
         assert_eq!(track.id, "42");
         assert_eq!(track.cover_url, "https://a/b.jpg");
         assert_eq!(track.artists, vec!["A"]);
-    }
-
-    #[test]
-    fn playlist_summary_defaults_collected_to_false() {
-        let summary = map_hana_playlist_to_summary(&json!({ "id": 1 }), None);
-
-        assert_eq!(summary.collected, Some(false));
     }
 }
