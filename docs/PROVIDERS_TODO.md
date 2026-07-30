@@ -15,15 +15,15 @@
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `track_qualities` |
 | 歌词 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `lyric` |
 | 歌单列表 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `playlist_list` |
-| 歌单详情 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `playlist_detail` |
-| 登录状态 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `login_status` |
+| 歌单详情 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `playlist_detail` |
+| 登录状态 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `login_status` |
 | 登出 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `logout` |
 | 收藏 / 取消收藏 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `like_song` |
 | 收藏状态查询 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `check_song_likes` |
 | 添加歌曲到歌单 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `update_song_in_playlist`（`adding = true`） |
 | 从歌单移除歌曲 | [ ] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `update_song_in_playlist` 在 `adding = false` 时返回 `NOT_IMPLEMENTED` |
-| 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_list` |
-| 专辑详情 | [ ] | [ ] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_detail`（offset/limit 暂未透传） |
+| 专辑列表 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_list` |
+| 专辑详情 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `album_detail`（offset/limit 暂未透传） |
 
 ## QQ 音乐（qq）
 
