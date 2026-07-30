@@ -531,15 +531,10 @@ impl PodcastRequester for NeteasePodcastRequester {
     }
 
     async fn login_status(&self) -> anyhow::Result<PodcastLoginInfo> {
-        let body = self.client.login_status().await?;
-        let profile = body
-            .get("profile")
-            .or_else(|| body.get("data").and_then(|data| data.get("profile")))
-            .cloned()
-            .unwrap_or(Value::Null);
+        let status = self.client.login_status().await?.standardize();
         Ok(PodcastLoginInfo {
-            logged_in: !profile.is_null(),
-            user_id: record(&profile).get("userId").cloned(),
+            logged_in: status.logged_in,
+            user_id: status.user_id.map(Value::String),
         })
     }
 }
