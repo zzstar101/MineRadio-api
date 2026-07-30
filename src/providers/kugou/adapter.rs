@@ -292,8 +292,7 @@ impl ProviderAdapter for KugouAdapter {
     }
 
     async fn playlist_list(&self) -> ProviderResult<Vec<PlaylistSummary>> {
-        self
-            .client
+        self.client
             .user_collection_list()
             .await?
             .standardize_playlists()
@@ -324,8 +323,7 @@ impl ProviderAdapter for KugouAdapter {
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
-        self
-            .client
+        self.client
             .user_collection_list()
             .await?
             .standardize_albums()
