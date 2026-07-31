@@ -26,10 +26,7 @@ use crate::{
     },
 };
 
-use super::{
-    client::NeteaseClient,
-    map::{map_hana_song_to_track, map_playable},
-};
+use super::{client::NeteaseClient, map::map_playable};
 
 #[derive(Clone, Copy)]
 struct QualityCandidate {
@@ -159,15 +156,11 @@ impl ProviderAdapter for NeteaseAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<Vec<Track>> {
-        let body = self.client.cloudsearch(keyword, offset, limit).await?;
-        let songs = body
-            .get("result")
-            .and_then(|value| value.get("songs"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-
-        Ok(songs.iter().map(map_hana_song_to_track).collect())
+        Ok(self
+            .client
+            .search_track_modeled(keyword, offset, limit)
+            .await?
+            .standardize())
     }
 
     async fn search_album(

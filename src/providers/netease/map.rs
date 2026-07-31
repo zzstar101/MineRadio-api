@@ -44,6 +44,8 @@ pub fn map_playable(
     }
 }
 
+/// 旧版 Value 映射路径，暂时保留用于新模型回退/对照测试。
+#[allow(dead_code)]
 pub fn map_hana_song_to_track(raw: &Value) -> Track {
     let id = raw.get("id").map(value_to_string).unwrap_or_default();
     let artists = raw
@@ -91,6 +93,7 @@ pub fn map_hana_song_to_track(raw: &Value) -> Track {
     }
 }
 
+#[allow(dead_code)]
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),

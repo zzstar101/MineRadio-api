@@ -6,6 +6,77 @@ use crate::types::{
     ProviderLoginStatus, Track, VipLevel,
 };
 
+use super::map::normalize_provider_image_url;
+
+
+#[derive(Deserialize)]
+pub(super) struct NeteaseSearchTrackResp {
+    result: NeteaseSearchTrackResult,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseSearchTrackResult {
+    #[serde(default)]
+    songs: Vec<NeteaseSearchTrack>,
+    #[serde(rename = "songCount", alias = "total", default)]
+    song_count: u64,
+    #[serde(default)]
+    more: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseSearchTrack {
+    id: i64,
+    name: String,
+    #[serde(rename = "ar", default)]
+    artists: Vec<NameOnly>,
+    #[serde(rename = "al")]
+    album: Option<NeteaseSearchTrackAlbum>,
+    #[serde(default)]
+    fee: u8,
+    #[serde(default)]
+    dt: Option<u64>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseSearchTrackAlbum {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    pic_url: String,
+}
+
+impl NeteaseSearchTrackResp {
+    pub(super) fn standardize(self) -> Vec<Track> {
+        let _ = (self.result.song_count, self.result.more);
+        self.result
+            .songs
+            .into_iter()
+            .map(|song| {
+                let id = song.id.to_string();
+                let album = song.album.unwrap_or_default();
+                Track {
+                    id: id.clone(),
+                    provider: ProviderId::Netease,
+                    source_id: id,
+                    media_mid: None,
+                    title: song.name,
+                    artists: song.artists.into_iter().map(|artist| artist.name).collect(),
+                    album: album.name,
+                    cover_url: normalize_provider_image_url(&album.pic_url),
+                    quality_hints: vec!["standard".to_owned()],
+                    playable_state: get_playable(song.fee),
+                    duration_ms: song.dt,
+                    artwork_url: None,
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NeteaseLyricResp {
@@ -367,7 +438,6 @@ impl NeteaseVipInfoResp {
         } else {
             VipLevel::None
         };
-        println!("{:?}", self.data.associator.dynamic_icon_url);
         let vip_icon_url = if redplus_active {
             self.data
                 .redplus
@@ -482,5 +552,40 @@ fn get_playable(fee: u8) -> PlayableState {
         4 => PlayableState::PaidRequired,
         8 => PlayableState::TrialOnly,
         _ => PlayableState::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn standardizes_cloudsearch_track_response() {
+        let response: NeteaseSearchTrackResp = serde_json::from_value(json!({
+            "result": {
+                "songs": [{
+                    "id": 42,
+                    "name": "Test",
+                    "ar": [{"name": "Artist"}],
+                    "al": {"name": "Album", "picUrl": "http://a/b.jpg"},
+                    "fee": 0,
+                    "dt": 1234
+                }],
+                "songCount": 1,
+                "more": false
+            }
+        }))
+        .expect("cloudsearch response should deserialize");
+
+        let tracks = response.standardize();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id, "42");
+        assert_eq!(tracks[0].title, "Test");
+        assert_eq!(tracks[0].artists, vec!["Artist"]);
+        assert_eq!(tracks[0].album, "Album");
+        assert_eq!(tracks[0].cover_url, "https://a/b.jpg");
+        assert_eq!(tracks[0].duration_ms, Some(1234));
     }
 }

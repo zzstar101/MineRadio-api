@@ -23,7 +23,7 @@ use crate::{
 
 use super::model::{
     NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLoginStatusResp, NeteaseLyricResp,
-    NeteaseLyricV1Resp, NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp,
+    NeteaseLyricV1Resp, NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp, NeteaseSearchTrackResp,
 };
 
 const API_DOMAIN: &str = "https://interface.music.163.com";
@@ -99,7 +99,28 @@ impl NeteaseClient {
         .await
     }
 
-    /// 搜索专辑（/api/v1/search/album/get）
+    pub(super) async fn search_track_modeled(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<NeteaseSearchTrackResp> {
+        self.eapi_model(
+            "/api/cloudsearch/pc",
+            json!({
+                "s": keyword,
+                "type": 1,
+                "limit": limit,
+                "offset": offset,
+                "total": true,
+                "e_r": false
+            }),
+            self.current_cookie().await.as_deref(),
+            "search_track",
+        )
+        .await
+    }
+
     pub(super) async fn search_album(
         &self,
         keyword: &str,
@@ -121,7 +142,6 @@ impl NeteaseClient {
         .await
     }
 
-    /// 搜索歌单（/api/v1/search/playlist/get）
     pub(super) async fn search_playlist(
         &self,
         keyword: &str,
