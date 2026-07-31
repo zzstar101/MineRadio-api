@@ -176,10 +176,45 @@ impl QqMusicQrLoginService {
             .get("result")
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("QQ_MQTT_LOGIN_RESPONSE_MISSING_DATA"))?;
-        let cookie = cookie_from_login_data(data)?;
-        set_runtime_provider_cookie(ProviderId::Qq, cookie)
-            .await
-            .map_err(|error| anyhow!(error))?;
+
+        let data_map = flatten_data_to_map(data);
+
+        let login_type = data_map
+            .get("loginType")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow!("QQ_MQTT_LOGIN_RESPONSE_MISSING_LOGIN_TYPE"))?;
+
+        match login_type {
+            2 => {
+                let cookie = cookie_from_data_map(&data_map)?;
+                set_runtime_provider_cookie(ProviderId::Qq, cookie)
+                    .await
+                    .map_err(|error| anyhow!(error))?;
+            }
+            1 => {
+                let wechat_body = build_wechat_exchange_request(&data_map);
+                let wechat_payload = self.music_api(wechat_body).await?;
+
+                let wechat_data = wechat_payload
+                    .get("result")
+                    .and_then(|v| v.get("data"))
+                    .ok_or_else(|| anyhow!("QQ_MQTT_WECHAT_LOGIN_RESPONSE_MISSING_DATA"))?;
+                let mut wechat_data_map = flatten_data_to_map(wechat_data);
+                // 微信第二次兑换后特调：musicid -> wxuin + uin，musickey -> qm_keyst + qqmusic_key
+                remap_wechat_key(&mut wechat_data_map, "musicid", "wxuin");
+                remap_wechat_key(&mut wechat_data_map, "musicid", "uin");
+                remap_wechat_key(&mut wechat_data_map, "musickey", "qm_keyst");
+                remap_wechat_key(&mut wechat_data_map, "musickey", "qqmusic_key");
+                let cookie = cookie_from_data_map(&wechat_data_map)?;
+                set_runtime_provider_cookie(ProviderId::Qq, cookie)
+                    .await
+                    .map_err(|error| anyhow!(error))?;
+            }
+            _ => {
+                bail!("QQ_MQTT_LOGIN_UNKNOWN_LOGIN_TYPE: {}", login_type);
+            }
+        }
+
         Ok(check_response(
             qrcode_id,
             0,
@@ -243,6 +278,32 @@ fn login_with_mqtt_ticket_request(qrcode_id: &str, music_id: u64, music_key: &st
     })
 }
 
+fn build_wechat_exchange_request(data_map: &HashMap<String, Value>) -> Value {
+    let mut param = serde_json::Map::new();
+    for (key, value) in data_map {
+        param.insert(key.clone(), value.clone());
+    }
+    param.insert("strAppid".to_string(), json!("wx48db31d50e334801"));
+    param.insert(
+        "deviceName".to_string(),
+        json!(format!("Mineradio{}", &get_guid()[..1])),
+    );
+    param.insert("deviceType".to_string(), json!("Widnows"));
+    json!({
+        "result": {
+            "module": "music.login.LoginServer",
+            "method": "Login",
+            "param": param
+        },
+        "comm": {
+            "ct": 19,
+            "cv": 2201,
+            "chid": "0",
+            "guid": get_guid()
+        }
+    })
+}
+
 fn required_key(key: &str) -> Result<String> {
     let key = key.trim();
     if key.is_empty() {
@@ -260,72 +321,49 @@ fn required_string(data: &Value, field: &str, error: &'static str) -> Result<Str
         .ok_or_else(|| anyhow!(error))
 }
 
-fn required_scalar_string(data: &Value, field: &str, error: &'static str) -> Result<String> {
-    data.get(field)
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.trim().to_owned()),
-            Value::Number(value) => Some(value.to_string()),
-            _ => None,
-        })
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(error))
+fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
+    let mut map = HashMap::new();
+    if let Value::Object(obj) = data {
+        for (key, value) in obj {
+            match value {
+                Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null => {
+                    map.insert(key.clone(), value.clone());
+                }
+                _ => {} // skip nested objects and arrays
+            }
+        }
+    }
+    map
 }
 
-fn cookie_from_login_data(data: &Value) -> Result<String> {
+/// 微信第二次兑换后特调：将 source_key 的值复制到 target_key，若 source_key 存在。
+fn remap_wechat_key(data_map: &mut HashMap<String, Value>, source_key: &str, target_key: &str) {
+    if let Some(value) = data_map.get(source_key).cloned() {
+        data_map.insert(target_key.to_string(), value);
+    }
+}
+
+/// Build cookie string from a flattened data map.
+/// Each non-empty base-type value becomes a `key=value` pair.
+fn cookie_from_data_map(data_map: &HashMap<String, Value>) -> Result<String> {
     let mut parts: Vec<String> = Vec::new();
-
-    // Required fields
-    let music_id =
-        required_scalar_string(data, "musicid", "QQ_MQTT_LOGIN_RESPONSE_MISSING_MUSIC_ID")?;
-    let music_key =
-        required_scalar_string(data, "musickey", "QQ_MQTT_LOGIN_RESPONSE_MISSING_MUSIC_KEY")?;
-    let login_type = required_scalar_string(
-        data,
-        "loginType",
-        "QQ_MQTT_LOGIN_RESPONSE_MISSING_LOGIN_TYPE",
-    )?;
-
-    // Core credentials
-    parts.push(format!("uin={music_id}"));
-    parts.push(format!("qqmusic_key={music_key}"));
-    parts.push(format!("qm_keyst={music_key}"));
-    parts.push(format!("tmeLoginType={login_type}"));
-    parts.push(format!("login_type={login_type}"));
-
-    // Token & refresh
-    append_if_non_empty(data, &mut parts, "access_token", "psrf_qqaccess_token");
-    append_if_non_empty(data, &mut parts, "refresh_token", "psrf_qqrefresh_token");
-    append_if_non_empty(data, &mut parts, "refresh_key", "refresh_key");
-
-    // Encrypted user id
-    append_if_non_empty(data, &mut parts, "encryptUin", "euin");
-
-    // TTL / expiry
-    append_if_non_zero(data, &mut parts, "keyExpiresIn", "key_expires_in");
-    append_if_non_zero(data, &mut parts, "expired_at", "expired_at");
-
-    Ok(parts.join("; "))
-}
-
-fn append_if_non_empty(data: &Value, parts: &mut Vec<String>, json_key: &str, cookie_key: &str) {
-    if let Some(value) = data.get(json_key).and_then(Value::as_str).map(str::trim) {
-        if !value.is_empty() {
-            parts.push(format!("{cookie_key}={value}"));
-        }
-    }
-}
-
-fn append_if_non_zero(data: &Value, parts: &mut Vec<String>, json_key: &str, cookie_key: &str) {
-    if let Some(value) = data.get(json_key) {
+    for (key, value) in data_map {
         let s = match value {
+            Value::String(s) => s.clone(),
             Value::Number(n) => n.to_string(),
-            Value::String(s) => s.trim().to_owned(),
-            _ => return,
+            Value::Bool(b) => b.to_string(),
+            Value::Null => continue,
+            _ => continue,
         };
-        if s != "0" && !s.is_empty() {
-            parts.push(format!("{cookie_key}={s}"));
+        if s.is_empty() {
+            continue;
         }
+        parts.push(format!("{key}={s}"));
     }
+    if parts.is_empty() {
+        bail!("QQ_MQTT_LOGIN_COOKIE_EMPTY");
+    }
+    Ok(parts.join("; "))
 }
 
 fn check_response(
@@ -393,15 +431,19 @@ mod tests {
 
     #[test]
     fn login_exchange_produces_the_complete_qq_cookie() {
-        let cookie = cookie_from_login_data(&json!({
+        let data = json!({
             "musicid": 10001,
             "musickey": "login-key",
             "loginType": 6
-        }))
-        .unwrap();
+        });
+        let data_map = flatten_data_to_map(&data);
+        let cookie = cookie_from_data_map(&data_map).unwrap();
+        // HashMap iteration order is non-deterministic — sort for stable assertion
+        let mut parts: Vec<&str> = cookie.split("; ").collect();
+        parts.sort();
         assert_eq!(
-            cookie,
-            "uin=10001; qqmusic_key=login-key; qm_keyst=login-key; tmeLoginType=6; login_type=6"
+            parts.join("; "),
+            "loginType=6; musicid=10001; musickey=login-key"
         );
     }
 }
