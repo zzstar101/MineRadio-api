@@ -46,7 +46,6 @@ pub struct SpotifyAudioQuality {
 
 #[derive(Clone, Debug)]
 pub struct SpotifyResolvedAudio {
-    pub file_id: FileId,
     pub format: SpotifyAudioQuality,
 }
 
@@ -192,7 +191,7 @@ impl SpotifyClient {
             .await
             .and_then(|cdn| cdn.try_get_urls().map(|urls| urls[0].to_owned()))
             .map_err(librespot_error)?;
-        Ok(SpotifyResolvedAudio { file_id, format })
+        Ok(SpotifyResolvedAudio { format })
     }
 
     pub async fn audio_bytes(

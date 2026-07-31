@@ -72,22 +72,14 @@ impl ProviderAdapter for SpotifyAdapter {
             .await?;
         let quality = resolved.format;
         Ok(SongUrlResult {
-            url: Some(format!(
+            url: format!(
                 "/providers/spotify/audio-proxy?id={}&quality={}",
                 urlencoding::encode(&track.source_id),
                 urlencoding::encode(quality.id)
-            )),
+            ),
             proxied: true,
             provider: Some(ProviderId::Spotify),
             trial: Some(false),
-            playable: Some(true),
-            level: Some(quality.id.to_owned()),
-            quality: Some(quality.label.to_owned()),
-            br: Some(quality.br),
-            requested_quality,
-            playback_key_ready: Some(true),
-            filename: Some(resolved.file_id.to_base16()),
-            message: Some("Spotify Premium playback is proxied through librespot".to_owned()),
             ..Default::default()
         })
     }

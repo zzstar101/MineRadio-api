@@ -8,7 +8,6 @@ use crate::types::{
 
 use super::map::normalize_provider_image_url;
 
-
 #[derive(Deserialize)]
 pub(super) struct NeteaseSearchTrackResp {
     result: NeteaseSearchTrackResult,

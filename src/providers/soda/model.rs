@@ -292,12 +292,12 @@ pub(super) struct SodaSongUrlResp {
 impl SodaSongUrlResp {
     pub fn standardize(self, opt: SongUrlOptions) -> Option<SongUrlResult> {
         let target = opt.quality.unwrap_or(String::new());
-        let (a, b) = match target.as_str() {
-            "jymaster" => ("spatial", "录音室音质"),
-            "hires" => ("hi_res", "超清全景声"),
-            "lossless" => ("highest", "无损音质"),
-            "exhigh" => ("higher", "极高音质"),
-            "standard" | _ => ("medium", "标准音质"),
+        let a = match target.as_str() {
+            "jymaster" => "spatial",
+            "hires" => "hi_res",
+            "lossless" => "highest",
+            "exhigh" => "higher",
+            "standard" | _ => "medium",
         };
 
         let list = self.result.data;
@@ -314,18 +314,13 @@ impl SodaSongUrlResp {
             })?;
 
         Some(SongUrlResult {
-            url: Some(format!(
+            url: format!(
                 "/providers/soda/audio-proxy?url={}&playAuth={}",
                 urlencoding::encode(play_url),
                 urlencoding::encode(&play_info.play_auth)
-            )),
+            ),
             proxied: true,
             provider: Some(ProviderId::Soda),
-            trial: None,
-            playable: Some(true),
-            level: Some(play_info.quality.clone()),
-            quality: Some(b.to_owned()),
-            br: Some(play_info.bitrate),
             expires_at: Some(play_info.url_expire.to_string()),
             ..Default::default()
         })
@@ -347,8 +342,6 @@ struct SodaSongUrlData {
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct SodaSongUrlList {
-    bitrate: u32,
-
     quality: String,
 
     play_auth: String,

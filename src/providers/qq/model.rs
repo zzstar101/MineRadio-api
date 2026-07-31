@@ -969,38 +969,28 @@ pub(super) struct QqSongUrlResp {
 }
 
 impl QqSongUrlResp {
-    pub(super) fn standardize(self, requested: String) -> SongUrlResult {
+    pub(super) fn standardize(self) -> Option<SongUrlResult> {
         let data = self.req_0.data;
-        let (url, filename) = match data
+        let url = data
             .midurlinfo
             .into_iter()
             .find(|_a| true)
-            .map(|i| (i.purl, i.filename))
-        {
-            Some((a, b)) => (Some(a), Some(b)),
-            None => (None, None),
-        };
-        let url = url.map(|u| {
-            data.sip
-                .into_iter()
-                .find(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "https://ws.stream.qqmusic.qq.com/".to_owned())
-                + &u
-        });
+            .map(|i| i.purl)?;
+        let url = data
+            .sip
+            .into_iter()
+            .find(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://ws.stream.qqmusic.qq.com/".to_owned())
+            + &url;
 
-        SongUrlResult {
+        Some(SongUrlResult {
             url: url,
             proxied: false,
             provider: Some(ProviderId::Qq),
             trial: Some(false),
-            playable: Some(true),
-            level: Some(requested.clone()),
-            quality: Some(requested.clone()),
-            filename: filename,
-            requested_quality: Some(requested),
             expires_at: None,
             ..Default::default()
-        }
+        })
     }
 }
 
@@ -1011,13 +1001,11 @@ struct QqSongUrlReq {
 
 #[derive(Deserialize)]
 struct QqSongUrlData {
-    msg: String,
     sip: Vec<String>,
     midurlinfo: Vec<QqSongUrlInfo>,
 }
 
 #[derive(Deserialize)]
 struct QqSongUrlInfo {
-    filename: String,
     purl: String,
 }

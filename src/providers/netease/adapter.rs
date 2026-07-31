@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     parsers::{
@@ -22,7 +22,6 @@ use crate::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
-        VipLevel,
     },
 };
 
@@ -265,34 +264,12 @@ impl ProviderAdapter for NeteaseAdapter {
                 .vip_level
                 .clone()
                 .unwrap_or_else(|| crate::types::VipLevel::None);
-            let actual_level = netease_actual_level(datum, quality);
             let result = SongUrlResult {
-                url: url.map(str::to_owned),
+                url: url.map(str::to_owned).unwrap_or_default(),
                 proxied: false,
                 provider: Some(ProviderId::Netease),
                 trial: Some(trial),
-                playable: Some(true),
-                level: Some(actual_level.clone()),
-                quality: Some(netease_quality_label(&actual_level, quality).to_owned()),
-                br: datum
-                    .get("br")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| u32::try_from(value).ok()),
-                requested_quality: Some(requested.clone()),
-                logged_in: Some(trial_login_status.logged_in),
-                vip_type: trial_login_status.vip_type,
                 vip_level: Some(vip_level.clone()),
-                is_vip: trial_login_status.is_vip,
-                is_svip: trial_login_status.is_svip,
-                vip_label: trial_login_status.vip_label,
-                vip_icon: trial_login_status.vip_icon,
-                vip_icon_url: trial_login_status.vip_icon_url,
-                vip_tier: trial_login_status.vip_tier,
-                vip_level_name: trial_login_status.vip_level_name,
-                restriction: trial.then(|| netease_trial_restriction(code, fee)),
-                reason: trial.then(|| "trial_only".to_owned()),
-                message: trial
-                    .then(|| netease_trial_message(trial_login_status.logged_in, &vip_level)),
                 expires_at: None,
                 ..Default::default()
             };
@@ -740,34 +717,6 @@ fn netease_quality_rank(level: &str) -> usize {
         .iter()
         .position(|candidate| candidate.level == level)
         .unwrap_or(QUALITY_CANDIDATES.len())
-}
-
-fn netease_trial_restriction(code: Option<i64>, fee: Option<i64>) -> Value {
-    let mut restriction = serde_json::Map::from_iter([
-        ("provider".to_owned(), json!("netease")),
-        ("category".to_owned(), json!("trial_only")),
-        ("action".to_owned(), json!("upgrade")),
-        (
-            "message".to_owned(),
-            json!("网易云仅返回试听片段，完整播放需要会员或购买"),
-        ),
-    ]);
-    if let Some(code) = code {
-        restriction.insert("code".to_owned(), json!(code));
-    }
-    if let Some(fee) = fee {
-        restriction.insert("fee".to_owned(), json!(fee));
-    }
-    Value::Object(restriction)
-}
-
-fn netease_trial_message(logged_in: bool, vip_level: &VipLevel) -> String {
-    match (logged_in, vip_level) {
-        (true, VipLevel::Svip) => "此歌曲需要单曲、专辑购买或更高权限".to_owned(),
-        (true, VipLevel::Vip) => "此歌曲需要 SVIP 或购买 · 当前仅播放试听片段".to_owned(),
-        (true, _) => "此歌曲需要 VIP · 当前仅播放试听片段".to_owned(),
-        (false, _) => "当前未登录 · 仅播放试听片段".to_owned(),
-    }
 }
 
 fn response_code(body: &Value) -> i64 {

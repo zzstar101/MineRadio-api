@@ -63,7 +63,6 @@ pub enum VipLevel {
     None,
 }
 
-/// 搜索类型
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchType {
@@ -73,8 +72,6 @@ pub enum SearchType {
     Artist,
     Playlist,
 }
-
-//等待其他修改完成批量接入
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,58 +153,15 @@ pub struct SongUrlOptions {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SongUrlResult {
-    pub url: Option<String>,
+    pub url: String,
     #[serde(default)]
     pub proxied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ProviderId>,
+    pub provider: Option<ProviderId>, //留着测试的时候看最终是否是原生而不是换源来的
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub playable: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<String>,
-    pub quality: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub br: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub requested_quality: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logged_in: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_type: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub vip_level: Option<VipLevel>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_vip: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_svip: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_icon: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_icon_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_tier: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_level_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playback_key_ready: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub restriction: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tried: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub qq_code: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_message: Option<String>,
     pub expires_at: Option<String>,
 }
 

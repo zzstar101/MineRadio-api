@@ -141,11 +141,24 @@ impl ProviderAdapter for QqAdapter {
             .find(|q| q.level == requested)
             .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
             .unwrap();
-        Ok(self
+        if let Some(r) = self
             .client
             .song_url(&track.source_id, filename)
             .await?
-            .standardize(requested))
+            .standardize()
+        {
+            Ok(r)
+        } else {
+            self.client.ensure_login().await?;
+            Err(ProviderError {
+                code: ProviderErrorCode::NoUrl,
+                provider: ProviderId::Qq,
+                message: format!("qq did not return a playable URL for {requested}"),
+                retryable: false,
+                action: None,
+                raw_message: None,
+            })
+        }
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {

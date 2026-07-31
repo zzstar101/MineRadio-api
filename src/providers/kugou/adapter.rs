@@ -201,26 +201,21 @@ impl ProviderAdapter for KugouAdapter {
                 if let Ok(body) = response {
                     if let Some(url) = play_url(&body) {
                         return Ok(SongUrlResult {
-                            url: Some(url),
+                            url: url,
                             provider: Some(ProviderId::Kugou),
-                            playable: Some(true),
-                            level: Some(quality.to_owned()),
-                            quality: Some(quality.to_owned()),
-                            requested_quality: requested_quality.clone(),
                             ..Default::default()
                         });
                     }
                 }
             }
         }
-        Ok(SongUrlResult {
-            provider: Some(ProviderId::Kugou),
-            playable: Some(false),
-            quality: Some(requested.to_owned()),
-            requested_quality,
-            reason: Some("kugou_url_unavailable".to_owned()),
-            message: Some("kugou did not return a playable URL".to_owned()),
-            ..Default::default()
+        Err(ProviderError {
+            code: ProviderErrorCode::NoUrl,
+            provider: ProviderId::Kugou,
+            message: format!("kugou did not return a playable URL for {requested}"),
+            retryable: false,
+            action: None,
+            raw_message: None,
         })
     }
 

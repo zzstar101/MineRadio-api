@@ -601,33 +601,11 @@ mod tests {
 
         fn with_song_url(mut self, url: &str) -> Self {
             self.song_url_result = Some(SongUrlResult {
-                url: Some(url.to_owned()),
+                url: url.to_owned(),
                 proxied: false,
                 provider: None,
                 trial: None,
-                playable: None,
-                level: None,
-                quality: None,
-                br: None,
-                requested_quality: None,
-                logged_in: None,
-                vip_type: None,
                 vip_level: None,
-                is_vip: None,
-                is_svip: None,
-                vip_label: None,
-                vip_icon: None,
-                vip_icon_url: None,
-                vip_tier: None,
-                vip_level_name: None,
-                playback_key_ready: None,
-                restriction: None,
-                reason: None,
-                message: None,
-                tried: None,
-                filename: None,
-                qq_code: None,
-                raw_message: None,
                 expires_at: None,
             });
             self
@@ -919,7 +897,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.url.as_deref(), Some("https://n.example/song.m4a"));
+        assert_eq!(result.url, "https://n.example/song.m4a");
         assert_eq!(calls.lock().unwrap().as_slice(), &["netease:songUrl:n-1"]);
     }
 
@@ -942,7 +920,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.url.as_deref(), Some("https://q.example/song.m4a"));
+        assert_eq!(result.url, "https://q.example/song.m4a");
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             &[
@@ -979,7 +957,7 @@ mod tests {
 
         let result = resolver.resolve_song_url(import_track, None).await.unwrap();
 
-        assert_eq!(result.url.as_deref(), Some("https://n.example/match.m4a"));
+        assert_eq!(result.url, "https://n.example/match.m4a");
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             &["netease:search:夜航 星野:5", "netease:songUrl:n-match"]

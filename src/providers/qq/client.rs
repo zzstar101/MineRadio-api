@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use reqwest::{
     Client,
-    header::{COOKIE, HeaderMap, HeaderValue, ORIGIN, RANGE, REFERER, USER_AGENT},
+    header::{COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
 };
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
@@ -305,55 +305,6 @@ impl QqClient {
             "song_url",
         )
         .await
-    }
-
-    pub async fn probe_playback_url(&self, url: &str, timeout: Duration) -> bool {
-        let timeout = timeout.max(Duration::from_millis(1));
-        let headers = match build_headers(Some("https://y.qq.com/"), None, false) {
-            Ok(headers) => headers,
-            Err(_) => return false,
-        };
-        let mut response = match self
-            .http
-            .get(url)
-            .headers(headers)
-            .header(RANGE, "bytes=0-8191")
-            .timeout(timeout)
-            .send()
-            .await
-        {
-            Ok(response) if matches!(response.status().as_u16(), 200 | 206) => response,
-            _ => return false,
-        };
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if content_type.contains("text/html")
-            || content_type.contains("application/json")
-            || content_type.contains("application/xml")
-            || content_type.contains("text/plain")
-        {
-            return false;
-        }
-
-        let deadline = Instant::now() + timeout;
-        let mut bytes = Vec::with_capacity(8192);
-        while bytes.len() < 8192 {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let chunk = match tokio::time::timeout(remaining, response.chunk()).await {
-                Ok(Ok(Some(chunk))) => chunk,
-                _ => break,
-            };
-            let remaining_len = 8192 - bytes.len();
-            bytes.extend_from_slice(&chunk[..chunk.len().min(remaining_len)]);
-        }
-        bytes.len() >= 512
     }
 
     pub(super) async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
