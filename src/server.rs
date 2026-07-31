@@ -27,6 +27,7 @@ use crate::{
         qq_qr_login_mqtt::{
             QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
         },
+        qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
         sidecar_log,
         soda_audio_proxy::{SodaAudioProxy, SodaAudioProxyDeps, create_soda_audio_proxy},
         soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
@@ -45,6 +46,7 @@ pub struct AppServices {
     pub podcast: PodcastService,
     pub qq_qr_login: Arc<QqQrLoginService>,
     pub qqmusic_qr_login: Arc<QqMusicQrLoginService>,
+    pub wechat_qr_login: Arc<WechatQrLoginService>,
     pub soda_audio_proxy: SodaAudioProxy,
     pub soda_qr_login: Arc<SodaQrLoginService>,
     pub spotify_audio_proxy: SpotifyAudioProxy,
@@ -84,6 +86,9 @@ impl AppState {
                 qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps::default())),
                 qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(
                     QqMusicQrLoginDeps::default(),
+                )),
+                wechat_qr_login: Arc::new(create_wechat_qr_login_service(
+                    WechatQrLoginDeps::default(),
                 )),
                 soda_audio_proxy: create_soda_audio_proxy(SodaAudioProxyDeps::default()),
                 soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps::default())),

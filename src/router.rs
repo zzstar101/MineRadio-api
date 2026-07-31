@@ -575,6 +575,10 @@ async fn shared_playlist_import(
 
 async fn provider_login_qr_key(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
     match pid.as_str() {
+        "wx" => match state.services.wechat_qr_login.create_key().await {
+            Ok(data) => ok(data),
+            Err(err) => internal_error(err.to_string()),
+        },
         "qq" => match state.services.qq_qr_login.create_key().await {
             Ok(data) => ok(data),
             Err(err) => internal_error(err.to_string()),
@@ -614,6 +618,10 @@ async fn provider_login_qr_create(
 ) -> Response {
     let key = query.key.unwrap_or_default();
     match pid.as_str() {
+        "wx" => match state.services.wechat_qr_login.create_image(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
         "qq" => match state.services.qq_qr_login.create_image(&key).await {
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),
@@ -650,6 +658,10 @@ async fn provider_login_qr_check(
 ) -> Response {
     let key = query.key.unwrap_or_default();
     match pid.as_str() {
+        "wx" => match state.services.wechat_qr_login.check(&key).await {
+            Ok(data) => ok(data),
+            Err(err) => bad_request(err.to_string()),
+        },
         "qq" => match state.services.qq_qr_login.check(&key).await {
             Ok(data) => ok(data),
             Err(err) => bad_request(err.to_string()),

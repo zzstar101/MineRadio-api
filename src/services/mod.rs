@@ -10,6 +10,7 @@ pub mod podcast;
 mod qq_mqtt_login;
 pub mod qq_qr_login;
 pub mod qq_qr_login_mqtt;
+pub mod qq_qr_login_wx;
 pub mod shared_playlist_import;
 pub mod sidecar_log;
 pub mod soda_audio_proxy;
