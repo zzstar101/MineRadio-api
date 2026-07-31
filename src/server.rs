@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use reqwest::Client;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -20,13 +21,15 @@ use crate::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
         discover_home::DiscoverRequester,
         image_proxy::{ImageProxy, ImageProxyDeps, create_image_proxy},
-        kugou_qr_login::{KugouQrLoginService, create_kugou_qr_login_service},
+        kugou_qr_login::{
+            KugouQrHttpApi, KugouQrLoginDeps, KugouQrLoginService, create_kugou_qr_login_service,
+        },
         netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
-        qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_mqtt::{
             QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
         },
+        qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
         sidecar_log,
         soda_audio_proxy::{SodaAudioProxy, SodaAudioProxyDeps, create_soda_audio_proxy},
@@ -62,7 +65,12 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let netease_client = Arc::new(NeteaseClient::new());
+        let shared_http_client = Client::new();
+        let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
+        let qq_qr_client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| Client::new());
         let mut providers = ProviderRegistry::default();
         providers.register(Arc::new(NeteaseAdapter::new(netease_client.clone())));
         providers.register(QqAdapter::shared());
@@ -77,21 +85,31 @@ impl AppState {
             services: AppServices {
                 discover_requester: netease_client.clone(),
                 netease_qr_login: Arc::new(create_netease_qr_login_service_with_client(
-                    netease_client.clone(),
+                    shared_http_client.clone(),
                 )),
                 podcast: create_podcast_service_with_client(netease_client),
                 audio_proxy: create_audio_proxy(AudioProxyDeps::default()),
                 image_proxy: create_image_proxy(ImageProxyDeps::default()),
-                kugou_qr_login: Arc::new(create_kugou_qr_login_service(Default::default())),
-                qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps::default())),
-                qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(
-                    QqMusicQrLoginDeps::default(),
-                )),
-                wechat_qr_login: Arc::new(create_wechat_qr_login_service(
-                    WechatQrLoginDeps::default(),
-                )),
+                kugou_qr_login: Arc::new(create_kugou_qr_login_service(KugouQrLoginDeps {
+                    api: Box::new(KugouQrHttpApi::with_client(shared_http_client.clone())),
+                })),
+                qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps {
+                    client: qq_qr_client.clone(),
+                    timeout_ms: 10_000,
+                })),
+                qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(QqMusicQrLoginDeps {
+                    client: qq_qr_client.clone(),
+                    timeout_ms: 10_000,
+                })),
+                wechat_qr_login: Arc::new(create_wechat_qr_login_service(WechatQrLoginDeps {
+                    client: qq_qr_client,
+                    timeout_ms: 10_000,
+                })),
                 soda_audio_proxy: create_soda_audio_proxy(SodaAudioProxyDeps::default()),
-                soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps::default())),
+                soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps {
+                    client: shared_http_client,
+                    ..SodaQrLoginDeps::default()
+                })),
                 spotify_audio_proxy: create_spotify_audio_proxy(spotify_client),
                 weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),
             },

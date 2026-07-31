@@ -9,6 +9,7 @@ use crate::{
     services::{
         auth_session::set_runtime_provider_cookie,
         qq_mqtt_login::{MqttLoginEvent, MqttLoginSession},
+        qr_login::{QrLogin, QrSession, QrSessionStore},
     },
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{get_guid, sign},
@@ -35,7 +36,6 @@ impl Default for QqMusicQrLoginDeps {
 }
 
 struct QqQrLoginSession {
-    image: String,
     mqtt: MqttLoginSession,
     finished: bool,
 }
@@ -43,11 +43,12 @@ struct QqQrLoginSession {
 #[derive(Default)]
 pub struct QqMusicQrLoginService {
     deps: QqMusicQrLoginDeps,
-    sessions: Mutex<HashMap<String, Arc<Mutex<QqQrLoginSession>>>>,
+    sessions: QrSessionStore<QqQrLoginSession>,
 }
 
-impl QqMusicQrLoginService {
-    pub async fn create_key(&self) -> Result<ProviderLoginQrKey> {
+#[async_trait::async_trait]
+impl QrLogin for QqMusicQrLoginService {
+    async fn create_key(&self) -> Result<ProviderLoginQrKey> {
         let payload = self.music_api(create_qr_request()).await?;
         let data = payload
             .get("result")
@@ -55,19 +56,23 @@ impl QqMusicQrLoginService {
             .ok_or_else(|| anyhow!("QQ_MQTT_QR_RESPONSE_MISSING_DATA"))?;
         let key = required_string(data, "qrcodeID", "QQ_MQTT_QR_RESPONSE_MISSING_KEY")?;
         let image = required_string(data, "qrcode", "QQ_MQTT_QR_RESPONSE_MISSING_IMAGE")?;
-        let session = Arc::new(Mutex::new(QqQrLoginSession {
-            image,
-            mqtt: MqttLoginSession::new(&key),
-            finished: false,
-        }));
-        self.sessions.lock().await.insert(key.clone(), session);
+        self.sessions
+            .insert(
+                key.clone(),
+                image,
+                QqQrLoginSession {
+                    mqtt: MqttLoginSession::new(&key),
+                    finished: false,
+                },
+            )
+            .await;
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Qq,
             key,
         })
     }
 
-    pub async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
+    async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
         let key = required_key(key)?;
         let session = self.session(&key).await?;
         let image = session.lock().await.image.clone();
@@ -79,15 +84,15 @@ impl QqMusicQrLoginService {
         })
     }
 
-    pub async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
+    async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
         let key = required_key(key)?;
         let session = self.session(&key).await?;
         let mut session = session.lock().await;
-        if session.finished {
+        if session.state.finished {
             bail!("QQ_MQTT_QR_SESSION_FINISHED");
         }
 
-        let event = session.mqtt.poll_event().await?;
+        let event = session.state.mqtt.poll_event().await?;
         let terminal = event.is_terminal();
         let response = match event {
             MqttLoginEvent::WaitingScan => Ok(check_response(
@@ -142,19 +147,19 @@ impl QqMusicQrLoginService {
         };
 
         if terminal {
-            session.finished = true;
+            session.state.finished = true;
             drop(session);
-            self.sessions.lock().await.remove(&key);
+            self.sessions.remove(&key).await;
         }
         response
     }
+}
 
-    async fn session(&self, key: &str) -> Result<Arc<Mutex<QqQrLoginSession>>> {
+impl QqMusicQrLoginService {
+    async fn session(&self, key: &str) -> Result<Arc<Mutex<QrSession<QqQrLoginSession>>>> {
         self.sessions
-            .lock()
-            .await
             .get(key)
-            .cloned()
+            .await
             .ok_or_else(|| anyhow!("QQ_MQTT_QR_SESSION_MISSING"))
     }
 
@@ -248,7 +253,7 @@ impl QqMusicQrLoginService {
 pub fn create_qqmusic_qr_login_service(deps: QqMusicQrLoginDeps) -> QqMusicQrLoginService {
     QqMusicQrLoginService {
         deps,
-        sessions: Mutex::new(HashMap::new()),
+        sessions: QrSessionStore::default(),
     }
 }
 

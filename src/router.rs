@@ -18,7 +18,10 @@ use crate::{
     },
     server::AppState,
     services::{
-        self, cross_source_resolver, podcast, sidecar_log, weather_radio::WeatherRadioParams,
+        self, cross_source_resolver, podcast,
+        qr_login::{QrLogin, QrLoginKind},
+        sidecar_log,
+        weather_radio::WeatherRadioParams,
     },
     types::{ProviderId, SearchType, SongUrlOptions, Track},
 };
@@ -574,40 +577,18 @@ async fn shared_playlist_import(
 }
 
 async fn provider_login_qr_key(State(state): State<AppState>, Path(pid): Path<String>) -> Response {
-    match pid.as_str() {
-        "wx" => match state.services.wechat_qr_login.create_key().await {
-            Ok(data) => ok(data),
-            Err(err) => internal_error(err.to_string()),
-        },
-        "qq" => match state.services.qq_qr_login.create_key().await {
-            Ok(data) => ok(data),
-            Err(err) => internal_error(err.to_string()),
-        },
-        "qqmusic" => match state.services.qqmusic_qr_login.create_key().await {
-            Ok(data) => ok(data),
-            Err(err) => internal_error(err.to_string()),
-        },
-        "soda" => match state.services.soda_qr_login.create_image(None).await {
-            Ok(image) => ok(crate::types::ProviderLoginQrKey {
-                provider: image.provider,
-                key: image.key,
-            }),
-            Err(err) => internal_error(err.to_string()),
-        },
-        "kugou" => match state.services.kugou_qr_login.create_key().await {
-            Ok(data) => ok(data),
-            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
-                StatusCode::NOT_IMPLEMENTED,
-                "NOT_IMPLEMENTED",
-                "kugou qr login adapter is not configured",
-            ),
-            Err(err) => internal_error(err.to_string()),
-        },
-        "netease" => match state.services.netease_qr_login.create_key().await {
-            Ok(data) => ok(data),
-            Err(err) => internal_error(err.to_string()),
-        },
-        _ => unknown_provider(&pid),
+    let Ok(kind) = pid.parse::<QrLoginKind>() else {
+        return unknown_provider(&pid);
+    };
+    let service = qr_login_service(&state, kind);
+    match service.create_key().await {
+        Ok(data) => ok(data),
+        Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+            StatusCode::NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "kugou qr login adapter is not configured",
+        ),
+        Err(err) => internal_error(err.to_string()),
     }
 }
 
@@ -617,37 +598,18 @@ async fn provider_login_qr_create(
     Query(query): Query<LoginQrQuery>,
 ) -> Response {
     let key = query.key.unwrap_or_default();
-    match pid.as_str() {
-        "wx" => match state.services.wechat_qr_login.create_image(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "qq" => match state.services.qq_qr_login.create_image(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "qqmusic" => match state.services.qqmusic_qr_login.create_image(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "soda" => match state.services.soda_qr_login.create_image(Some(&key)).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "kugou" => match state.services.kugou_qr_login.create_image(&key).await {
-            Ok(data) => ok(data),
-            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
-                StatusCode::NOT_IMPLEMENTED,
-                "NOT_IMPLEMENTED",
-                "kugou qr login adapter is not configured",
-            ),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "netease" => match state.services.netease_qr_login.create_image(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        _ => unknown_provider(&pid),
+    let Ok(kind) = pid.parse::<QrLoginKind>() else {
+        return unknown_provider(&pid);
+    };
+    let service = qr_login_service(&state, kind);
+    match service.create_image(&key).await {
+        Ok(data) => ok(data),
+        Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+            StatusCode::NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "kugou qr login adapter is not configured",
+        ),
+        Err(err) => bad_request(err.to_string()),
     }
 }
 
@@ -657,37 +619,29 @@ async fn provider_login_qr_check(
     Query(query): Query<LoginQrQuery>,
 ) -> Response {
     let key = query.key.unwrap_or_default();
-    match pid.as_str() {
-        "wx" => match state.services.wechat_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "qq" => match state.services.qq_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "qqmusic" => match state.services.qqmusic_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "soda" => match state.services.soda_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "kugou" => match state.services.kugou_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
-                StatusCode::NOT_IMPLEMENTED,
-                "NOT_IMPLEMENTED",
-                "kugou qr login adapter is not configured",
-            ),
-            Err(err) => bad_request(err.to_string()),
-        },
-        "netease" => match state.services.netease_qr_login.check(&key).await {
-            Ok(data) => ok(data),
-            Err(err) => bad_request(err.to_string()),
-        },
-        _ => unknown_provider(&pid),
+    let Ok(kind) = pid.parse::<QrLoginKind>() else {
+        return unknown_provider(&pid);
+    };
+    let service = qr_login_service(&state, kind);
+    match service.check(&key).await {
+        Ok(data) => ok(data),
+        Err(err) if err.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => fail(
+            StatusCode::NOT_IMPLEMENTED,
+            "NOT_IMPLEMENTED",
+            "kugou qr login adapter is not configured",
+        ),
+        Err(err) => bad_request(err.to_string()),
+    }
+}
+
+fn qr_login_service(state: &AppState, kind: QrLoginKind) -> &dyn QrLogin {
+    match kind {
+        QrLoginKind::QqWeb => state.services.qq_qr_login.as_ref(),
+        QrLoginKind::QqMqtt => state.services.qqmusic_qr_login.as_ref(),
+        QrLoginKind::QqWechat => state.services.wechat_qr_login.as_ref(),
+        QrLoginKind::Netease => state.services.netease_qr_login.as_ref(),
+        QrLoginKind::Soda => state.services.soda_qr_login.as_ref(),
+        QrLoginKind::Kugou => state.services.kugou_qr_login.as_ref(),
     }
 }
 

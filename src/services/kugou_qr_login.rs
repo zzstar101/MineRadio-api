@@ -8,13 +8,13 @@ use reqwest::header::{HeaderMap, SET_COOKIE};
 use rsa::{BigUint, RsaPublicKey, traits::PublicKeyParts};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
+    collections::BTreeMap,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
+    services::qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::{
         decrypt_kugou_register_payload, encrypt_kugou_register_payload, encrypt_kugou_register_rsa,
@@ -44,6 +44,18 @@ pub struct KugouQrPollResult {
 pub trait KugouQrLoginApi: Send + Sync {
     async fn create_qr(&self) -> anyhow::Result<KugouQrCode>;
     async fn check_qr(&self, key: &str) -> anyhow::Result<KugouQrPollResult>;
+
+    async fn create_qr_with_state(&self) -> anyhow::Result<(KugouQrCode, Option<KugouQrDevice>)> {
+        Ok((self.create_qr().await?, None))
+    }
+
+    async fn check_qr_with_state(
+        &self,
+        key: &str,
+        _device: Option<&KugouQrDevice>,
+    ) -> anyhow::Result<KugouQrPollResult> {
+        self.check_qr(key).await
+    }
 }
 
 pub struct KugouQrLoginDeps {
@@ -60,12 +72,19 @@ impl Default for KugouQrLoginDeps {
 
 pub struct KugouQrLoginService {
     deps: KugouQrLoginDeps,
-    image_cache: tokio::sync::Mutex<HashMap<String, ProviderLoginQrImage>>,
+    sessions: QrSessionStore<KugouQrSession>,
 }
 
-impl KugouQrLoginService {
-    pub async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
-        let qr = self.deps.api.create_qr().await?;
+#[derive(Clone, Debug)]
+struct KugouQrSession {
+    device: Option<KugouQrDevice>,
+    url: Option<String>,
+}
+
+#[async_trait]
+impl QrLogin for KugouQrLoginService {
+    async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
+        let (qr, device) = self.deps.api.create_qr_with_state().await?;
         let key = required_value(&qr.key, "KUGOU_QR_KEY_MISSING")?;
         let image = required_value(&qr.image, "KUGOU_QR_IMAGE_MISSING")?;
         let payload = ProviderLoginQrImage {
@@ -74,26 +93,51 @@ impl KugouQrLoginService {
             img: image,
             url: qr.url.filter(|url| !url.trim().is_empty()),
         };
-        self.image_cache.lock().await.insert(key.clone(), payload);
+        self.sessions
+            .insert(
+                key.clone(),
+                payload.img.clone(),
+                KugouQrSession {
+                    device,
+                    url: payload.url.clone(),
+                },
+            )
+            .await;
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Kugou,
             key,
         })
     }
 
-    pub async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
+    async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
         let key = required_value(key, "KUGOU_QR_KEY_REQUIRED")?;
-        self.image_cache
-            .lock()
-            .await
+        let session = self
+            .sessions
             .get(&key)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("KUGOU_QR_IMAGE_MISSING"))
+            .await
+            .ok_or_else(|| anyhow::anyhow!("KUGOU_QR_IMAGE_MISSING"))?;
+        let session = session.lock().await;
+        Ok(ProviderLoginQrImage {
+            provider: ProviderId::Kugou,
+            key,
+            img: session.image.clone(),
+            url: session.state.url.clone(),
+        })
     }
 
-    pub async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
+    async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
         let key = required_value(key, "KUGOU_QR_KEY_REQUIRED")?;
-        let result = self.deps.api.check_qr(&key).await?;
+        let session = self
+            .sessions
+            .get(&key)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("KUGOU_QR_SESSION_MISSING"))?;
+        let device = session.lock().await.state.device.clone();
+        let result = self
+            .deps
+            .api
+            .check_qr_with_state(&key, device.as_ref())
+            .await?;
         let mut stored = false;
 
         if result.logged_in {
@@ -107,7 +151,10 @@ impl KugouQrLoginService {
                 .await
                 .map_err(|err| anyhow::anyhow!(err))?;
             stored = true;
-            self.image_cache.lock().await.remove(&key);
+        }
+
+        if result.expired == Some(true) || result.logged_in {
+            self.sessions.remove(&key).await;
         }
 
         Ok(ProviderLoginQrCheck {
@@ -126,14 +173,19 @@ impl KugouQrLoginService {
 pub fn create_kugou_qr_login_service(deps: KugouQrLoginDeps) -> KugouQrLoginService {
     KugouQrLoginService {
         deps,
-        image_cache: tokio::sync::Mutex::new(HashMap::new()),
+        sessions: QrSessionStore::default(),
     }
 }
 
 #[derive(Clone, Default)]
 pub struct KugouQrHttpApi {
     client: reqwest::Client,
-    devices: Arc<tokio::sync::Mutex<HashMap<String, KugouQrDevice>>>,
+}
+
+impl KugouQrHttpApi {
+    pub fn with_client(client: reqwest::Client) -> Self {
+        Self { client }
+    }
 }
 
 const KUGOU_QR_URL: &str = "https://login-user.kugou.com/v2/qrcode";
@@ -154,6 +206,10 @@ type Aes256CbcEnc = cbc::Encryptor<Aes256>;
 #[async_trait]
 impl KugouQrLoginApi for KugouQrHttpApi {
     async fn create_qr(&self) -> anyhow::Result<KugouQrCode> {
+        Ok(self.create_qr_with_state().await?.0)
+    }
+
+    async fn create_qr_with_state(&self) -> anyhow::Result<(KugouQrCode, Option<KugouQrDevice>)> {
         let (mid, uuid) = {
             let uuid = random_kugou_uuid();
             (md5_hex(uuid.as_bytes()), uuid)
@@ -163,18 +219,12 @@ impl KugouQrLoginApi for KugouQrHttpApi {
         let primary_params = build_qr_params(current_time_millis(), "8131", &mid, &dfid, &mid);
         let primary = self.request_qr(primary_params.clone()).await;
         match primary {
-            Ok(qr) => {
-                self.remember_device(&qr.key, &primary_params).await;
-                Ok(qr)
-            }
+            Ok(qr) => Ok((qr, Some(device_from_params(&primary_params)))),
             Err(primary_error) => {
                 let fallback_params =
                     build_qr_params(current_time_seconds(), "20489", &mid, &dfid, "-");
                 match self.request_qr(fallback_params.clone()).await {
-                    Ok(qr) => {
-                        self.remember_device(&qr.key, &fallback_params).await;
-                        Ok(qr)
-                    }
+                    Ok(qr) => Ok((qr, Some(device_from_params(&fallback_params)))),
                     Err(fallback_error) => Err(anyhow::anyhow!(
                         "KUGOU_QR_PRIMARY_FAILED: {primary_error}; KUGOU_QR_FALLBACK_FAILED: {fallback_error}"
                     )),
@@ -184,18 +234,23 @@ impl KugouQrLoginApi for KugouQrHttpApi {
     }
 
     async fn check_qr(&self, key: &str) -> anyhow::Result<KugouQrPollResult> {
+        self.check_qr_with_state(key, None).await
+    }
+
+    async fn check_qr_with_state(
+        &self,
+        key: &str,
+        device: Option<&KugouQrDevice>,
+    ) -> anyhow::Result<KugouQrPollResult> {
         let key = required_value(key, "KUGOU_QR_KEY_REQUIRED")?;
-        let device = self
-            .devices
-            .lock()
-            .await
-            .get(&key)
-            .cloned()
-            .unwrap_or_else(|| KugouQrDevice {
-                mid: md5_hex(b"mineradio:"),
-                dfid: "-".to_owned(),
-                uuid: md5_hex(b"mineradio:"),
-            });
+        let fallback_device;
+        let device = match device {
+            Some(device) => device,
+            None => {
+                fallback_device = fallback_kugou_device();
+                &fallback_device
+            }
+        };
         let params = build_check_params(current_time_millis(), &device, &key);
         let response = self
             .client
@@ -218,28 +273,14 @@ impl KugouQrLoginApi for KugouQrHttpApi {
                 .user_id
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("KUGOU_QR_USER_ID_MISSING"))?;
-            let cookie = self.exchange_token(&device, token, user_id).await?;
+            let cookie = self.exchange_token(device, token, user_id).await?;
             result.cookie = Some(ensure_cookie_pair(&cookie, "dfid", &device.dfid));
-        }
-        if result.expired == Some(true) || result.logged_in {
-            self.devices.lock().await.remove(&key);
         }
         Ok(result)
     }
 }
 
 impl KugouQrHttpApi {
-    async fn remember_device(&self, key: &str, params: &BTreeMap<String, String>) {
-        self.devices.lock().await.insert(
-            key.to_owned(),
-            KugouQrDevice {
-                mid: params.get("mid").cloned().unwrap_or_default(),
-                dfid: params.get("dfid").cloned().unwrap_or_default(),
-                uuid: params.get("uuid").cloned().unwrap_or_default(),
-            },
-        );
-    }
-
     async fn register_device(&self, mid: &str, uuid: &str) -> anyhow::Result<String> {
         let clienttime = current_time_seconds();
         let token = String::new();
@@ -404,10 +445,26 @@ impl KugouQrHttpApi {
 }
 
 #[derive(Clone, Debug)]
-struct KugouQrDevice {
+pub struct KugouQrDevice {
     mid: String,
     dfid: String,
     uuid: String,
+}
+
+fn device_from_params(params: &BTreeMap<String, String>) -> KugouQrDevice {
+    KugouQrDevice {
+        mid: params.get("mid").cloned().unwrap_or_default(),
+        dfid: params.get("dfid").cloned().unwrap_or_default(),
+        uuid: params.get("uuid").cloned().unwrap_or_default(),
+    }
+}
+
+fn fallback_kugou_device() -> KugouQrDevice {
+    KugouQrDevice {
+        mid: md5_hex(b"mineradio:"),
+        dfid: "-".to_owned(),
+        uuid: md5_hex(b"mineradio:"),
+    }
 }
 
 fn build_qr_params(
@@ -807,6 +864,7 @@ mod tests {
             token: None,
             user_id: None,
         });
+        service.create_key().await.unwrap();
         let result = service.check("demo-key").await.unwrap();
 
         assert!(result.logged_in);

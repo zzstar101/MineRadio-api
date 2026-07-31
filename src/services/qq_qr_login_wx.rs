@@ -5,12 +5,13 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use base64::Engine;
 use regex::Regex;
-use reqwest::Client;
+use reqwest::{Client, header::LOCATION};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
+    services::qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{get_guid, sign},
 };
@@ -62,7 +63,6 @@ impl Default for WechatQrLoginDeps {
 }
 
 struct WechatQrSession {
-    image: String,
     uuid: String,
     finished: bool,
     last_status_code: Option<i64>,
@@ -71,21 +71,18 @@ struct WechatQrSession {
 #[derive(Default)]
 pub struct WechatQrLoginService {
     deps: WechatQrLoginDeps,
-    sessions: Mutex<HashMap<String, Arc<Mutex<WechatQrSession>>>>,
+    sessions: QrSessionStore<WechatQrSession>,
 }
 
-impl WechatQrLoginService {
-    pub async fn create_key(&self) -> Result<ProviderLoginQrKey> {
+#[async_trait::async_trait]
+impl QrLogin for WechatQrLoginService {
+    async fn create_key(&self) -> Result<ProviderLoginQrKey> {
         let resp = self
-            .deps
-            .client
-            .get(WECHAT_QR_CONNECT_URL)
-            .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header(
-                "user-agent",
-                "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)",
+            .get_following_redirects(
+                WECHAT_QR_CONNECT_URL.to_owned(),
+                Duration::from_millis(self.deps.timeout_ms),
+                Some("Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)"),
             )
-            .send()
             .await?;
         let html = resp.text().await?;
 
@@ -103,6 +100,7 @@ impl WechatQrLoginService {
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .send()
             .await?
+            .error_for_status()?
             .bytes()
             .await?;
         let img = format!(
@@ -110,16 +108,14 @@ impl WechatQrLoginService {
             base64::engine::general_purpose::STANDARD.encode(img_bytes)
         );
 
-        let session = Arc::new(Mutex::new(WechatQrSession {
-            image: img,
+        let session = WechatQrSession {
             uuid: request_uuid.clone(),
             finished: false,
             last_status_code: None,
-        }));
+        };
         self.sessions
-            .lock()
-            .await
-            .insert(request_uuid.clone(), session);
+            .insert(request_uuid.clone(), img, session)
+            .await;
 
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Qq,
@@ -127,7 +123,7 @@ impl WechatQrLoginService {
         })
     }
 
-    pub async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
+    async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
         let key = required_key(key)?;
         let session = self.session(&key).await?;
         let image = session.lock().await.image.clone();
@@ -139,17 +135,17 @@ impl WechatQrLoginService {
         })
     }
 
-    pub async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
+    async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
         let key = required_key(key)?;
         let session = self.session(&key).await?;
         let mut session = session.lock().await;
-        if session.finished {
+        if session.state.finished {
             bail!("WECHAT_QR_SESSION_FINISHED");
         }
 
-        let poll_url = match session.last_status_code {
-            Some(404) => format!("{}{}&last=404", WECHAT_POLL_BASE, session.uuid),
-            _ => format!("{}{}", WECHAT_POLL_BASE, session.uuid),
+        let poll_url = match session.state.last_status_code {
+            Some(404) => format!("{}{}&last=404", WECHAT_POLL_BASE, session.state.uuid),
+            _ => format!("{}{}", WECHAT_POLL_BASE, session.state.uuid),
         };
 
         let text = self
@@ -159,6 +155,7 @@ impl WechatQrLoginService {
             .timeout(WECHAT_POLL_TIMEOUT)
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?;
 
@@ -168,7 +165,7 @@ impl WechatQrLoginService {
             .get("wx_errcode")
             .and_then(|v| v.parse().ok())
             .unwrap_or(-1);
-        session.last_status_code = Some(status_code);
+        session.state.last_status_code = Some(status_code);
 
         let terminal = matches!(status_code, 402 | 405);
         let response = match status_code {
@@ -195,7 +192,7 @@ impl WechatQrLoginService {
                     .get("wx_code")
                     .cloned()
                     .ok_or_else(|| anyhow!("WECHAT_QR_TOKEN_MISSING"))?;
-                self.confirm_wechat_login(&session.uuid).await?;
+                self.confirm_wechat_login(&session.state.uuid).await?;
                 self.complete_wechat_login(&key, &token).await?
             }
 
@@ -203,20 +200,20 @@ impl WechatQrLoginService {
         };
 
         if terminal {
-            session.finished = true;
+            session.state.finished = true;
             drop(session);
-            self.sessions.lock().await.remove(&key);
+            self.sessions.remove(&key).await;
         }
 
         Ok(response)
     }
+}
 
-    async fn session(&self, key: &str) -> Result<Arc<Mutex<WechatQrSession>>> {
+impl WechatQrLoginService {
+    async fn session(&self, key: &str) -> Result<Arc<Mutex<QrSession<WechatQrSession>>>> {
         self.sessions
-            .lock()
-            .await
             .get(key)
-            .cloned()
+            .await
             .ok_or_else(|| anyhow!("WECHAT_QR_SESSION_MISSING"))
     }
 
@@ -246,18 +243,44 @@ impl WechatQrLoginService {
             .get(format!("{}{}&last=404", WECHAT_POLL_BASE, uuid))
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
     async fn open_wechat_redirect(&self, code: &str) -> Result<()> {
-        self.deps
-            .client
-            .get(wechat_redirect_url(code))
-            .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .send()
-            .await?;
+        self.get_following_redirects(
+            wechat_redirect_url(code),
+            Duration::from_millis(self.deps.timeout_ms),
+            None,
+        )
+        .await?;
         Ok(())
+    }
+
+    async fn get_following_redirects(
+        &self,
+        mut url: String,
+        timeout: Duration,
+        user_agent: Option<&str>,
+    ) -> Result<reqwest::Response> {
+        for _ in 0..5 {
+            let mut request = self.deps.client.get(&url).timeout(timeout);
+            if let Some(user_agent) = user_agent {
+                request = request.header("user-agent", user_agent);
+            }
+            let response = request.send().await?;
+            if !response.status().is_redirection() {
+                return Ok(response.error_for_status()?);
+            }
+            let location = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| anyhow!("WECHAT_QR_REDIRECT_LOCATION_MISSING"))?;
+            url = url::Url::parse(&url)?.join(location)?.to_string();
+        }
+        bail!("WECHAT_QR_TOO_MANY_REDIRECTS")
     }
 
     async fn music_api(&self, body: Value) -> Result<Value> {
@@ -282,7 +305,7 @@ impl WechatQrLoginService {
 pub fn create_wechat_qr_login_service(deps: WechatQrLoginDeps) -> WechatQrLoginService {
     WechatQrLoginService {
         deps,
-        sessions: Mutex::new(HashMap::new()),
+        sessions: QrSessionStore::default(),
     }
 }
 

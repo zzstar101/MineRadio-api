@@ -1,14 +1,21 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use qrcode_generator::{QrCodeEcc, to_svg_to_string};
+use reqwest::{
+    Client,
+    header::{CONTENT_TYPE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
+};
 use serde_json::Value;
-use std::sync::Arc;
 
 use crate::{
-    providers::netease::client::{NeteaseClient, NeteaseClientResponse},
     services::auth_session::set_runtime_provider_cookie,
+    services::qr_login::QrLogin,
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
+    utils::{encrypt_weapi, generate_weapi_secret_key},
 };
+
+const NETEASE_DOMAIN: &str = "https://music.163.com";
+const NETEASE_QR_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
 
 #[derive(Clone, Debug, Default)]
 pub struct NeteaseApiResponse {
@@ -32,8 +39,9 @@ pub struct NeteaseQrLoginDeps {
     pub now: Option<Box<dyn Fn() -> i64 + Send + Sync>>,
 }
 
-impl NeteaseQrLoginService {
-    pub async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
+#[async_trait]
+impl QrLogin for NeteaseQrLoginService {
+    async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
         let resp = self
             .deps
             .qr_key
@@ -47,7 +55,7 @@ impl NeteaseQrLoginService {
         })
     }
 
-    pub async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
+    async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
         let normalized_key = key.trim();
         if normalized_key.is_empty() {
             anyhow::bail!("NETEASE_QR_KEY_REQUIRED");
@@ -72,7 +80,7 @@ impl NeteaseQrLoginService {
         })
     }
 
-    pub async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
+    async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
         let normalized_key = key.trim();
         if normalized_key.is_empty() {
             anyhow::bail!("NETEASE_QR_KEY_REQUIRED");
@@ -118,7 +126,9 @@ impl NeteaseQrLoginService {
             stored: Some(stored),
         })
     }
+}
 
+impl NeteaseQrLoginService {
     fn now(&self) -> i64 {
         self.deps.now.as_ref().map(|now| now()).unwrap_or_else(|| {
             std::time::SystemTime::now()
@@ -133,12 +143,10 @@ pub fn create_netease_qr_login_service(deps: NeteaseQrLoginDeps) -> NeteaseQrLog
     NeteaseQrLoginService { deps }
 }
 
-pub fn create_netease_qr_login_service_with_client(
-    client: Arc<NeteaseClient>,
-) -> NeteaseQrLoginService {
+pub fn create_netease_qr_login_service_with_client(client: Client) -> NeteaseQrLoginService {
     create_netease_qr_login_service(NeteaseQrLoginDeps {
         qr_key: Box::new(NeteaseQrKeyCall {
-            client: Arc::clone(&client),
+            client: client.clone(),
         }),
         qr_create: Box::new(NeteaseQrCreateCall {}),
         qr_check: Box::new(NeteaseQrCheckCall { client }),
@@ -198,13 +206,18 @@ fn read_qr_message(resp: &NeteaseApiResponse) -> Option<String> {
 }
 
 struct NeteaseQrKeyCall {
-    client: Arc<NeteaseClient>,
+    client: Client,
 }
 
 #[async_trait]
 impl NeteaseApiCall for NeteaseQrKeyCall {
     async fn call(&self, _query: Value) -> anyhow::Result<NeteaseApiResponse> {
-        map_client_response(self.client.login_qr_key(None).await)
+        request_qr_response(
+            &self.client,
+            "/api/login/qrcode/unikey",
+            serde_json::json!({ "type": 3 }),
+        )
+        .await
     }
 }
 
@@ -240,7 +253,7 @@ impl NeteaseApiCall for NeteaseQrCreateCall {
 }
 
 struct NeteaseQrCheckCall {
-    client: Arc<NeteaseClient>,
+    client: Client,
 }
 
 #[async_trait]
@@ -252,26 +265,59 @@ impl NeteaseApiCall for NeteaseQrCheckCall {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_REQUIRED"))?;
-        let cookie = if query
-            .get("noCookie")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            None
-        } else {
-            self.client.current_cookie().await
-        };
-        map_client_response(self.client.login_qr_check(key, cookie.as_deref()).await)
+        request_qr_response(
+            &self.client,
+            "/api/login/qrcode/client/login",
+            serde_json::json!({ "key": key, "type": 3 }),
+        )
+        .await
     }
 }
 
-fn map_client_response(
-    response: crate::providers::ProviderResult<NeteaseClientResponse>,
+async fn request_qr_response(
+    client: &Client,
+    uri: &str,
+    payload: Value,
 ) -> anyhow::Result<NeteaseApiResponse> {
-    let response = response.map_err(anyhow::Error::from)?;
+    let mut body = payload.as_object().cloned().unwrap_or_default();
+    body.insert("csrf_token".to_owned(), Value::String(String::new()));
+    let encrypted = encrypt_weapi(&Value::Object(body), Some(&generate_weapi_secret_key()))
+        .map_err(|err| anyhow::anyhow!("NETEASE_QR_ENCRYPT_FAILED: {err}"))?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(USER_AGENT, HeaderValue::from_static(NETEASE_QR_USER_AGENT));
+    headers.insert(REFERER, HeaderValue::from_static(NETEASE_DOMAIN));
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/x-www-form-urlencoded"),
+    );
+    let response = client
+        .post(format!(
+            "{NETEASE_DOMAIN}/weapi/{}",
+            uri.trim_start_matches("/api/")
+        ))
+        .headers(headers)
+        .form(&[
+            ("params", encrypted.params),
+            ("encSecKey", encrypted.enc_sec_key),
+        ])
+        .send()
+        .await?
+        .error_for_status()?;
+    let cookie = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let body = response.json::<Value>().await?;
     Ok(NeteaseApiResponse {
-        body: Some(response.body),
-        cookie: response.cookie.map(Value::String),
+        body: Some(body),
+        cookie: (!cookie.is_empty()).then_some(Value::String(cookie)),
     })
 }
 

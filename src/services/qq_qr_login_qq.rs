@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{
@@ -10,6 +9,7 @@ use reqwest::{
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
+    services::qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{get_guid, gtk_from_pskey},
 };
@@ -52,17 +52,13 @@ impl Default for QqQrLoginDeps {
 #[derive(Default)]
 pub struct QqQrLoginService {
     deps: QqQrLoginDeps,
-    image_cache: Arc<tokio::sync::Mutex<HashMap<String, String>>>,
-    sessions: Arc<tokio::sync::Mutex<HashMap<String, QqQrLoginSession>>>,
-    cleanup_running: Arc<tokio::sync::Mutex<bool>>,
+    sessions: QrSessionStore<QqQrLoginSession>,
 }
 
-#[derive(Clone)]
 struct QqQrLoginSession {
     cookies: CookieMap,
     login_sig: String,
     device_id: String,
-    created_at: Instant,
 }
 
 const QQ_XLOGIN_URL: &str = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin";
@@ -72,10 +68,10 @@ const QQ_AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
 const QQ_MUSICU_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const QQ_REDIRECT_URI: &str =
     "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/";
-const QQ_QR_SESSION_TTL: Duration = Duration::from_secs(30);
 
-impl QqQrLoginService {
-    pub async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
+#[async_trait::async_trait]
+impl QrLogin for QqQrLoginService {
+    async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
         let xlogin_resp = self
             .deps
             .client
@@ -123,35 +119,34 @@ impl QqQrLoginService {
             e & 0x7fffffff
         };
         let key = encode_key(&qrsig, hash(&qrsig) as u64);
-        self.image_cache.lock().await.insert(key.clone(), img);
-        self.sessions.lock().await.insert(
-            key.clone(),
-            QqQrLoginSession {
-                cookies,
-                login_sig,
-                device_id: get_guid(),
-                created_at: Instant::now(),
-            },
-        );
-        self.ensure_cleanup_task().await;
+        self.sessions
+            .insert(
+                key.clone(),
+                img,
+                QqQrLoginSession {
+                    cookies,
+                    login_sig,
+                    device_id: get_guid(),
+                },
+            )
+            .await;
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Qq,
             key,
         })
     }
 
-    pub async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
+    async fn create_image(&self, key: &str) -> anyhow::Result<ProviderLoginQrImage> {
         let normalized_key = key.trim();
         if decode_key(normalized_key).is_none() {
             anyhow::bail!("QQ_QR_KEY_REQUIRED");
         }
-        let img = self
-            .image_cache
-            .lock()
-            .await
+        let session = self
+            .sessions
             .get(normalized_key)
-            .cloned()
+            .await
             .ok_or_else(|| anyhow::anyhow!("QQ_QR_IMAGE_MISSING"))?;
+        let img = session.lock().await.image.clone();
         Ok(ProviderLoginQrImage {
             provider: ProviderId::Qq,
             key: normalized_key.to_owned(),
@@ -160,37 +155,39 @@ impl QqQrLoginService {
         })
     }
 
-    pub async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
+    async fn check(&self, key: &str) -> anyhow::Result<ProviderLoginQrCheck> {
         let normalized_key = key.trim();
         let decoded =
             decode_key(normalized_key).ok_or_else(|| anyhow::anyhow!("QQ_QR_KEY_REQUIRED"))?;
-        let mut session = self
+        let session = self
             .sessions
-            .lock()
-            .await
             .get(normalized_key)
-            .cloned()
+            .await
             .ok_or_else(|| anyhow::anyhow!("QQ_QR_SESSION_MISSING"))?;
-        if cookie_value(&session.cookies, "qrsig") != decoded.qrsig {
+        let mut session = session.lock().await;
+        if cookie_value(&session.state.cookies, "qrsig") != decoded.qrsig {
             anyhow::bail!("QQ_QR_SESSION_SIG_MISMATCH");
         }
         let url = check_url(
             now_millis(),
             &decoded.ptqrtoken,
-            &session.login_sig,
-            &session.device_id,
+            &session.state.login_sig,
+            &session.state.device_id,
         );
         let check_resp = self
             .deps
             .client
             .get(&url)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", cookie_header(&session.cookies))
+            .header("cookie", cookie_header(&session.state.cookies))
             .header("referer", xlogin_url())
             .header("user-agent", QQ_QR_USER_AGENT)
             .send()
             .await?;
-        merge_cookies(&mut session.cookies, read_set_cookies(check_resp.headers()));
+        merge_cookies(
+            &mut session.state.cookies,
+            read_set_cookies(check_resp.headers()),
+        );
         let text = check_resp.text().await?;
         let ptui = parse_ptui_callback(&text);
         let state = classify_poll_state(&ptui, &text);
@@ -198,8 +195,7 @@ impl QqQrLoginService {
         match state {
             QqQrPollState::Success => {}
             QqQrPollState::Expired => {
-                self.image_cache.lock().await.remove(normalized_key);
-                self.sessions.lock().await.remove(normalized_key);
+                self.sessions.remove(normalized_key).await;
                 return Ok(ProviderLoginQrCheck {
                     provider: ProviderId::Qq,
                     key: normalized_key.to_owned(),
@@ -212,11 +208,6 @@ impl QqQrLoginService {
                 });
             }
             QqQrPollState::Waiting | QqQrPollState::Authenticating => {
-                self.sessions
-                    .lock()
-                    .await
-                    .insert(normalized_key.to_owned(), session);
-                self.ensure_cleanup_task().await;
                 return Ok(ProviderLoginQrCheck {
                     provider: ProviderId::Qq,
                     key: normalized_key.to_owned(),
@@ -229,11 +220,6 @@ impl QqQrLoginService {
                 });
             }
             QqQrPollState::Unknown => {
-                self.sessions
-                    .lock()
-                    .await
-                    .insert(normalized_key.to_owned(), session);
-                self.ensure_cleanup_task().await;
                 anyhow::bail!("QQ_QR_UNKNOWN_POLL_CODE_{}", ptui.code);
             }
         }
@@ -247,14 +233,14 @@ impl QqQrLoginService {
             .client
             .get(&redirect_url)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", cookie_header(&session.cookies))
+            .header("cookie", cookie_header(&session.state.cookies))
             .send()
             .await?;
         merge_cookies(
-            &mut session.cookies,
+            &mut session.state.cookies,
             read_set_cookies(check_sig_resp.headers()),
         );
-        let p_skey = cookie_value(&session.cookies, "p_skey");
+        let p_skey = cookie_value(&session.state.cookies, "p_skey");
         if p_skey.is_empty() {
             anyhow::bail!("QQ_QR_PSKEY_MISSING");
         }
@@ -264,12 +250,12 @@ impl QqQrLoginService {
             .client
             .post(QQ_AUTHORIZE_URL)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", cookie_header(&session.cookies))
+            .header("cookie", cookie_header(&session.state.cookies))
             .form(&build_authorize_form(gtk))
             .send()
             .await?;
         merge_cookies(
-            &mut session.cookies,
+            &mut session.state.cookies,
             read_set_cookies(authorize_resp.headers()),
         );
         let status = authorize_resp.status();
@@ -290,23 +276,22 @@ impl QqQrLoginService {
             .post(QQ_MUSICU_URL)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .header("content-type", "application/x-www-form-urlencoded")
-            .header("cookie", cookie_header(&session.cookies))
+            .header("cookie", cookie_header(&session.state.cookies))
             .body(build_musicu_body(gtk, &code))
             .send()
             .await?;
         merge_cookies(
-            &mut session.cookies,
+            &mut session.state.cookies,
             read_set_cookies(musicu_resp.headers()),
         );
-        let cookie = cookie_header(&session.cookies);
+        let cookie = cookie_header(&session.state.cookies);
         if cookie.is_empty() {
             anyhow::bail!("QQ_QR_COOKIE_MISSING");
         }
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|err| anyhow::anyhow!(err))?;
-        self.image_cache.lock().await.remove(normalized_key);
-        self.sessions.lock().await.remove(normalized_key);
+        self.sessions.remove(normalized_key).await;
         Ok(ProviderLoginQrCheck {
             provider: ProviderId::Qq,
             key: normalized_key.to_owned(),
@@ -318,61 +303,12 @@ impl QqQrLoginService {
             stored: Some(true),
         })
     }
-
-    async fn ensure_cleanup_task(&self) {
-        let mut running = self.cleanup_running.lock().await;
-        if *running {
-            return;
-        }
-        *running = true;
-
-        let sessions = Arc::clone(&self.sessions);
-        let image_cache = Arc::clone(&self.image_cache);
-        let cleanup_running = Arc::clone(&self.cleanup_running);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(QQ_QR_SESSION_TTL).await;
-
-                let (expired_keys, empty) = {
-                    let mut sessions = sessions.lock().await;
-                    let now = Instant::now();
-                    let expired_keys = sessions
-                        .iter()
-                        .filter(|(_, session)| {
-                            now.duration_since(session.created_at) >= QQ_QR_SESSION_TTL
-                        })
-                        .map(|(key, _)| key.clone())
-                        .collect::<Vec<_>>();
-                    for key in &expired_keys {
-                        sessions.remove(key);
-                    }
-                    (expired_keys, sessions.is_empty())
-                };
-
-                if !expired_keys.is_empty() {
-                    let mut image_cache = image_cache.lock().await;
-                    for key in expired_keys {
-                        image_cache.remove(&key);
-                    }
-                }
-                if empty {
-                    let mut running = cleanup_running.lock().await;
-                    if sessions.lock().await.is_empty() {
-                        *running = false;
-                        break;
-                    }
-                }
-            }
-        });
-    }
 }
 
 pub fn create_qq_qr_login_service(deps: QqQrLoginDeps) -> QqQrLoginService {
     QqQrLoginService {
         deps,
-        image_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        cleanup_running: Arc::new(tokio::sync::Mutex::new(false)),
+        sessions: QrSessionStore::default(),
     }
 }
 
