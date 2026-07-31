@@ -64,8 +64,6 @@ Invoke-RestMethod http://127.0.0.1:11451/health
 
 - [完整路由、参数与响应示例](docs/PROVIDERS_API.md)
 - [Provider 能力举证与人工测试 TODO](docs/PROVIDERS_TODO.md)
-- [TypeScript 迁移审计](docs/PROVIDER_TS_AUDIT.md)
-- [服务迁移待办](docs/SERVICES_PENDING.md)
 
 除 `/health` 与代理类路由外，成功 JSON 响应使用：
 

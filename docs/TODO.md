@@ -8,3 +8,4 @@
 [ ] 检查微信登录的qq音乐的cookie有何区别
 [ ] 迁移接口数据收集方式
 [ ] 统一部分零散封装
+[ ] 在 `src/utils/cryptors/netease.rs` 增加 EAPI 解压后的大小限制（先确认真实 payload 大小范围）。
