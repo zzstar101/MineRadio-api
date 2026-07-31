@@ -31,24 +31,20 @@ const WECHAT_QRCODE_BASE: &str = "https://open.weixin.qq.com/connect/qrcode/";
 const WECHAT_POLL_BASE: &str = "https://long.open.weixin.qq.com/connect/l/qrconnect?uuid=";
 const WECHAT_QQ_REDIRECT_BASE: &str =
     "https://y.qq.com/portal/wx_redirect.html?login_type=2&surl=https://y.qq.com/&code=";
+const WECHAT_POLL_TIMEOUT: Duration = Duration::from_secs(16);
 const QQ_MUSIC_API_URL: &str = "https://u.y.qq.com/cgi-bin/musics.fcg";
 const QQ_MUSIC_REFERER: &str = "https://y.qq.com/";
 const QQ_MUSIC_USER_AGENT: &str =
     "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
 
-/// 从微信扫码页 HTML 中提取本次请求标识符（一次编译，Lazy lock）。
 static WECHAT_UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // 匹配 /qrcode/<uuid> 出现在 img src 或 JS 变量等位置
     Regex::new(r#"/connect/qrcode/([a-zA-Z0-9]{16,64})"#).expect("compile wechat uuid regex")
 });
 
-/// 解析微信长轮询返回的 JS 风格键值对文本。
 static WECHAT_POLL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"window\.(\w+)\s*=\s*(-?\w+|"[^"]*"?|'[^']*'?)"#)
         .expect("compile wechat poll regex")
 });
-
-// ── deps ──────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct WechatQrLoginDeps {
@@ -65,16 +61,12 @@ impl Default for WechatQrLoginDeps {
     }
 }
 
-// ── session ───────────────────────────────────────────────────────────
-
 struct WechatQrSession {
     image: String,
     uuid: String,
     finished: bool,
     last_status_code: Option<i64>,
 }
-
-// ── service ───────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct WechatQrLoginService {
@@ -84,7 +76,6 @@ pub struct WechatQrLoginService {
 
 impl WechatQrLoginService {
     pub async fn create_key(&self) -> Result<ProviderLoginQrKey> {
-
         let resp = self
             .deps
             .client
@@ -103,7 +94,6 @@ impl WechatQrLoginService {
             .and_then(|cap| cap.get(1))
             .map(|m| m.as_str().to_owned())
             .ok_or_else(|| anyhow!("WECHAT_QR_UUID_NOT_FOUND"))?;
-
 
         let qrcode_url = format!("{}{}", WECHAT_QRCODE_BASE, request_uuid);
         let img_bytes = self
@@ -166,7 +156,7 @@ impl WechatQrLoginService {
             .deps
             .client
             .get(&poll_url)
-            .timeout(Duration::from_millis(self.deps.timeout_ms))
+            .timeout(WECHAT_POLL_TIMEOUT)
             .send()
             .await?
             .text()
