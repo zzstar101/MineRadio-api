@@ -11,7 +11,8 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::providers::qq::model::{QqLoginStatusResp, QqVipIconResp};
+use crate::providers::qq::model::{QqLoginStatusResp, QqSongUrlResp, QqVipIconResp};
+use crate::utils::cryptors::qq::get_guid;
 use crate::{
     providers::{
         ProviderId, ProviderResult,
@@ -265,7 +266,11 @@ impl QqClient {
         .await
     }
 
-    pub async fn song_url(&self, song_mid: &str, filenames: &[String]) -> ProviderResult<Value> {
+    pub(super) async fn song_url(
+        &self,
+        song_mid: &str,
+        filenames: String,
+    ) -> ProviderResult<QqSongUrlResp> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
         let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
@@ -273,20 +278,19 @@ impl QqClient {
         self.post_json_with_sign(
             &json!({
                 "req_0": {
-                    "module": "vkey.GetVkeyServer",
-                    "method": "CgiGetVkey",
+                    "module": "music.vkey.GetVkey",
+                    "method": "UrlGetVkey",
                     "param": {
-                        "checklimit": 0,
-                        "ctx": 1,
-                        "downloadfrom": 0,
-                        "filename": filenames,
-                        "guid": "2796982635",
-                        "songmid": vec![song_mid; filenames.len()],
-                        "songtype": vec![0; filenames.len()],
+                        "guid": get_guid(),
                         "uin": uin,
-                        "loginflag": 1,
-                        "platform": "20"
-                    }
+                        "downloadfrom": 1,
+                        "ctx": 1,
+                        "referer": "y.qq.com",
+                        "scene": 0,
+                        "songtype": [1],
+                        "songmid": [song_mid],
+                        "filename": [filenames],
+                    },
                 },
                 "comm": {
                     "uin": uin,
@@ -349,7 +353,7 @@ impl QqClient {
             let remaining_len = 8192 - bytes.len();
             bytes.extend_from_slice(&chunk[..chunk.len().min(remaining_len)]);
         }
-        bytes.len() >= 512 && looks_like_audio(&bytes)
+        bytes.len() >= 512
     }
 
     pub(super) async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
@@ -408,13 +412,6 @@ impl QqClient {
             "vip_info",
         )
         .await
-    }
-
-    pub fn has_playback_key(cookie: &str) -> bool {
-        let cookie_map = parse_cookie(cookie);
-        !qq_playback_key_from_cookie_map(&cookie_map)
-            .trim()
-            .is_empty()
     }
 
     pub(super) async fn user_songlists(&self, euin: &str) -> ProviderResult<QqPlaylistList1Resp> {
@@ -771,21 +768,6 @@ fn qq_playback_key_from_cookie_map(cookie: &std::collections::HashMap<String, St
     .unwrap_or_default()
 }
 
-fn looks_like_audio(bytes: &[u8]) -> bool {
-    if bytes.starts_with(b"ID3")
-        || bytes.starts_with(b"fLaC")
-        || bytes.starts_with(b"OggS")
-        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE")
-        || (bytes.len() >= 12 && &bytes[4..8] == b"ftyp")
-    {
-        return true;
-    }
-    bytes
-        .windows(2)
-        .take(2048)
-        .any(|pair| pair[0] == 0xff && pair[1] & 0xe0 == 0xe0)
-}
-
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(internal_error)
 }
@@ -816,9 +798,7 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        QqClient, looks_like_audio, parse_cookie, playlist_song_write_body, uin_from_cookie_map,
-    };
+    use super::{QqClient, parse_cookie, playlist_song_write_body, uin_from_cookie_map};
 
     #[test]
     fn cookie_user_id_is_normalized() {
@@ -835,15 +815,6 @@ mod tests {
             QqClient::new().get_sign(&data).expect("calculate qq sign"),
             "zzcfcaa938yzk1nuourdgrzbse3gvchq0j1vk92298b96"
         );
-    }
-
-    #[test]
-    fn audio_probe_magic_rejects_text_and_accepts_audio_headers() {
-        assert!(looks_like_audio(b"ID3audio"));
-        assert!(looks_like_audio(b"fLaCmetadata"));
-        assert!(looks_like_audio(b"\0\0\0\x18ftypisom"));
-        assert!(looks_like_audio(&[0, 0xff, 0xfb, 0]));
-        assert!(!looks_like_audio(b"<html>not audio</html>"));
     }
 
     #[test]

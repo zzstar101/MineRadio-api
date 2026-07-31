@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     parsers::{
@@ -22,48 +18,33 @@ use crate::{
     utils::decrypt_qrc,
 };
 use async_trait::async_trait;
-use serde_json::Value;
 use tokio::sync::RwLock;
 
 use super::client::QqClient;
 
 const QQ_QUALITY_CANDIDATES: [QqQualityCandidate; 5] = [
-    QqQualityCandidate::new("RS01", ".flac", "hires", "Hi-Res FLAC"),
-    QqQualityCandidate::new("F000", ".flac", "lossless", "FLAC"),
-    QqQualityCandidate::new("M800", ".mp3", "exhigh", "320k MP3"),
-    QqQualityCandidate::new("M500", ".mp3", "standard", "128k MP3"),
-    QqQualityCandidate::new("C400", ".m4a", "aac", "AAC/M4A"),
+    QqQualityCandidate::new("RS01", ".flac", "hires"),
+    QqQualityCandidate::new("F000", ".flac", "lossless"),
+    QqQualityCandidate::new("M800", ".mp3", "exhigh"),
+    QqQualityCandidate::new("M500", ".mp3", "standard"),
+    QqQualityCandidate::new("C400", ".m4a", "aac"),
 ];
-const QQ_AUDIO_PROBE_TOTAL_TIMEOUT: Duration = Duration::from_millis(6200);
-const QQ_AUDIO_PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(2000);
 
 #[derive(Clone, Copy)]
 struct QqQualityCandidate {
     prefix: &'static str,
     extension: &'static str,
     level: &'static str,
-    label: &'static str,
 }
 
 impl QqQualityCandidate {
-    const fn new(
-        prefix: &'static str,
-        extension: &'static str,
-        level: &'static str,
-        label: &'static str,
-    ) -> Self {
+    const fn new(prefix: &'static str, extension: &'static str, level: &'static str) -> Self {
         Self {
             prefix,
             extension,
             level,
-            label,
         }
     }
-}
-
-struct QqPlaybackUrl {
-    filename: String,
-    url: String,
 }
 
 #[derive(Clone)]
@@ -151,91 +132,20 @@ impl ProviderAdapter for QqAdapter {
     ) -> ProviderResult<SongUrlResult> {
         let requested = normalize_request_quality(
             opts.and_then(|value| value.quality)
-                .unwrap_or_else(|| "hires".to_owned())
+                .unwrap_or_else(|| "standard".to_owned())
                 .as_str(),
         );
-        let media_mids = qq_media_mids(track);
-        let candidates = qq_filename_candidates(&media_mids, &requested);
-        let filenames = candidates
+        let media_mid = track.id.clone();
+        let filename = QQ_QUALITY_CANDIDATES
             .iter()
-            .map(|candidate| candidate.filename.clone())
-            .collect::<Vec<_>>();
-        let cookie = self.client.current_cookie().await.unwrap_or_default();
-        let has_cookie = !cookie.trim().is_empty();
-        let has_playback_key = QqClient::has_playback_key(&cookie);
-        let last_error = match self.client.song_url(&track.source_id, &filenames).await {
-            Ok(body) => {
-                let deadline = Instant::now() + QQ_AUDIO_PROBE_TOTAL_TIMEOUT;
-                for playback in qq_song_url_candidates(&body) {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining < Duration::from_millis(300) {
-                        break;
-                    }
-                    if self
-                        .client
-                        .probe_playback_url(
-                            &playback.url,
-                            remaining.min(QQ_AUDIO_PROBE_ATTEMPT_TIMEOUT),
-                        )
-                        .await
-                    {
-                        let candidate = candidates
-                            .iter()
-                            .find(|candidate| candidate.filename == playback.filename);
-                        return Ok(SongUrlResult {
-                            url: Some(playback.url),
-                            proxied: false,
-                            provider: Some(ProviderId::Qq),
-                            trial: Some(false),
-                            playable: Some(true),
-                            level: Some(
-                                candidate
-                                    .map(|candidate| candidate.level)
-                                    .unwrap_or(playback.filename.as_str())
-                                    .to_owned(),
-                            ),
-                            quality: Some(
-                                candidate
-                                    .map(|candidate| candidate.label)
-                                    .unwrap_or("QQ")
-                                    .to_owned(),
-                            ),
-                            filename: Some(playback.filename),
-                            requested_quality: Some(requested.clone()),
-                            expires_at: None,
-                            ..Default::default()
-                        });
-                    }
-                }
-                if let Some(error) =
-                    qq_song_url_restriction(&body, &track.source_id, has_cookie, has_playback_key)
-                {
-                    return Err(error);
-                }
-                "qq song-url returned no verified playback url".to_owned()
-            }
-            Err(err) => err.message,
-        };
-
-        if !has_cookie {
-            return Err(ProviderError {
-                code: ProviderErrorCode::LoginRequired,
-                provider: ProviderId::Qq,
-                message: format!("qq song-url {} requires cookie", track.source_id),
-                retryable: true,
-                action: Some("login".to_owned()),
-                raw_message: None,
-            });
-        }
-
-        Err(ProviderError {
-            code: ProviderErrorCode::Unavailable,
-            provider: ProviderId::Qq,
-            message: last_error,
-            retryable: false,
-            action: None,
-            raw_message: None,
-        })
+            .find(|q| q.level == requested)
+            .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
+            .unwrap();
+        Ok(self
+            .client
+            .song_url(&track.source_id, filename)
+            .await?
+            .standardize(requested))
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
@@ -484,172 +394,6 @@ fn normalize_request_quality(requested: &str) -> String {
     }
 }
 
-fn qq_filename_candidates(media_mids: &[String], requested: &str) -> Vec<QqFilenameCandidate> {
-    let start = QQ_QUALITY_CANDIDATES
-        .iter()
-        .position(|candidate| candidate.level == requested)
-        .unwrap_or(0);
-    media_mids
-        .iter()
-        .flat_map(|media_mid| {
-            QQ_QUALITY_CANDIDATES[start..]
-                .iter()
-                .map(move |candidate| QqFilenameCandidate {
-                    filename: format!("{}{}{}", candidate.prefix, media_mid, candidate.extension),
-                    level: candidate.level,
-                    label: candidate.label,
-                })
-        })
-        .collect()
-}
-
-struct QqFilenameCandidate {
-    filename: String,
-    level: &'static str,
-    label: &'static str,
-}
-
-fn qq_media_mids(track: &Track) -> Vec<String> {
-    let mut ids = Vec::with_capacity(2);
-    if let Some(media_mid) = track
-        .media_mid
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        ids.push(media_mid.to_owned());
-    }
-    if !track.source_id.trim().is_empty() && !ids.iter().any(|id| id == &track.source_id) {
-        ids.push(track.source_id.clone());
-    }
-    ids
-}
-
-fn qq_song_url_candidates(body: &Value) -> Vec<QqPlaybackUrl> {
-    let data = body
-        .get("req_0")
-        .and_then(|value| value.get("data"))
-        .or_else(|| body.get("data"));
-    let Some(data) = data else {
-        return Vec::new();
-    };
-    let sips = data
-        .get("sip")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .filter(|items| !items.is_empty())
-        .unwrap_or_else(|| vec!["https://ws.stream.qqmusic.qq.com/"]);
-    data.get("midurlinfo")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|info| {
-            let purl = info.get("purl").and_then(Value::as_str)?.trim();
-            (!purl.is_empty()).then_some((
-                info.get("filename")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                purl,
-            ))
-        })
-        .flat_map(|(filename, purl)| {
-            sips.iter().map(move |sip| QqPlaybackUrl {
-                filename: filename.clone(),
-                url: if purl.starts_with("http://") || purl.starts_with("https://") {
-                    purl.to_owned()
-                } else {
-                    format!("{sip}{purl}")
-                },
-            })
-        })
-        .collect()
-}
-
-fn qq_song_url_restriction(
-    body: &Value,
-    track_id: &str,
-    has_cookie: bool,
-    has_playback_key: bool,
-) -> Option<ProviderError> {
-    let info = body
-        .get("req_0")
-        .and_then(|value| value.get("data"))
-        .and_then(|value| value.get("midurlinfo"))
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .or_else(|| body.as_object().map(|_| body))?;
-    let code = info
-        .get("result")
-        .or_else(|| info.get("code"))
-        .and_then(Value::as_i64)
-        .unwrap_or_default();
-    let raw_message = info
-        .get("msg")
-        .or_else(|| info.get("tips"))
-        .or_else(|| info.get("errmsg"))
-        .or_else(|| info.get("message"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-
-    if !has_cookie {
-        return Some(ProviderError {
-            code: ProviderErrorCode::LoginRequired,
-            provider: ProviderId::Qq,
-            message: format!("qq song-url {track_id} requires cookie"),
-            retryable: true,
-            action: Some("login".to_owned()),
-            raw_message,
-        });
-    }
-
-    if code == 104003 && !has_playback_key {
-        return Some(ProviderError {
-            code: ProviderErrorCode::LoginRequired,
-            provider: ProviderId::Qq,
-            message: "qq playback authorization required".to_owned(),
-            retryable: true,
-            action: Some("login".to_owned()),
-            raw_message,
-        });
-    }
-
-    let lower = raw_message.as_deref().unwrap_or_default().to_lowercase();
-    if lower.contains("vip")
-        || lower.contains("pay")
-        || lower.contains("付费")
-        || lower.contains("会员")
-    {
-        return Some(ProviderError {
-            code: ProviderErrorCode::PaidRequired,
-            provider: ProviderId::Qq,
-            message: raw_message
-                .clone()
-                .unwrap_or_else(|| "qq paid playback required".to_owned()),
-            retryable: false,
-            action: Some("upgrade".to_owned()),
-            raw_message,
-        });
-    }
-
-    if code == 104003 {
-        return Some(ProviderError {
-            code: ProviderErrorCode::CopyrightUnavailable,
-            provider: ProviderId::Qq,
-            message: raw_message
-                .clone()
-                .unwrap_or_else(|| format!("qq song-url {track_id} unavailable")),
-            retryable: false,
-            action: Some("switch_source".to_owned()),
-            raw_message,
-        });
-    }
-
-    None
-}
-
 fn no_result(action: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
@@ -677,86 +421,5 @@ fn invalid_response(message: String) -> ProviderError {
         retryable: false,
         action: None,
         raw_message: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{qq_filename_candidates, qq_song_url_candidates, qq_song_url_restriction};
-    use crate::providers::error::ProviderErrorCode;
-
-    #[test]
-    fn qq_song_url_restriction_maps_missing_playback_key() {
-        let body = json!({
-            "req_0": {
-                "data": {
-                    "midurlinfo": [{
-                        "result": 104003,
-                        "msg": "no vkey"
-                    }]
-                }
-            }
-        });
-        let err = qq_song_url_restriction(&body, "track-1", true, false).unwrap();
-        assert!(matches!(err.code, ProviderErrorCode::LoginRequired));
-        assert_eq!(err.action.as_deref(), Some("login"));
-        assert_eq!(err.raw_message.as_deref(), Some("no vkey"));
-    }
-
-    #[test]
-    fn qq_filename_candidates_try_media_mid_before_song_mid() {
-        let candidates =
-            qq_filename_candidates(&["media-mid".to_owned(), "song-mid".to_owned()], "hires");
-        let filenames = candidates
-            .into_iter()
-            .map(|candidate| candidate.filename)
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            filenames,
-            vec![
-                "RS01media-mid.flac",
-                "F000media-mid.flac",
-                "M800media-mid.mp3",
-                "M500media-mid.mp3",
-                "C400media-mid.m4a",
-                "RS01song-mid.flac",
-                "F000song-mid.flac",
-                "M800song-mid.mp3",
-                "M500song-mid.mp3",
-                "C400song-mid.m4a",
-            ]
-        );
-    }
-
-    #[test]
-    fn qq_song_url_candidates_try_every_sip_in_response_order() {
-        let body = json!({
-            "req_0": {
-                "data": {
-                    "sip": ["https://first/", "https://second/"],
-                    "midurlinfo": [
-                        {"filename": "F000one.flac", "purl": "one"},
-                        {"filename": "M800two.mp3", "purl": "two"}
-                    ]
-                }
-            }
-        });
-        let urls = qq_song_url_candidates(&body)
-            .into_iter()
-            .map(|candidate| (candidate.filename, candidate.url))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            urls,
-            vec![
-                ("F000one.flac".to_owned(), "https://first/one".to_owned()),
-                ("F000one.flac".to_owned(), "https://second/one".to_owned()),
-                ("M800two.mp3".to_owned(), "https://first/two".to_owned()),
-                ("M800two.mp3".to_owned(), "https://second/two".to_owned()),
-            ]
-        );
     }
 }

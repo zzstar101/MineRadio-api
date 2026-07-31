@@ -5,7 +5,8 @@ use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, Track, TrackQualityAvailability, TrackQualityOption, VipLevel,
+    ProviderLoginStatus, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+    VipLevel,
 };
 
 #[derive(Debug, Deserialize)]
@@ -960,4 +961,63 @@ mod tests {
 
         assert!(response.succeeded());
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqSongUrlResp {
+    req_0: QqSongUrlReq,
+}
+
+impl QqSongUrlResp {
+    pub(super) fn standardize(self, requested: String) -> SongUrlResult {
+        let data = self.req_0.data;
+        let (url, filename) = match data
+            .midurlinfo
+            .into_iter()
+            .find(|_a| true)
+            .map(|i| (i.purl, i.filename))
+        {
+            Some((a, b)) => (Some(a), Some(b)),
+            None => (None, None),
+        };
+        let url = url.map(|u| {
+            data.sip
+                .into_iter()
+                .find(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://ws.stream.qqmusic.qq.com/".to_owned())
+                + &u
+        });
+
+        SongUrlResult {
+            url: url,
+            proxied: false,
+            provider: Some(ProviderId::Qq),
+            trial: Some(false),
+            playable: Some(true),
+            level: Some(requested.clone()),
+            quality: Some(requested.clone()),
+            filename: filename,
+            requested_quality: Some(requested),
+            expires_at: None,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlReq {
+    data: QqSongUrlData,
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlData {
+    msg: String,
+    sip: Vec<String>,
+    midurlinfo: Vec<QqSongUrlInfo>,
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlInfo {
+    filename: String,
+    purl: String,
 }
