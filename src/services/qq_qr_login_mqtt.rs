@@ -73,7 +73,7 @@ impl QrLogin for QqMusicQrLoginService {
     }
 
     async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
-        let key = required_key(key)?;
+        let key = required_key(key, "QQ_QR_KEY_REQUIRED")?;
         let session = self.session(&key).await?;
         let image = session.lock().await.image.clone();
         Ok(ProviderLoginQrImage {
@@ -85,7 +85,7 @@ impl QrLogin for QqMusicQrLoginService {
     }
 
     async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
-        let key = required_key(key)?;
+        let key = required_key(key, "QQ_QR_KEY_REQUIRED")?;
         let session = self.session(&key).await?;
         let mut session = session.lock().await;
         if session.state.finished {
@@ -191,7 +191,7 @@ impl QqMusicQrLoginService {
 
         match login_type {
             2 => {
-                let cookie = cookie_from_data_map(&data_map)?;
+                let cookie = cookie_from_data_map(&data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
@@ -210,7 +210,7 @@ impl QqMusicQrLoginService {
                 remap_wechat_key(&mut wechat_data_map, "musicid", "uin");
                 remap_wechat_key(&mut wechat_data_map, "musickey", "qm_keyst");
                 remap_wechat_key(&mut wechat_data_map, "musickey", "qqmusic_key");
-                let cookie = cookie_from_data_map(&wechat_data_map)?;
+                let cookie = cookie_from_data_map(&wechat_data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
@@ -309,10 +309,10 @@ fn build_wechat_exchange_request(data_map: &HashMap<String, Value>) -> Value {
     })
 }
 
-fn required_key(key: &str) -> Result<String> {
+pub(crate) fn required_key(key: &str, error: &'static str) -> Result<String> {
     let key = key.trim();
     if key.is_empty() {
-        bail!("QQ_QR_KEY_REQUIRED");
+        bail!(error);
     }
     Ok(key.to_owned())
 }
@@ -326,7 +326,7 @@ fn required_string(data: &Value, field: &str, error: &'static str) -> Result<Str
         .ok_or_else(|| anyhow!(error))
 }
 
-fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
+pub(crate) fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
     let mut map = HashMap::new();
     if let Value::Object(obj) = data {
         for (key, value) in obj {
@@ -342,7 +342,11 @@ fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
 }
 
 /// 微信第二次兑换后特调：将 source_key 的值复制到 target_key，若 source_key 存在。
-fn remap_wechat_key(data_map: &mut HashMap<String, Value>, source_key: &str, target_key: &str) {
+pub(crate) fn remap_wechat_key(
+    data_map: &mut HashMap<String, Value>,
+    source_key: &str,
+    target_key: &str,
+) {
     if let Some(value) = data_map.get(source_key).cloned() {
         data_map.insert(target_key.to_string(), value);
     }
@@ -350,7 +354,10 @@ fn remap_wechat_key(data_map: &mut HashMap<String, Value>, source_key: &str, tar
 
 /// Build cookie string from a flattened data map.
 /// Each non-empty base-type value becomes a `key=value` pair.
-fn cookie_from_data_map(data_map: &HashMap<String, Value>) -> Result<String> {
+pub(crate) fn cookie_from_data_map(
+    data_map: &HashMap<String, Value>,
+    empty_error: &'static str,
+) -> Result<String> {
     let mut parts: Vec<String> = Vec::new();
     for (key, value) in data_map {
         let s = match value {
@@ -366,12 +373,12 @@ fn cookie_from_data_map(data_map: &HashMap<String, Value>) -> Result<String> {
         parts.push(format!("{key}={s}"));
     }
     if parts.is_empty() {
-        bail!("QQ_MQTT_LOGIN_COOKIE_EMPTY");
+        bail!(empty_error);
     }
     Ok(parts.join("; "))
 }
 
-fn check_response(
+pub(crate) fn check_response(
     key: &str,
     code: i64,
     message: &str,
@@ -442,7 +449,7 @@ mod tests {
             "loginType": 6
         });
         let data_map = flatten_data_to_map(&data);
-        let cookie = cookie_from_data_map(&data_map).unwrap();
+        let cookie = cookie_from_data_map(&data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY").unwrap();
         // HashMap iteration order is non-deterministic — sort for stable assertion
         let mut parts: Vec<&str> = cookie.split("; ").collect();
         parts.sort();

@@ -11,6 +11,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
+    services::qq_qr_login_mqtt::{
+        check_response as check, cookie_from_data_map, flatten_data_to_map, remap_wechat_key,
+        required_key,
+    },
     services::qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{get_guid, sign},
@@ -124,7 +128,7 @@ impl QrLogin for WechatQrLoginService {
     }
 
     async fn create_image(&self, key: &str) -> Result<ProviderLoginQrImage> {
-        let key = required_key(key)?;
+        let key = required_key(key, "WECHAT_QR_KEY_REQUIRED")?;
         let session = self.session(&key).await?;
         let image = session.lock().await.image.clone();
         Ok(ProviderLoginQrImage {
@@ -136,7 +140,7 @@ impl QrLogin for WechatQrLoginService {
     }
 
     async fn check(&self, key: &str) -> Result<ProviderLoginQrCheck> {
-        let key = required_key(key)?;
+        let key = required_key(key, "WECHAT_QR_KEY_REQUIRED")?;
         let session = self.session(&key).await?;
         let mut session = session.lock().await;
         if session.state.finished {
@@ -229,7 +233,7 @@ impl WechatQrLoginService {
         remap_wechat_key(&mut data_map, "musicid", "uin");
         remap_wechat_key(&mut data_map, "musickey", "qm_keyst");
         remap_wechat_key(&mut data_map, "musickey", "qqmusic_key");
-        let cookie = cookie_from_data_map(&data_map)?;
+        let cookie = cookie_from_data_map(&data_map, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|error| anyhow!(error))?;
@@ -309,14 +313,6 @@ pub fn create_wechat_qr_login_service(deps: WechatQrLoginDeps) -> WechatQrLoginS
     }
 }
 
-fn required_key(key: &str) -> Result<String> {
-    let key = key.trim();
-    if key.is_empty() {
-        bail!("WECHAT_QR_KEY_REQUIRED");
-    }
-    Ok(key.to_owned())
-}
-
 fn wechat_login_request(code: &str) -> Value {
     json!({
         "WXLogin": {
@@ -348,47 +344,6 @@ fn wechat_redirect_url(code: &str) -> String {
     format!("{WECHAT_QQ_REDIRECT_BASE}{code}&state=STATE")
 }
 
-fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
-    let mut map = HashMap::new();
-    if let Value::Object(object) = data {
-        for (key, value) in object {
-            if matches!(
-                value,
-                Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null
-            ) {
-                map.insert(key.clone(), value.clone());
-            }
-        }
-    }
-    map
-}
-
-fn remap_wechat_key(data_map: &mut HashMap<String, Value>, source_key: &str, target_key: &str) {
-    if let Some(value) = data_map.get(source_key).cloned() {
-        data_map.insert(target_key.to_owned(), value);
-    }
-}
-
-fn cookie_from_data_map(data_map: &HashMap<String, Value>) -> Result<String> {
-    let mut parts = Vec::new();
-    for (key, value) in data_map {
-        let value = match value {
-            Value::String(value) => value.clone(),
-            Value::Number(value) => value.to_string(),
-            Value::Bool(value) => value.to_string(),
-            Value::Null => continue,
-            _ => continue,
-        };
-        if !value.is_empty() {
-            parts.push(format!("{key}={value}"));
-        }
-    }
-    if parts.is_empty() {
-        bail!("WECHAT_QR_LOGIN_COOKIE_EMPTY");
-    }
-    Ok(parts.join("; "))
-}
-
 fn parse_wechat_poll_response(text: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for cap in WECHAT_POLL_RE.captures_iter(text) {
@@ -402,27 +357,6 @@ fn parse_wechat_poll_response(text: &str) -> HashMap<String, String> {
         }
     }
     map
-}
-
-fn check(
-    key: &str,
-    code: i64,
-    message: &str,
-    logged_in: bool,
-    scanned: bool,
-    expired: bool,
-    stored: bool,
-) -> ProviderLoginQrCheck {
-    ProviderLoginQrCheck {
-        provider: ProviderId::Qq,
-        key: key.to_owned(),
-        code,
-        message: Some(message.to_owned()),
-        logged_in,
-        scanned: Some(scanned),
-        expired: Some(expired),
-        stored: Some(stored),
-    }
 }
 
 #[cfg(test)]
@@ -501,7 +435,7 @@ mod tests {
         remap_wechat_key(&mut data, "musicid", "uin");
         remap_wechat_key(&mut data, "musickey", "qm_keyst");
         remap_wechat_key(&mut data, "musickey", "qqmusic_key");
-        let cookie = cookie_from_data_map(&data).unwrap();
+        let cookie = cookie_from_data_map(&data, "WECHAT_QR_LOGIN_COOKIE_EMPTY").unwrap();
         let mut parts: Vec<_> = cookie.split("; ").collect();
         parts.sort();
         assert_eq!(
