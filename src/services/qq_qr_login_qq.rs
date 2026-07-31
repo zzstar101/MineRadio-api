@@ -10,7 +10,7 @@ use reqwest::{
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{gtk_from_pskey, hash33},
+    utils::cryptors::qq::{get_guid, gtk_from_pskey},
 };
 
 type CookieMap = HashMap<String, String>;
@@ -19,6 +19,15 @@ type CookieMap = HashMap<String, String>;
 struct QqPtuiResult {
     code: i64,
     redirect_url: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QqQrPollState {
+    Waiting,
+    Authenticating,
+    Success,
+    Expired,
+    Unknown,
 }
 
 #[derive(Clone)]
@@ -43,9 +52,19 @@ impl Default for QqQrLoginDeps {
 pub struct QqQrLoginService {
     deps: QqQrLoginDeps,
     image_cache: tokio::sync::Mutex<HashMap<String, String>>,
+    sessions: tokio::sync::Mutex<HashMap<String, QqQrLoginSession>>,
 }
 
-const QQ_QR_SHOW_URL: &str = "https://ssl.ptlogin2.qq.com/ptqrshow?appid=716027609&e=2&l=M&s=3&d=72&v=4&t=0.9698127522807933&daid=383&pt_3rd_aid=100497308&u1=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump";
+#[derive(Clone)]
+struct QqQrLoginSession {
+    cookies: CookieMap,
+    login_sig: String,
+    device_id: String,
+}
+
+const QQ_XLOGIN_URL: &str = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin";
+const QQ_QR_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.47.134 Safari/537.36 QBCore/3.53.47.400 QQBrowser/9.0.2524.400 pcqqmusic/22.30.3563.0626 SkinId/10001|00cc65|0|1|||1fd4af";
+const QQ_QR_SHOW_URL: &str = "https://xui.ptlogin2.qq.com/ssl/ptqrshow";
 const QQ_AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
 const QQ_MUSICU_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const QQ_REDIRECT_URI: &str =
@@ -53,14 +72,32 @@ const QQ_REDIRECT_URI: &str =
 
 impl QqQrLoginService {
     pub async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
-        let resp = self
+        let xlogin_resp = self
             .deps
             .client
-            .get(QQ_QR_SHOW_URL)
+            .get(xlogin_url())
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .send()
-            .await?;
-        let qrsig = read_set_cookies(resp.headers())
+            .await?
+            .error_for_status()?;
+        let mut cookies = CookieMap::new();
+        merge_cookies(&mut cookies, read_set_cookies(xlogin_resp.headers()));
+        let login_sig = cookie_value(&cookies, "pt_login_sig");
+        if login_sig.is_empty() {
+            anyhow::bail!("QQ_QR_LOGIN_SIG_MISSING");
+        }
+
+        let qr_resp = self
+            .deps
+            .client
+            .get(qr_show_url())
+            .header("cookie", cookie_header(&cookies))
+            .timeout(Duration::from_millis(self.deps.timeout_ms))
+            .send()
+            .await?
+            .error_for_status()?;
+        merge_cookies(&mut cookies, read_set_cookies(qr_resp.headers()));
+        let qrsig = read_set_cookies(qr_resp.headers())
             .find_map(|header| {
                 regex::Regex::new(r"qrsig=([^;]+)").ok().and_then(|re| {
                     re.captures(&header)
@@ -68,10 +105,28 @@ impl QqQrLoginService {
                 })
             })
             .ok_or_else(|| anyhow::anyhow!("QQ_QR_SIG_MISSING"))?;
-        let bytes = resp.bytes().await?;
+        let bytes = qr_resp.bytes().await?;
         let img = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
-        let key = encode_key(&qrsig, hash33(&qrsig));
+        
+        let hash = |t: &str| -> i32 {
+            let mut e = 0i32;
+
+            for c in t.chars() {
+                e = e.wrapping_add((e << 5).wrapping_add(c as i32));
+            }
+
+            e & 0x7fffffff
+        };
+        let key = encode_key(&qrsig, hash(&qrsig) as u64);
         self.image_cache.lock().await.insert(key.clone(), img);
+        self.sessions.lock().await.insert(
+            key.clone(),
+            QqQrLoginSession {
+                cookies,
+                login_sig,
+                device_id: get_guid(),
+            },
+        );
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Qq,
             key,
@@ -102,34 +157,76 @@ impl QqQrLoginService {
         let normalized_key = key.trim();
         let decoded =
             decode_key(normalized_key).ok_or_else(|| anyhow::anyhow!("QQ_QR_KEY_REQUIRED"))?;
-        let mut cookies = CookieMap::new();
+        let mut session = self
+            .sessions
+            .lock()
+            .await
+            .get(normalized_key)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("QQ_QR_SESSION_MISSING"))?;
+        if cookie_value(&session.cookies, "qrsig") != decoded.qrsig {
+            anyhow::bail!("QQ_QR_SESSION_SIG_MISMATCH");
+        }
+        let url = check_url(
+            now_millis(),
+            &decoded.ptqrtoken,
+            &session.login_sig,
+            &session.device_id,
+        );
         let check_resp = self
             .deps
             .client
-            .get(check_url(now_millis(), &decoded.ptqrtoken))
+            .get(&url)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", format!("qrsig={}", decoded.qrsig))
+            .header("cookie", cookie_header(&session.cookies))
+            .header("referer", xlogin_url())
+            .header("user-agent", QQ_QR_USER_AGENT)
             .send()
             .await?;
-        merge_cookies(&mut cookies, read_set_cookies(check_resp.headers()));
+        merge_cookies(&mut session.cookies, read_set_cookies(check_resp.headers()));
         let text = check_resp.text().await?;
         let ptui = parse_ptui_callback(&text);
+        let state = classify_poll_state(&ptui, &text);
         let message = normalize_poll_message(&ptui, &text);
-        if ptui.code != 0 && !text.contains("登录成功") {
-            let expired = ptui.code == 65 || message == "二维码已过期";
-            if expired {
+        match state {
+            QqQrPollState::Success => {}
+            QqQrPollState::Expired => {
                 self.image_cache.lock().await.remove(normalized_key);
+                self.sessions.lock().await.remove(normalized_key);
+                return Ok(ProviderLoginQrCheck {
+                    provider: ProviderId::Qq,
+                    key: normalized_key.to_owned(),
+                    code: ptui.code,
+                    message: Some(message),
+                    logged_in: false,
+                    scanned: Some(false),
+                    expired: Some(true),
+                    stored: Some(false),
+                });
             }
-            return Ok(ProviderLoginQrCheck {
-                provider: ProviderId::Qq,
-                key: normalized_key.to_owned(),
-                code: ptui.code,
-                message: Some(message.clone()),
-                logged_in: false,
-                scanned: Some(ptui.code == 67 || message.starts_with("已扫码")),
-                expired: Some(expired),
-                stored: Some(false),
-            });
+            QqQrPollState::Waiting | QqQrPollState::Authenticating => {
+                self.sessions
+                    .lock()
+                    .await
+                    .insert(normalized_key.to_owned(), session);
+                return Ok(ProviderLoginQrCheck {
+                    provider: ProviderId::Qq,
+                    key: normalized_key.to_owned(),
+                    code: ptui.code,
+                    message: Some(message),
+                    logged_in: false,
+                    scanned: Some(state == QqQrPollState::Authenticating),
+                    expired: Some(false),
+                    stored: Some(false),
+                });
+            }
+            QqQrPollState::Unknown => {
+                self.sessions
+                    .lock()
+                    .await
+                    .insert(normalized_key.to_owned(), session);
+                anyhow::bail!("QQ_QR_UNKNOWN_POLL_CODE_{}", ptui.code);
+            }
         }
 
         let redirect_url = ptui
@@ -141,11 +238,14 @@ impl QqQrLoginService {
             .client
             .get(&redirect_url)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", cookie_header(&cookies))
+            .header("cookie", cookie_header(&session.cookies))
             .send()
             .await?;
-        merge_cookies(&mut cookies, read_set_cookies(check_sig_resp.headers()));
-        let p_skey = cookie_value(&cookies, "p_skey");
+        merge_cookies(
+            &mut session.cookies,
+            read_set_cookies(check_sig_resp.headers()),
+        );
+        let p_skey = cookie_value(&session.cookies, "p_skey");
         if p_skey.is_empty() {
             anyhow::bail!("QQ_QR_PSKEY_MISSING");
         }
@@ -155,11 +255,14 @@ impl QqQrLoginService {
             .client
             .post(QQ_AUTHORIZE_URL)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("cookie", cookie_header(&cookies))
+            .header("cookie", cookie_header(&session.cookies))
             .form(&build_authorize_form(gtk))
             .send()
             .await?;
-        merge_cookies(&mut cookies, read_set_cookies(authorize_resp.headers()));
+        merge_cookies(
+            &mut session.cookies,
+            read_set_cookies(authorize_resp.headers()),
+        );
         let status = authorize_resp.status();
         let location = authorize_resp
             .headers()
@@ -178,12 +281,15 @@ impl QqQrLoginService {
             .post(QQ_MUSICU_URL)
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .header("content-type", "application/x-www-form-urlencoded")
-            .header("cookie", cookie_header(&cookies))
+            .header("cookie", cookie_header(&session.cookies))
             .body(build_musicu_body(gtk, &code))
             .send()
             .await?;
-        merge_cookies(&mut cookies, read_set_cookies(musicu_resp.headers()));
-        let cookie = cookie_header(&cookies);
+        merge_cookies(
+            &mut session.cookies,
+            read_set_cookies(musicu_resp.headers()),
+        );
+        let cookie = cookie_header(&session.cookies);
         if cookie.is_empty() {
             anyhow::bail!("QQ_QR_COOKIE_MISSING");
         }
@@ -191,6 +297,7 @@ impl QqQrLoginService {
             .await
             .map_err(|err| anyhow::anyhow!(err))?;
         self.image_cache.lock().await.remove(normalized_key);
+        self.sessions.lock().await.remove(normalized_key);
         Ok(ProviderLoginQrCheck {
             provider: ProviderId::Qq,
             key: normalized_key.to_owned(),
@@ -208,6 +315,7 @@ pub fn create_qq_qr_login_service(deps: QqQrLoginDeps) -> QqQrLoginService {
     QqQrLoginService {
         deps,
         image_cache: tokio::sync::Mutex::new(HashMap::new()),
+        sessions: tokio::sync::Mutex::new(HashMap::new()),
     }
 }
 
@@ -317,14 +425,26 @@ fn parse_ptui_callback(text: &str) -> QqPtuiResult {
 }
 
 fn normalize_poll_message(result: &QqPtuiResult, text: &str) -> String {
-    if result.code == 0 || text.contains("登录成功") {
-        "登录成功".to_owned()
-    } else if result.code == 65 || text.contains("已失效") {
-        "二维码已过期".to_owned()
-    } else if result.code == 67 || text.contains("认证中") || text.contains("已扫描") {
-        "已扫码，请在手机上确认登录".to_owned()
-    } else {
-        "未扫描二维码".to_owned()
+    match classify_poll_state(result, text) {
+        QqQrPollState::Waiting => "二维码未失效".to_owned(),
+        QqQrPollState::Authenticating => "二维码认证中".to_owned(),
+        QqQrPollState::Success => "登录成功！".to_owned(),
+        QqQrPollState::Expired => "二维码已失效".to_owned(),
+        QqQrPollState::Unknown => format!("二维码状态未知(code={})", result.code),
+    }
+}
+
+fn classify_poll_state(result: &QqPtuiResult, text: &str) -> QqQrPollState {
+    match result.code {
+        66 => QqQrPollState::Waiting,
+        67 => QqQrPollState::Authenticating,
+        0 => QqQrPollState::Success,
+        65 => QqQrPollState::Expired,
+        _ if text.contains("二维码未失效") => QqQrPollState::Waiting,
+        _ if text.contains("二维码认证中") => QqQrPollState::Authenticating,
+        _ if text.contains("登录成功") => QqQrPollState::Success,
+        _ if text.contains("二维码已失效") => QqQrPollState::Expired,
+        _ => QqQrPollState::Unknown,
     }
 }
 
@@ -358,7 +478,47 @@ fn build_musicu_body(gtk: u64, code: &str) -> String {
     .to_string()
 }
 
-fn check_url(now: i64, ptqrtoken: &str) -> String {
+fn xlogin_url() -> String {
+    let mut params = url::form_urlencoded::Serializer::new(String::new());
+    params
+        .append_pair("appid", "716027609")
+        .append_pair("daid", "383")
+        .append_pair("style", "33")
+        .append_pair("login_text", "登录")
+        .append_pair("hide_title_bar", "1")
+        .append_pair("hide_border", "1")
+        .append_pair("target", "self")
+        .append_pair("s_url", "https://graph.qq.com/oauth2.0/login_jump")
+        .append_pair("pt_3rd_aid", "100497308")
+        .append_pair(
+            "pt_feedback_link",
+            "https://support.qq.com/products/77942?customInfo=.appid100497308",
+        )
+        .append_pair("theme", "2")
+        .append_pair("verify_theme", "");
+    format!("{QQ_XLOGIN_URL}?{}", params.finish())
+}
+
+fn qr_show_url() -> String {
+    use rand::RngExt;
+
+    let mut rng = rand::rng();
+    let mut params = url::form_urlencoded::Serializer::new(String::new());
+    params
+        .append_pair("appid", "716027609")
+        .append_pair("e", "2")
+        .append_pair("l", "M")
+        .append_pair("s", "3")
+        .append_pair("d", "72")
+        .append_pair("v", "4")
+        .append_pair("t", &rng.random::<f64>().to_string())
+        .append_pair("daid", "383")
+        .append_pair("pt_3rd_aid", "100497308")
+        .append_pair("u1", "https://graph.qq.com/oauth2.0/login_jump");
+    format!("{QQ_QR_SHOW_URL}?{}", params.finish())
+}
+
+fn check_url(now: i64, ptqrtoken: &str, login_sig: &str, device_id: &str) -> String {
     let mut params = url::form_urlencoded::Serializer::new(String::new());
     params
         .append_pair("u1", "https://graph.qq.com/oauth2.0/login_jump")
@@ -370,19 +530,19 @@ fn check_url(now: i64, ptqrtoken: &str) -> String {
         .append_pair("from_ui", "1")
         .append_pair("ptlang", "2052")
         .append_pair("action", &format!("0-0-{now}"))
-        .append_pair("js_ver", "23111510")
+        .append_pair("js_ver", "26071711")
         .append_pair("js_type", "1")
-        .append_pair(
-            "login_sig",
-            "du-YS1h8*0GqVqcrru0pXkpwVg2DYw-DtbFulJ62IgPf6vfiJe*4ONVrYc5hMUNE",
-        )
+        .append_pair("login_sig", login_sig)
         .append_pair("pt_uistyle", "40")
         .append_pair("aid", "716027609")
         .append_pair("daid", "383")
         .append_pair("pt_3rd_aid", "100497308")
-        .append_pair("o1vId", "3674fc47871e9c407d8838690b355408")
-        .append_pair("pt_js_version", "v1.48.1");
-    format!("https://ssl.ptlogin2.qq.com/ptqrlogin?{}", params.finish())
+        .append_pair("o1vId", device_id)
+        .append_pair("pt_js_version", "c1987b96");
+    format!(
+        "https://xui.ptlogin2.qq.com/ssl/ptqrlogin?{}",
+        params.finish()
+    )
 }
 
 fn extract_query_param(location: &str, name: &str) -> Option<String> {
@@ -439,5 +599,56 @@ mod tests {
         assert_eq!(cookie_value(&cookies, "ptcz"), "first");
         assert_eq!(cookie_value(&cookies, "p_skey"), "needed");
         assert_eq!(cookie_value(&cookies, "u_key"), "final");
+    }
+
+    #[test]
+    fn check_url_uses_the_session_login_sig() {
+        let url = check_url(1, "qr-token", "session-login-sig", "device-id");
+        assert!(url.contains("ptqrtoken=qr-token"));
+        assert!(url.contains("login_sig=session-login-sig"));
+        assert!(url.contains("o1vId=device-id"));
+    }
+
+    #[test]
+    fn xlogin_url_contains_the_qr_login_parameters() {
+        let url = xlogin_url();
+        assert!(url.contains("appid=716027609"));
+        assert!(url.contains("daid=383"));
+        assert!(url.contains("pt_3rd_aid=100497308"));
+    }
+
+    #[test]
+    fn poll_codes_map_to_explicit_states_and_messages() {
+        let cases = [
+            (66, QqQrPollState::Waiting, "二维码未失效"),
+            (67, QqQrPollState::Authenticating, "二维码认证中"),
+            (0, QqQrPollState::Success, "登录成功！"),
+            (65, QqQrPollState::Expired, "二维码已失效"),
+        ];
+
+        for (code, state, message) in cases {
+            let result = QqPtuiResult {
+                code,
+                redirect_url: None,
+            };
+            assert_eq!(classify_poll_state(&result, ""), state);
+            assert_eq!(normalize_poll_message(&result, ""), message);
+        }
+    }
+
+    #[test]
+    fn poll_text_is_only_a_fallback_for_unknown_codes() {
+        let result = QqPtuiResult {
+            code: -1,
+            redirect_url: None,
+        };
+        assert_eq!(
+            classify_poll_state(&result, "二维码认证中。"),
+            QqQrPollState::Authenticating
+        );
+        assert_eq!(
+            classify_poll_state(&result, "unexpected response"),
+            QqQrPollState::Unknown
+        );
     }
 }

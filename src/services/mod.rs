@@ -8,7 +8,7 @@ pub mod kugou_qr_login;
 pub mod netease_qr_login;
 pub mod podcast;
 mod qq_mqtt_login;
-pub mod qq_qr_login;
+pub mod qq_qr_login_qq;
 pub mod qq_qr_login_mqtt;
 pub mod qq_qr_login_wx;
 pub mod shared_playlist_import;

@@ -23,7 +23,7 @@ use crate::{
         kugou_qr_login::{KugouQrLoginService, create_kugou_qr_login_service},
         netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
-        qq_qr_login::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
+        qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_mqtt::{
             QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
         },
