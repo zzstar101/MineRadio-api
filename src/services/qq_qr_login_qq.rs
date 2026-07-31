@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::{
@@ -51,8 +52,9 @@ impl Default for QqQrLoginDeps {
 #[derive(Default)]
 pub struct QqQrLoginService {
     deps: QqQrLoginDeps,
-    image_cache: tokio::sync::Mutex<HashMap<String, String>>,
-    sessions: tokio::sync::Mutex<HashMap<String, QqQrLoginSession>>,
+    image_cache: Arc<tokio::sync::Mutex<HashMap<String, String>>>,
+    sessions: Arc<tokio::sync::Mutex<HashMap<String, QqQrLoginSession>>>,
+    cleanup_running: Arc<tokio::sync::Mutex<bool>>,
 }
 
 #[derive(Clone)]
@@ -60,6 +62,7 @@ struct QqQrLoginSession {
     cookies: CookieMap,
     login_sig: String,
     device_id: String,
+    created_at: Instant,
 }
 
 const QQ_XLOGIN_URL: &str = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin";
@@ -69,6 +72,7 @@ const QQ_AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
 const QQ_MUSICU_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 const QQ_REDIRECT_URI: &str =
     "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/";
+const QQ_QR_SESSION_TTL: Duration = Duration::from_secs(30);
 
 impl QqQrLoginService {
     pub async fn create_key(&self) -> anyhow::Result<ProviderLoginQrKey> {
@@ -107,7 +111,8 @@ impl QqQrLoginService {
             .ok_or_else(|| anyhow::anyhow!("QQ_QR_SIG_MISSING"))?;
         let bytes = qr_resp.bytes().await?;
         let img = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
-        
+
+        // 注意：这里必须和网页版当前 hash33 算法保持一致；check 的 ptqrtoken 依赖它。
         let hash = |t: &str| -> i32 {
             let mut e = 0i32;
 
@@ -125,8 +130,10 @@ impl QqQrLoginService {
                 cookies,
                 login_sig,
                 device_id: get_guid(),
+                created_at: Instant::now(),
             },
         );
+        self.ensure_cleanup_task().await;
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Qq,
             key,
@@ -209,6 +216,7 @@ impl QqQrLoginService {
                     .lock()
                     .await
                     .insert(normalized_key.to_owned(), session);
+                self.ensure_cleanup_task().await;
                 return Ok(ProviderLoginQrCheck {
                     provider: ProviderId::Qq,
                     key: normalized_key.to_owned(),
@@ -225,6 +233,7 @@ impl QqQrLoginService {
                     .lock()
                     .await
                     .insert(normalized_key.to_owned(), session);
+                self.ensure_cleanup_task().await;
                 anyhow::bail!("QQ_QR_UNKNOWN_POLL_CODE_{}", ptui.code);
             }
         }
@@ -309,13 +318,61 @@ impl QqQrLoginService {
             stored: Some(true),
         })
     }
+
+    async fn ensure_cleanup_task(&self) {
+        let mut running = self.cleanup_running.lock().await;
+        if *running {
+            return;
+        }
+        *running = true;
+
+        let sessions = Arc::clone(&self.sessions);
+        let image_cache = Arc::clone(&self.image_cache);
+        let cleanup_running = Arc::clone(&self.cleanup_running);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(QQ_QR_SESSION_TTL).await;
+
+                let (expired_keys, empty) = {
+                    let mut sessions = sessions.lock().await;
+                    let now = Instant::now();
+                    let expired_keys = sessions
+                        .iter()
+                        .filter(|(_, session)| {
+                            now.duration_since(session.created_at) >= QQ_QR_SESSION_TTL
+                        })
+                        .map(|(key, _)| key.clone())
+                        .collect::<Vec<_>>();
+                    for key in &expired_keys {
+                        sessions.remove(key);
+                    }
+                    (expired_keys, sessions.is_empty())
+                };
+
+                if !expired_keys.is_empty() {
+                    let mut image_cache = image_cache.lock().await;
+                    for key in expired_keys {
+                        image_cache.remove(&key);
+                    }
+                }
+                if empty {
+                    let mut running = cleanup_running.lock().await;
+                    if sessions.lock().await.is_empty() {
+                        *running = false;
+                        break;
+                    }
+                }
+            }
+        });
+    }
 }
 
 pub fn create_qq_qr_login_service(deps: QqQrLoginDeps) -> QqQrLoginService {
     QqQrLoginService {
         deps,
-        image_cache: tokio::sync::Mutex::new(HashMap::new()),
-        sessions: tokio::sync::Mutex::new(HashMap::new()),
+        image_cache: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        cleanup_running: Arc::new(tokio::sync::Mutex::new(false)),
     }
 }
 
@@ -461,7 +518,7 @@ fn build_authorize_form(gtk: u64) -> Vec<(&'static str, String)> {
         ("update_auth", "1".to_owned()),
         ("openapi", "1010_1030".to_owned()),
         ("g_tk", gtk.to_string()),
-        ("auth_time", format!("{:?}", std::time::SystemTime::now())),
+        ("auth_time", now_millis().to_string()),
         ("ui", default_guid()),
     ]
 }
@@ -615,6 +672,16 @@ mod tests {
         assert!(url.contains("appid=716027609"));
         assert!(url.contains("daid=383"));
         assert!(url.contains("pt_3rd_aid=100497308"));
+    }
+
+    #[test]
+    fn authorize_form_uses_numeric_auth_time() {
+        let auth_time = build_authorize_form(1)
+            .into_iter()
+            .find(|(name, _)| *name == "auth_time")
+            .map(|(_, value)| value)
+            .expect("auth_time should be present");
+        assert!(auth_time.parse::<i64>().is_ok());
     }
 
     #[test]
