@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use reqwest::{
-    Client, Response,
+    Client,
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
 };
 use serde::de::DeserializeOwned;
@@ -41,16 +41,17 @@ pub struct NeteaseClient {
 }
 
 #[derive(Clone, Debug)]
-pub struct NeteaseClientResponse {
-    pub body: Value,
-    pub cookie: Option<String>,
+struct NeteaseClientResponse {
+    body: Value,
 }
 
 impl NeteaseClient {
     pub fn new() -> Self {
-        Self {
-            http: Client::new(),
-        }
+        Self::with_client(Client::new())
+    }
+
+    pub fn with_client(http: Client) -> Self {
+        Self { http }
     }
 
     pub async fn current_cookie(&self) -> Option<String> {
@@ -458,30 +459,6 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn login_qr_key(
-        &self,
-        cookie: Option<&str>,
-    ) -> ProviderResult<NeteaseClientResponse> {
-        self.request_weapi_response("/api/login/qrcode/unikey", json!({ "type": 3 }), cookie)
-            .await
-    }
-
-    pub async fn login_qr_check(
-        &self,
-        key: &str,
-        cookie: Option<&str>,
-    ) -> ProviderResult<NeteaseClientResponse> {
-        self.request_weapi_response(
-            "/api/login/qrcode/client/login",
-            json!({
-                "key": key,
-                "type": 3
-            }),
-            cookie,
-        )
-        .await
-    }
-
     pub async fn like(&self, id: &str, liked: bool) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/radio/like",
@@ -699,8 +676,6 @@ impl NeteaseClient {
             .await
             .context("send netease upstream request")
             .map_err(|err| unavailable_error(err.to_string()))?;
-        let cookie = cookie_from_response(&response);
-
         let status = response.status();
         let text = response
             .text()
@@ -720,7 +695,7 @@ impl NeteaseClient {
         if (200..300).contains(&status.as_u16())
             && matches!(code, 200 | 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
         {
-            return Ok(NeteaseClientResponse { body, cookie });
+            return Ok(NeteaseClientResponse { body });
         }
 
         Err(ProviderError {
@@ -902,39 +877,5 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
         retryable: true,
         action: None,
         raw_message: None,
-    }
-}
-
-fn cookie_from_response(response: &Response) -> Option<String> {
-    let values = response
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(split_combined_set_cookie_header)
-        .filter_map(cookie_kv_from_set_cookie)
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.join(";"))
-    }
-}
-
-fn split_combined_set_cookie_header(header: &str) -> Vec<String> {
-    header
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn cookie_kv_from_set_cookie(header: String) -> Option<String> {
-    let pair = header.split(';').next()?.trim();
-    if pair.is_empty() || !pair.contains('=') {
-        None
-    } else {
-        Some(pair.to_owned())
     }
 }
