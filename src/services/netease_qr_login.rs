@@ -3,9 +3,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use qrcode_generator::{QrCodeEcc, to_svg_to_string};
 use reqwest::{
     Client,
-    header::{CONTENT_TYPE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
+    header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
 };
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
@@ -291,6 +292,7 @@ async fn request_qr_response(
         CONTENT_TYPE,
         HeaderValue::from_static("application/x-www-form-urlencoded"),
     );
+    headers.insert(COOKIE, HeaderValue::from_str(&qr_cookie_header())?);
     let response = client
         .post(format!(
             "{NETEASE_DOMAIN}/weapi/{}",
@@ -319,6 +321,19 @@ async fn request_qr_response(
         body: Some(body),
         cookie: (!cookie.is_empty()).then_some(Value::String(cookie)),
     })
+}
+
+fn qr_cookie_header() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let seed = format!("netease{timestamp:x}");
+    format!(
+        "__remember_me=true; _ntes_nuid={seed}; _ntes_nnid={seed},{timestamp}; WEVNSM=1.0.0; WNMCID={}.{}.01.0; appver=3.1.17.204416; channel=netease; os=pc; osver=Microsoft-Windows-10-Professional-build-19045-64bit",
+        &seed[..6.min(seed.len())],
+        timestamp
+    )
 }
 
 fn render_qr_data_uri(url: &str) -> anyhow::Result<String> {
