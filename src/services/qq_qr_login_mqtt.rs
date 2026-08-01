@@ -20,6 +20,16 @@ const QQ_MUSIC_REFERER: &str = "https://y.qq.com/";
 const QQ_MUSIC_USER_AGENT: &str =
     "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
 
+pub(crate) const QQ_LOGIN_COOKIE_REMAPS: &[(&str, &str)] = &[
+    ("access_token", "psrf_qqaccess_token"),
+    ("openid", "psrf_qqopenid"),
+    ("unionid", "psrf_qqunionid"),
+    ("refresh_token", "psrf_qqrefresh_token"),
+    ("expired_at", "psrf_access_token_expiresAt"),
+    ("musickey", "qm_keyst"),
+    ("encryptUin", "euin"),
+];
+
 #[derive(Clone)]
 pub struct QqMusicQrLoginDeps {
     pub client: Client,
@@ -177,13 +187,14 @@ impl QqMusicQrLoginService {
                 qrcode_id, music_id, music_key,
             ))
             .await?;
+
+        check_qq_login_error(&payload)?;
         let data = payload
             .get("result")
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("QQ_MQTT_LOGIN_RESPONSE_MISSING_DATA"))?;
 
-        let data_map = flatten_data_to_map(data);
-
+        let mut data_map = flatten_data_to_map(data);
         let login_type = data_map
             .get("loginType")
             .and_then(|v| v.as_u64())
@@ -191,6 +202,7 @@ impl QqMusicQrLoginService {
 
         match login_type {
             2 => {
+                remap_qq_login_data_map(&mut data_map, false);
                 let cookie = cookie_from_data_map(&data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
@@ -199,17 +211,14 @@ impl QqMusicQrLoginService {
             1 => {
                 let wechat_body = build_wechat_exchange_request(&data_map);
                 let wechat_payload = self.music_api(wechat_body).await?;
+                check_qq_login_error(&wechat_payload)?;
 
                 let wechat_data = wechat_payload
                     .get("result")
                     .and_then(|v| v.get("data"))
                     .ok_or_else(|| anyhow!("QQ_MQTT_WECHAT_LOGIN_RESPONSE_MISSING_DATA"))?;
                 let mut wechat_data_map = flatten_data_to_map(wechat_data);
-                // 微信第二次兑换后特调：musicid -> wxuin + uin，musickey -> qm_keyst + qqmusic_key
-                remap_wechat_key(&mut wechat_data_map, "musicid", "wxuin");
-                remap_wechat_key(&mut wechat_data_map, "musicid", "uin");
-                remap_wechat_key(&mut wechat_data_map, "musickey", "qm_keyst");
-                remap_wechat_key(&mut wechat_data_map, "musickey", "qqmusic_key");
+                remap_qq_login_data_map(&mut wechat_data_map, true);
                 let cookie = cookie_from_data_map(&wechat_data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
@@ -341,17 +350,27 @@ pub(crate) fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
     map
 }
 
-/// 微信第二次兑换后特调：将 source_key 的值复制到 target_key，若 source_key 存在。
-pub(crate) fn remap_wechat_key(
-    data_map: &mut HashMap<String, Value>,
-    source_key: &str,
-    target_key: &str,
-) {
-    if let Some(value) = data_map.get(source_key).cloned() {
-        data_map.insert(target_key.to_string(), value);
+pub(crate) fn remap_qq_login_data_map(data_map: &mut HashMap<String, Value>, is_wechat: bool) {
+    for (source, target) in QQ_LOGIN_COOKIE_REMAPS {
+        remap_qq_login_data_key(data_map, source, target);
+    }
+    remap_qq_login_data_key(data_map, "musicid", "uin");
+    if is_wechat {
+        remap_qq_login_data_key(data_map, "musicid", "wxuin");
     }
 }
 
+fn remap_qq_login_data_key(data_map: &mut HashMap<String, Value>, source: &str, target: &str) {
+    let Some(value) = data_map.get(source).cloned() else {
+        return;
+    };
+    if matches!(&value, Value::Null) || value.as_str().is_some_and(|text| text.trim().is_empty()) {
+        return;
+    }
+    data_map.insert(target.to_owned(), value);
+}
+
+/// 将 source_key 的值补到 target_key；目标键不存在或为空时才补，避免覆盖有效值。
 /// Build cookie string from a flattened data map.
 /// Each non-empty base-type value becomes a `key=value` pair.
 pub(crate) fn cookie_from_data_map(
@@ -396,6 +415,29 @@ pub(crate) fn check_response(
         scanned: Some(scanned),
         expired: Some(expired),
         stored: Some(stored),
+    }
+}
+
+pub(crate) fn check_qq_login_error(value: &Value) -> Result<()> {
+    let Some(err_tip) = find_err_tip(value) else {
+        return Ok(());
+    };
+    if err_tip.contains("限制") && err_tip.contains("超出登录") {
+        bail!("QQ_LOGIN_DEVICE_LIMIT: {err_tip}");
+    }
+    Ok(())
+}
+
+fn find_err_tip(value: &Value) -> Option<&str> {
+    match value {
+        Value::Object(object) => {
+            if let Some(err_tip) = object.get("errTip").and_then(Value::as_str) {
+                return Some(err_tip);
+            }
+            object.values().find_map(find_err_tip)
+        }
+        Value::Array(values) => values.iter().find_map(find_err_tip),
+        _ => None,
     }
 }
 
@@ -457,5 +499,48 @@ mod tests {
             parts.join("; "),
             "loginType=6; musicid=10001; musickey=login-key"
         );
+    }
+
+    #[test]
+    fn login_exchange_remaps_all_cookie_keys_for_each_platform() {
+        let mut data = flatten_data_to_map(&json!({
+            "access_token": "access",
+            "openid": "openid",
+            "unionid": "unionid",
+            "refresh_token": "refresh",
+            "expired_at": 123,
+            "musickey": "music-key",
+            "encryptUin": "encrypted",
+            "musicid": 10001
+        }));
+
+        remap_qq_login_data_map(&mut data, false);
+
+        assert_eq!(data["psrf_qqaccess_token"], json!("access"));
+        assert_eq!(data["psrf_qqopenid"], json!("openid"));
+        assert_eq!(data["psrf_qqunionid"], json!("unionid"));
+        assert_eq!(data["psrf_qqrefresh_token"], json!("refresh"));
+        assert_eq!(data["psrf_access_token_expiresAt"], json!(123));
+        assert_eq!(data["qm_keyst"], json!("music-key"));
+        assert_eq!(data["euin"], json!("encrypted"));
+        assert_eq!(data["uin"], json!(10001));
+        assert!(!data.contains_key("wxuin"));
+
+        remap_qq_login_data_map(&mut data, true);
+        assert_eq!(data["wxuin"], json!(10001));
+    }
+
+    #[test]
+    fn rejects_qq_login_device_limit_error_tip() {
+        let payload = json!({
+            "result": {
+                "data": {
+                    "errTip": "超出登录设备数量限制"
+                }
+            }
+        });
+
+        let error = check_qq_login_error(&payload).unwrap_err().to_string();
+        assert!(error.contains("QQ_LOGIN_DEVICE_LIMIT"));
     }
 }

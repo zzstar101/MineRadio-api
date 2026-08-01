@@ -9,6 +9,7 @@ use reqwest::{
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
+    services::qq_qr_login_mqtt::{QQ_LOGIN_COOKIE_REMAPS, check_qq_login_error},
     services::qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{get_guid, gtk_from_pskey},
@@ -280,10 +281,14 @@ impl QrLogin for QqQrLoginService {
             .body(build_musicu_body(gtk, &code))
             .send()
             .await?;
-        merge_cookies(
-            &mut session.state.cookies,
-            read_set_cookies(musicu_resp.headers()),
-        );
+        let musicu_headers = musicu_resp.headers().clone();
+        let musicu_text = musicu_resp.text().await?;
+        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&musicu_text) {
+            check_qq_login_error(&payload)?;
+        }
+        let musicu_cookies = cookies_from_set_cookie_headers(read_set_cookies(&musicu_headers));
+        merge_cookie_map(&mut session.state.cookies, &musicu_cookies);
+        remap_musicu_exchange_cookies(&mut session.state.cookies, &musicu_cookies, false);
         let cookie = cookie_header(&session.state.cookies);
         if cookie.is_empty() {
             anyhow::bail!("QQ_QR_COOKIE_MISSING");
@@ -360,12 +365,49 @@ fn split_set_cookie_header(header: &str) -> Vec<&str> {
 }
 
 fn merge_cookies<'a>(cookies: &mut CookieMap, headers: impl IntoIterator<Item = &'a str>) {
+    let updates = cookies_from_set_cookie_headers(headers);
+    merge_cookie_map(cookies, &updates);
+}
+
+fn cookies_from_set_cookie_headers<'a>(headers: impl IntoIterator<Item = &'a str>) -> CookieMap {
+    let mut cookies = CookieMap::new();
     for header in headers {
         for cookie in parse_set_cookie(header) {
             if let Some((name, _)) = cookie.split_once('=') {
                 cookies.insert(name.to_owned(), cookie);
             }
         }
+    }
+    cookies
+}
+
+fn merge_cookie_map(cookies: &mut CookieMap, updates: &CookieMap) {
+    cookies.extend(updates.clone());
+}
+
+fn remap_musicu_exchange_cookies(
+    cookies: &mut CookieMap,
+    musicu_cookies: &CookieMap,
+    is_wechat: bool,
+) {
+    for (source, target) in QQ_LOGIN_COOKIE_REMAPS {
+        remap_musicu_cookie_key(cookies, musicu_cookies, source, target);
+    }
+    remap_musicu_cookie_key(cookies, musicu_cookies, "musicid", "uin");
+    if is_wechat {
+        remap_musicu_cookie_key(cookies, musicu_cookies, "musicid", "wxuin");
+    }
+}
+
+fn remap_musicu_cookie_key(
+    cookies: &mut CookieMap,
+    musicu_cookies: &CookieMap,
+    source: &str,
+    target: &str,
+) {
+    let value = cookie_value(musicu_cookies, source);
+    if !value.is_empty() {
+        cookies.insert(target.to_owned(), format!("{target}={value}"));
     }
 }
 
@@ -592,6 +634,60 @@ mod tests {
         assert_eq!(cookie_value(&cookies, "ptcz"), "first");
         assert_eq!(cookie_value(&cookies, "p_skey"), "needed");
         assert_eq!(cookie_value(&cookies, "u_key"), "final");
+    }
+
+    #[test]
+    fn musicu_remap_overwrites_stale_session_values() {
+        let mut session_cookies = CookieMap::from([
+            ("uin".to_owned(), "uin=old-id".to_owned()),
+            ("qm_keyst".to_owned(), "qm_keyst=old-key".to_owned()),
+        ]);
+        let musicu_cookies = CookieMap::from([
+            ("access_token".to_owned(), "access_token=access".to_owned()),
+            ("openid".to_owned(), "openid=openid".to_owned()),
+            ("unionid".to_owned(), "unionid=unionid".to_owned()),
+            (
+                "refresh_token".to_owned(),
+                "refresh_token=refresh".to_owned(),
+            ),
+            ("expired_at".to_owned(), "expired_at=123".to_owned()),
+            ("musickey".to_owned(), "musickey=new-key".to_owned()),
+            ("encryptUin".to_owned(), "encryptUin=encrypted".to_owned()),
+            ("musicid".to_owned(), "musicid=new-id".to_owned()),
+        ]);
+
+        merge_cookie_map(&mut session_cookies, &musicu_cookies);
+        remap_musicu_exchange_cookies(&mut session_cookies, &musicu_cookies, false);
+
+        assert_eq!(
+            cookie_value(&session_cookies, "psrf_qqaccess_token"),
+            "access"
+        );
+        assert_eq!(cookie_value(&session_cookies, "psrf_qqopenid"), "openid");
+        assert_eq!(cookie_value(&session_cookies, "psrf_qqunionid"), "unionid");
+        assert_eq!(
+            cookie_value(&session_cookies, "psrf_qqrefresh_token"),
+            "refresh"
+        );
+        assert_eq!(
+            cookie_value(&session_cookies, "psrf_access_token_expiresAt"),
+            "123"
+        );
+        assert_eq!(cookie_value(&session_cookies, "qm_keyst"), "new-key");
+        assert_eq!(cookie_value(&session_cookies, "euin"), "encrypted");
+        assert_eq!(cookie_value(&session_cookies, "uin"), "new-id");
+        assert!(cookie_value(&session_cookies, "wxuin").is_empty());
+    }
+
+    #[test]
+    fn wechat_musicu_remap_also_sets_wxuin() {
+        let mut session_cookies = CookieMap::new();
+        let musicu_cookies = CookieMap::from([("musicid".to_owned(), "musicid=wx-id".to_owned())]);
+
+        remap_musicu_exchange_cookies(&mut session_cookies, &musicu_cookies, true);
+
+        assert_eq!(cookie_value(&session_cookies, "uin"), "wx-id");
+        assert_eq!(cookie_value(&session_cookies, "wxuin"), "wx-id");
     }
 
     #[test]

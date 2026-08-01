@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
     services::qq_qr_login_mqtt::{
-        check_response as check, cookie_from_data_map, flatten_data_to_map, remap_wechat_key,
-        required_key,
+        check_qq_login_error, check_response as check, cookie_from_data_map, flatten_data_to_map,
+        remap_qq_login_data_map, required_key,
     },
     services::qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
@@ -224,15 +224,13 @@ impl WechatQrLoginService {
     async fn complete_wechat_login(&self, key: &str, code: &str) -> Result<ProviderLoginQrCheck> {
         self.open_wechat_redirect(code).await?;
         let payload = self.music_api(wechat_login_request(code)).await?;
+        check_qq_login_error(&payload)?;
         let data = payload
             .get("WXLogin")
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("WECHAT_QR_LOGIN_RESPONSE_MISSING_DATA"))?;
         let mut data_map = flatten_data_to_map(data);
-        remap_wechat_key(&mut data_map, "musicid", "wxuin");
-        remap_wechat_key(&mut data_map, "musicid", "uin");
-        remap_wechat_key(&mut data_map, "musickey", "qm_keyst");
-        remap_wechat_key(&mut data_map, "musickey", "qqmusic_key");
+        remap_qq_login_data_map(&mut data_map, true);
         let cookie = cookie_from_data_map(&data_map, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
@@ -426,21 +424,18 @@ mod tests {
     }
 
     #[test]
-    fn exchange_data_produces_the_required_qq_cookie_keys() {
+    fn exchange_data_remaps_wechat_cookie_keys() {
         let mut data = flatten_data_to_map(&json!({
             "musicid": 10001,
             "musickey": "login-key"
         }));
-        remap_wechat_key(&mut data, "musicid", "wxuin");
-        remap_wechat_key(&mut data, "musicid", "uin");
-        remap_wechat_key(&mut data, "musickey", "qm_keyst");
-        remap_wechat_key(&mut data, "musickey", "qqmusic_key");
+        remap_qq_login_data_map(&mut data, true);
         let cookie = cookie_from_data_map(&data, "WECHAT_QR_LOGIN_COOKIE_EMPTY").unwrap();
         let mut parts: Vec<_> = cookie.split("; ").collect();
         parts.sort();
         assert_eq!(
             parts.join("; "),
-            "musicid=10001; musickey=login-key; qm_keyst=login-key; qqmusic_key=login-key; uin=10001; wxuin=10001"
+            "musicid=10001; musickey=login-key; qm_keyst=login-key; uin=10001; wxuin=10001"
         );
     }
 }
