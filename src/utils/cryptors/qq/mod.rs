@@ -1,7 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use aes_gcm::{
+    Aes128Gcm, Nonce,
+    aead::{Aead, KeyInit},
+};
 use base64::Engine;
-use rand::RngExt;
+use rand::{Rng, RngExt};
 use sha1::{Digest, Sha1};
 
 pub mod audio;
@@ -26,6 +30,60 @@ const SIGN_PART_2_INDEXES: [usize; 8] = [16, 1, 32, 12, 19, 27, 8, 5];
 const SIGN_SCRAMBLE_VALUES: [u8; 20] = [
     89, 39, 179, 150, 218, 82, 58, 252, 177, 52, 186, 123, 120, 64, 242, 133, 143, 161, 121, 179,
 ];
+const AG1_RESP_KEY: [u8; 21] = [
+    122, 63, 140, 29, 94, 155, 47, 10, 108, 77, 126, 139, 31, 58, 92, 157, 14, 43, 111, 74, 129,
+];
+const AG1_REQ_KEY: [u8; 16] = [
+    189, 48, 95, 16, 208, 255, 116, 182, 239, 84, 218, 184, 53, 181, 225, 207,
+];
+const AG1_IV_LEN: usize = 12;
+
+pub fn encode_ag1_req(data: &str) -> Result<Vec<u8>, String> {
+    let mut iv = [0_u8; AG1_IV_LEN];
+    rand::rng().fill_bytes(&mut iv);
+
+    let cipher = Aes128Gcm::new_from_slice(&AG1_REQ_KEY)
+        .map_err(|_| "invalid AG1 request key".to_owned())?;
+    let encrypted = cipher
+        .encrypt(Nonce::from_slice(&iv), data.as_bytes())
+        .map_err(|_| "failed to encrypt AG1 request".to_owned())?;
+
+    let mut output = Vec::with_capacity(iv.len() + encrypted.len());
+    output.extend_from_slice(&iv);
+    output.extend_from_slice(&encrypted);
+    Ok(output)
+}
+
+pub fn decode_ag1_req(data: impl AsRef<[u8]>) -> Result<String, String> {
+    let data = data.as_ref();
+    let (iv, encrypted) = data
+        .split_at_checked(AG1_IV_LEN)
+        .ok_or_else(|| "AG1 request is missing its IV".to_owned())?;
+
+    let cipher = Aes128Gcm::new_from_slice(&AG1_REQ_KEY)
+        .map_err(|_| "invalid AG1 request key".to_owned())?;
+    let decrypted = cipher
+        .decrypt(Nonce::from_slice(iv), encrypted)
+        .map_err(|_| "failed to decrypt AG1 request".to_owned())?;
+
+    String::from_utf8(decrypted).map_err(|_| "AG1 request is not valid UTF-8".to_owned())
+}
+
+pub fn encode_ag1_resp(data: &str) -> Vec<u8> {
+    xor_ag1_resp(data.as_bytes())
+}
+
+pub fn decode_ag1_resp(data: impl AsRef<[u8]>) -> Result<String, String> {
+    String::from_utf8(xor_ag1_resp(data.as_ref()))
+        .map_err(|_| "AG1 response is not valid UTF-8".to_owned())
+}
+
+fn xor_ag1_resp(data: &[u8]) -> Vec<u8> {
+    data.iter()
+        .enumerate()
+        .map(|(index, byte)| byte ^ AG1_RESP_KEY[index % AG1_RESP_KEY.len()])
+        .collect()
+}
 
 pub fn get_guid() -> String {
     let mut rng = rand::rng();
@@ -147,5 +205,28 @@ mod tests {
             sign(&serde_json::to_string(&body).expect("压缩失败")),
             "zzcf3ea51dcp3xdwnxisjgufsk0znclehf2t85bc1d3d4"
         );
+    }
+
+    #[test]
+    fn ag1_req_round_trip() {
+        let encoded = encode_ag1_req("AG1 request").expect("AG1 request should encrypt");
+
+        assert_eq!(encoded.len(), AG1_IV_LEN + "AG1 request".len() + 16);
+        assert_eq!(decode_ag1_req(&encoded), Ok("AG1 request".to_owned()));
+    }
+
+    #[test]
+    fn ag1_req_rejects_tampered_data() {
+        let mut encoded = encode_ag1_req("AG1 request").expect("AG1 request should encrypt");
+        *encoded.last_mut().expect("encrypted request has a tag") ^= 1;
+
+        assert!(decode_ag1_req(encoded).is_err());
+    }
+
+    #[test]
+    fn ag1_resp_round_trip() {
+        let encoded = encode_ag1_resp("AG1 response");
+
+        assert_eq!(decode_ag1_resp(&encoded), Ok("AG1 response".to_owned()));
     }
 }

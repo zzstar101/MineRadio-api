@@ -27,6 +27,7 @@ protobuf-codegen = "3"
 
 [dependencies]
 aes = "0.8"
+aes-gcm = "0.10"
 anyhow = "1"
 async-tungstenite = { version = "0.29", default-features = false, features = ["tokio-runtime", "tokio-rustls-native-certs"] }
 async-trait = "0.1"
