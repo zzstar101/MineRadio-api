@@ -835,39 +835,39 @@ fn vip_badge_icon(value: &str) -> Option<VipBadgeIcon> {
 //Reusable Struct
 #[derive(Debug, Deserialize)]
 struct File {
-    //HQ旧值
+    #[serde(default)]
     size_320mp3: i64,
-
-    size_ape: i64,
-    //SQ无损
+    #[serde(default)]
     size_flac: i64,
-
+    #[serde(default)]
     size_128mp3: i64,
-    //两个同时作为标准音质判断
-    size_96ogg: i64,
-
-    size_96aac: i64,
-    //size_new[0]为臻品母带, [3]为HQ音效, [7]为NAC音效, 待其他迁移后检查音质具体标签
-    //size_new: Vec<i64>,
+    #[serde(default)]
+    size_new: Vec<i64>,
 }
 
 impl File {
     fn standardize(self, id: Option<String>) -> Vec<TrackQualityOption> {
         let mut v: Vec<String> = Vec::new();
+        if size_new_at(&self.size_new, 8) {
+            v.push("atmos".to_string());
+        }
+        if size_new_at(&self.size_new, 3) {
+            v.push("premium".to_string());
+        }
+        if size_new_at(&self.size_new, 0) {
+            v.push("master".to_string());
+        }
         if self.size_flac != 0 {
             v.push("flac".to_string());
         }
         if self.size_320mp3 != 0 {
-            v.push("320".to_string());
+            v.push("320k".to_string());
         }
-        if self.size_ape != 0 {
-            v.push("ape".to_string());
+        if size_new_at(&self.size_new, 7) {
+            v.push("nac".to_string());
         }
         if self.size_128mp3 != 0 {
-            v.push("128".to_string());
-        }
-        if self.size_96aac != 0 || self.size_96ogg != 0 {
-            v.push("aac".to_string());
+            v.push("128k".to_string());
         }
         v.into_iter()
             .map(|quality| TrackQualityOption {
@@ -883,13 +883,19 @@ impl File {
     }
 }
 
+fn size_new_at(size_new: &[i64], index: usize) -> bool {
+    size_new.get(index).is_some_and(|size| *size > 0)
+}
+
 fn qq_quality_label(quality: &str) -> &'static str {
     match quality {
-        "flac" => "FLAC",
-        "ape" => "APE",
-        "320" => "320k MP3",
-        "128" => "128k MP3",
-        "m4a" => "AAC",
+        "atmos" => "臻品全景音",
+        "premium" => "臻品音质",
+        "master" => "臻品母带",
+        "flac" => "SQ无损",
+        "320k" => "HQ高品质",
+        "nac" => "NAC",
+        "128k" => "标准品质",
         _ => "QQ",
     }
 }
@@ -914,7 +920,29 @@ struct Identified {
 mod tests {
     use serde_json::json;
 
-    use super::{QqPlaylistList1Resp, QqPlaylistSongWriteResp};
+    use super::{
+        QqLoginProfile, QqLoginStatusData, QqLoginStatusResp, QqPlaylistList1Resp,
+        QqPlaylistSongWriteResp,
+    };
+
+    #[test]
+    fn login_status_survives_missing_vip_response() {
+        let response = QqLoginStatusResp {
+            data: QqLoginStatusData {
+                creator: QqLoginProfile {
+                    nick: "user".to_owned(),
+                    headpic: "https://example.invalid/avatar.jpg".to_owned(),
+                    encrypt_uin: "encrypted-uin".to_owned(),
+                },
+            },
+        };
+
+        let status = response.standardize(None);
+
+        assert!(status.logged_in);
+        assert_eq!(status.nickname.as_deref(), Some("user"));
+        assert_eq!(status.is_vip, None);
+    }
 
     #[test]
     fn created_playlists_preserve_tid_to_dirid_mapping() {
@@ -976,6 +1004,9 @@ impl QqSongUrlResp {
             .into_iter()
             .find(|_a| true)
             .map(|i| i.purl)?;
+        if url.trim().is_empty() {
+            return None;
+        }
         let url = data
             .sip
             .into_iter()

@@ -22,12 +22,27 @@ use tokio::sync::RwLock;
 
 use super::client::QqClient;
 
-const QQ_QUALITY_CANDIDATES: [QqQualityCandidate; 5] = [
+const QQ_PLAIN_QUALITY_CANDIDATES: [QqQualityCandidate; 9] = [
+    QqQualityCandidate::new("Q000", ".flac", "atmos"),
+    QqQualityCandidate::new("O800", ".ogg", "premium"),
+    QqQualityCandidate::new("AI00", ".flac", "master"),
     QqQualityCandidate::new("RS01", ".flac", "hires"),
-    QqQualityCandidate::new("F000", ".flac", "lossless"),
-    QqQualityCandidate::new("M800", ".mp3", "exhigh"),
-    QqQualityCandidate::new("M500", ".mp3", "standard"),
+    QqQualityCandidate::new("F000", ".flac", "flac"),
+    QqQualityCandidate::new("M800", ".mp3", "320k"),
+    QqQualityCandidate::new("TL01", ".nac", "nac"),
+    QqQualityCandidate::new("M500", ".mp3", "128k"),
     QqQualityCandidate::new("C400", ".m4a", "aac"),
+];
+
+const QQ_ENCRYPTED_QUALITY_CANDIDATES: [QqQualityCandidate; 8] = [
+    QqQualityCandidate::new("Q0M0", ".mflac", "atmos"),
+    QqQualityCandidate::new("O8M0", ".mgg", "premium"),
+    QqQualityCandidate::new("AIM0", ".mflac", "master"),
+    QqQualityCandidate::new("RSM1", ".mflac", "hires"),
+    QqQualityCandidate::new("F0M0", ".mflac", "flac"),
+    QqQualityCandidate::new("O8M0", ".mgg", "320k"),
+    QqQualityCandidate::new("TLM1", ".mnac", "nac"),
+    QqQualityCandidate::new("O6M0", ".mgg", "128k"),
 ];
 
 #[derive(Clone, Copy)]
@@ -45,6 +60,25 @@ impl QqQualityCandidate {
             level,
         }
     }
+}
+
+fn qq_quality_candidates(encrypted: bool) -> &'static [QqQualityCandidate] {
+    if encrypted {
+        &QQ_ENCRYPTED_QUALITY_CANDIDATES
+    } else {
+        &QQ_PLAIN_QUALITY_CANDIDATES
+    }
+}
+
+fn qq_filename(
+    candidates: &[QqQualityCandidate],
+    quality: &str,
+    media_mid: &str,
+) -> Option<String> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.level == quality)
+        .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
 }
 
 #[derive(Clone)]
@@ -130,17 +164,11 @@ impl ProviderAdapter for QqAdapter {
         track: &Track,
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
-        let requested = normalize_request_quality(
-            opts.and_then(|value| value.quality)
-                .unwrap_or_else(|| "standard".to_owned())
-                .as_str(),
-        );
+        let requested = opts
+            .and_then(|o| o.quality)
+            .unwrap_or_else(|| "128k".to_owned());
         let media_mid = track.id.clone();
-        let filename = QQ_QUALITY_CANDIDATES
-            .iter()
-            .find(|q| q.level == requested)
-            .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
-            .unwrap();
+        let filename = qq_filename(qq_quality_candidates(false), &requested, &media_mid).unwrap();
         if let Some(r) = self
             .client
             .song_url(&track.source_id, filename)
@@ -392,18 +420,6 @@ impl ProviderAdapter for QqAdapter {
             action: None,
             raw_message: None,
         })
-    }
-}
-
-fn normalize_request_quality(requested: &str) -> String {
-    match requested.trim().to_lowercase().as_str() {
-        "jymaster" | "master" | "studio" | "svip" => "hires".to_owned(),
-        "hires" | "hi-res" | "highres" | "zhenyin" | "spatial" => "hires".to_owned(),
-        "lossless" | "flac" | "sq" => "lossless".to_owned(),
-        "exhigh" | "high" | "320" | "320k" | "hq" => "exhigh".to_owned(),
-        "standard" | "normal" | "128" | "128k" | "std" => "standard".to_owned(),
-        "aac" | "m4a" => "aac".to_owned(),
-        _ => "hires".to_owned(),
     }
 }
 
