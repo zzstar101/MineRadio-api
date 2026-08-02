@@ -860,33 +860,20 @@ async fn provider_logout(State(state): State<AppState>, Path(pid): Path<String>)
         .map(|cookie| !cookie.trim().is_empty())
         .unwrap_or(false);
 
-    if provider_id == ProviderId::Soda {
-        let logout_result = provider.logout().await;
-        services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
-        match logout_result {
-            Ok(()) => ok(serde_json::json!({ "provider": provider_id, "loggedOut": true })),
-            Err(err)
-                if had_runtime_or_env_session
-                    && matches!(err.code, ProviderErrorCode::NotImplemented)
-                    && err.action.as_deref() == Some("no-session") =>
-            {
-                ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
-            }
-            Err(err) => provider_error_response(err),
+    match provider.logout().await {
+        Ok(()) => {
+            services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
+            ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
         }
-    } else {
-        services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
-        match provider.logout().await {
-            Ok(()) => ok(serde_json::json!({ "provider": provider_id, "loggedOut": true })),
-            Err(err)
-                if had_runtime_or_env_session
-                    && matches!(err.code, ProviderErrorCode::NotImplemented)
-                    && err.action.as_deref() == Some("no-session") =>
-            {
-                ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
-            }
-            Err(err) => provider_error_response(err),
+        Err(err)
+            if had_runtime_or_env_session
+                && matches!(err.code, ProviderErrorCode::NotImplemented)
+                && err.action.as_deref() == Some("no-session") =>
+        {
+            services::auth_session::clear_runtime_provider_cookie(&provider_id).await;
+            ok(serde_json::json!({ "provider": provider_id, "loggedOut": true }))
         }
+        Err(err) => provider_error_response(err),
     }
 }
 
