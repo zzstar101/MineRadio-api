@@ -690,7 +690,10 @@ pub(super) struct QqLoginStatusResp {
 }
 
 impl QqLoginStatusResp {
-    pub(super) fn standardize(self, vip_icon_response: QqVipIconResp) -> ProviderLoginStatus {
+    pub(super) fn standardize(
+        self,
+        vip_icon_response: Option<QqVipIconResp>,
+    ) -> ProviderLoginStatus {
         let creator = self.data.creator;
         let user_id = creator.encrypt_uin.trim().to_owned();
         let mut status = ProviderLoginStatus {
@@ -704,14 +707,16 @@ impl QqLoginStatusResp {
         status.user_id = (!user_id.is_empty()).then_some(user_id.clone());
         let mut expired_vip_icon = None;
         let mut active_vip_icon = None;
-        for icon in &vip_icon_response.get_vip_icon.data.user_info_ui.iconlist {
-            match vip_badge_icon(&icon.src_url) {
-                Some(icon @ VipBadgeIcon::Active { .. }) => {
-                    active_vip_icon = Some(icon);
-                    break;
+        if let Some(vip_icon_response) = vip_icon_response {
+            for icon in &vip_icon_response.get_vip_icon.data.user_info_ui.iconlist {
+                match vip_badge_icon(&icon.src_url) {
+                    Some(icon @ VipBadgeIcon::Active { .. }) => {
+                        active_vip_icon = Some(icon);
+                        break;
+                    }
+                    Some(icon @ VipBadgeIcon::Expired { .. }) => expired_vip_icon = Some(icon),
+                    None => {}
                 }
-                Some(icon @ VipBadgeIcon::Expired { .. }) => expired_vip_icon = Some(icon),
-                None => {}
             }
         }
 

@@ -308,21 +308,29 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
-        let cookie = self.client.current_cookie().await;
-        let Some(cookie) = cookie.filter(|cookie| !cookie.trim().is_empty()) else {
+        let Some(mut cookie) = self
+            .client
+            .current_cookie()
+            .await
+            .filter(|cookie| !cookie.trim().is_empty())
+        else {
             return Ok(qq_logged_out_status());
         };
-        let euin = self.client.euin().await;
-        let Some(euin) = euin else {
-            return Ok(qq_logged_out_status());
-        };
-        match tokio::try_join!(
-            self.client.login_status_with_cookie(&euin, &cookie),
-            self.client.vip_info_with_cookie(&euin, &cookie),
-        ) {
-            Ok((login_status, vip_info)) => Ok(login_status.standardize(vip_info)),
-            Err(_) => Ok(qq_logged_out_status()),
+        if let Ok(Some(refreshed)) = self.client.refresh_login_cookie(&cookie).await {
+            auth_session::set_runtime_provider_cookie(ProviderId::Qq, refreshed.clone())
+                .await
+                .map_err(invalid_response)?;
+            cookie = refreshed;
         }
+        let uin = self.client.uin().await;
+        let Some(uin) = uin else {
+            return Ok(qq_logged_out_status());
+        };
+        let (login_status, vip_info) = tokio::join!(
+            self.client.login_status_with_cookie(&uin, &cookie),
+            self.client.vip_info_with_cookie(&uin, &cookie),
+        );
+        Ok(login_status?.standardize(vip_info.ok()))
     }
 
     async fn logout(&self) -> ProviderResult<()> {
