@@ -11,13 +11,13 @@ use tokio::sync::Mutex;
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
-    services::qq_qr_login_mqtt::{
-        check_qq_login_error, check_response as check, cookie_from_data_map, flatten_data_to_map,
-        remap_qq_login_data_map, required_key,
+    services::qq_qr_login_common::{
+        check_qq_login_error, check_response as check, normalize_login_cookie,
+        qq_music_device_name, required_key,
     },
     services::qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{get_guid, sign},
+    utils::cryptors::qq::{x5, x9},
 };
 
 const WECHAT_QR_CONNECT_URL: &str = "\
@@ -68,6 +68,7 @@ impl Default for WechatQrLoginDeps {
 
 struct WechatQrSession {
     uuid: String,
+    guid: String,
     finished: bool,
     last_status_code: Option<i64>,
 }
@@ -114,6 +115,7 @@ impl QrLogin for WechatQrLoginService {
 
         let session = WechatQrSession {
             uuid: request_uuid.clone(),
+            guid: x5(),
             finished: false,
             last_status_code: None,
         };
@@ -196,8 +198,10 @@ impl QrLogin for WechatQrLoginService {
                     .get("wx_code")
                     .cloned()
                     .ok_or_else(|| anyhow!("WECHAT_QR_TOKEN_MISSING"))?;
-                self.confirm_wechat_login(&session.state.uuid).await?;
-                self.complete_wechat_login(&key, &token).await?
+                let uuid = session.state.uuid.clone();
+                let guid = session.state.guid.clone();
+                self.confirm_wechat_login(&uuid).await?;
+                self.complete_wechat_login(&key, &token, &guid).await?
             }
 
             _ => check(&key, -1, "未知状态", false, false, false, false),
@@ -221,17 +225,20 @@ impl WechatQrLoginService {
             .ok_or_else(|| anyhow!("WECHAT_QR_SESSION_MISSING"))
     }
 
-    async fn complete_wechat_login(&self, key: &str, code: &str) -> Result<ProviderLoginQrCheck> {
+    async fn complete_wechat_login(
+        &self,
+        key: &str,
+        code: &str,
+        guid: &str,
+    ) -> Result<ProviderLoginQrCheck> {
         self.open_wechat_redirect(code).await?;
-        let payload = self.music_api(wechat_login_request(code)).await?;
+        let payload = self.music_api(wechat_login_request(code, guid)).await?;
         check_qq_login_error(&payload)?;
         let data = payload
             .get("WXLogin")
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("WECHAT_QR_LOGIN_RESPONSE_MISSING_DATA"))?;
-        let mut data_map = flatten_data_to_map(data);
-        remap_qq_login_data_map(&mut data_map, true);
-        let cookie = cookie_from_data_map(&data_map, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
+        let cookie = normalize_login_cookie(data, guid, true, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|error| anyhow!(error))?;
@@ -286,7 +293,7 @@ impl WechatQrLoginService {
     }
 
     async fn music_api(&self, body: Value) -> Result<Value> {
-        let sign = sign(&serde_json::to_string(&body)?);
+        let sign = x9(&serde_json::to_string(&body)?);
         self.deps
             .client
             .post(QQ_MUSIC_API_URL)
@@ -311,14 +318,15 @@ pub fn create_wechat_qr_login_service(deps: WechatQrLoginDeps) -> WechatQrLoginS
     }
 }
 
-fn wechat_login_request(code: &str) -> Value {
+fn wechat_login_request(code: &str, guid: &str) -> Value {
+    let device_name = qq_music_device_name();
     json!({
         "WXLogin": {
             "module": "music.login.LoginServer",
             "method": "Login",
             "param": {
                 "code": code,
-                "deviceName": "Mineradio",
+                "deviceName": device_name,
                 "deviceType": "Widnows",
                 "forceRefreshToken": 0,
                 "onlyNeedAccessToken": 0,
@@ -329,7 +337,7 @@ fn wechat_login_request(code: &str) -> Value {
             "ct": 19,
             "cv": 2201,
             "chid": "0",
-            "guid": get_guid(),
+            "guid": guid,
             "tmeAppID": "qqmusic",
             "tmeLoginType": 1,
             "uin": "0",
@@ -360,6 +368,9 @@ fn parse_wechat_poll_response(text: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::qq_qr_login_common::{
+        cookie_from_data_map, flatten_data_to_map, remap_qq_login_data_map,
+    };
 
     #[test]
     fn poll_parser_extracts_waiting_state() {
@@ -404,11 +415,15 @@ mod tests {
 
     #[test]
     fn wechat_login_request_uses_the_confirmed_exchange_shape() {
-        let request = wechat_login_request("wx-code");
+        let request = wechat_login_request("wx-code", "session-guid");
         assert_eq!(request["WXLogin"]["module"], "music.login.LoginServer");
         assert_eq!(request["WXLogin"]["method"], "Login");
         assert_eq!(request["WXLogin"]["param"]["code"], "wx-code");
-        assert_eq!(request["WXLogin"]["param"]["deviceName"], "Mineradio");
+        assert_eq!(request["comm"]["guid"], "session-guid");
+        assert_eq!(
+            request["WXLogin"]["param"]["deviceName"],
+            qq_music_device_name()
+        );
         assert_eq!(
             request["WXLogin"]["param"]["strAppid"],
             "wx48db31d50e334801"

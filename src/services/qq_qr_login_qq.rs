@@ -9,10 +9,12 @@ use reqwest::{
 
 use crate::{
     services::auth_session::set_runtime_provider_cookie,
-    services::qq_qr_login_mqtt::{QQ_LOGIN_COOKIE_REMAPS, check_qq_login_error},
+    services::qq_qr_login_common::{
+        QQ_LOGIN_COOKIE_REMAPS, check_qq_login_error, normalize_login_cookie, qq_music_device_name,
+    },
     services::qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{get_guid, gtk_from_pskey},
+    utils::cryptors::qq::{x4, x5, x7, xj},
 };
 
 type CookieMap = HashMap<String, String>;
@@ -59,14 +61,14 @@ pub struct QqQrLoginService {
 struct QqQrLoginSession {
     cookies: CookieMap,
     login_sig: String,
-    device_id: String,
+    guid: String,
 }
 
 const QQ_XLOGIN_URL: &str = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin";
 const QQ_QR_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.47.134 Safari/537.36 QBCore/3.53.47.400 QQBrowser/9.0.2524.400 pcqqmusic/22.30.3563.0626 SkinId/10001|00cc65|0|1|||1fd4af";
 const QQ_QR_SHOW_URL: &str = "https://xui.ptlogin2.qq.com/ssl/ptqrshow";
 const QQ_AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
-const QQ_MUSICU_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
+const QQ_MUSICS_URL: &str = "https://u.y.qq.com/cgi-bin/musics.fcg";
 const QQ_REDIRECT_URI: &str =
     "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/";
 
@@ -127,7 +129,7 @@ impl QrLogin for QqQrLoginService {
                 QqQrLoginSession {
                     cookies,
                     login_sig,
-                    device_id: get_guid(),
+                    guid: x5(),
                 },
             )
             .await;
@@ -173,7 +175,7 @@ impl QrLogin for QqQrLoginService {
             now_millis(),
             &decoded.ptqrtoken,
             &session.state.login_sig,
-            &session.state.device_id,
+            &session.state.guid,
         );
         let check_resp = self
             .deps
@@ -245,7 +247,7 @@ impl QrLogin for QqQrLoginService {
         if p_skey.is_empty() {
             anyhow::bail!("QQ_QR_PSKEY_MISSING");
         }
-        let gtk = gtk_from_pskey(&p_skey);
+        let gtk = x7(&p_skey);
         let authorize_resp = self
             .deps
             .client
@@ -271,28 +273,43 @@ impl QrLogin for QqQrLoginService {
             anyhow::bail!("QQ_QR_AUTHORIZE_FAILED");
         }
 
-        let musicu_resp = self
+        let uin = qq_uin(&session.state.cookies);
+        let request = qq_client_login_request(&code, &session.state.guid);
+        let request_body = serde_json::to_string(&request)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let (a, b) = x4(&request_body, &uin, &session.state.guid, now);
+        let login_resp = self
             .deps
             .client
-            .post(QQ_MUSICU_URL)
+            .post(QQ_MUSICS_URL)
+            .query(&[([xj(0x7063_6163_6865_7469), xj(0x6d65)].concat(), now.to_string())])
             .timeout(Duration::from_millis(self.deps.timeout_ms))
             .header("content-type", "application/x-www-form-urlencoded")
             .header("cookie", cookie_header(&session.state.cookies))
-            .body(build_musicu_body(gtk, &code))
+            .header("user-agent", QQ_QR_USER_AGENT)
+            .header(xj(0x7369_676e), a)
+            .header(xj(0x6d61_736b), b)
+            .body(request_body)
             .send()
-            .await?;
-        let musicu_headers = musicu_resp.headers().clone();
-        let musicu_text = musicu_resp.text().await?;
-        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&musicu_text) {
-            check_qq_login_error(&payload)?;
-        }
-        let musicu_cookies = cookies_from_set_cookie_headers(read_set_cookies(&musicu_headers));
-        merge_cookie_map(&mut session.state.cookies, &musicu_cookies);
-        remap_musicu_exchange_cookies(&mut session.state.cookies, &musicu_cookies, false);
-        let cookie = cookie_header(&session.state.cookies);
-        if cookie.is_empty() {
-            anyhow::bail!("QQ_QR_COOKIE_MISSING");
-        }
+            .await?
+            .error_for_status()?;
+        let payload = login_resp.json::<serde_json::Value>().await?;
+        check_qq_login_error(&payload)?;
+        let data = payload
+            .get("music.login.LoginServer.Login")
+            .filter(|response| {
+                response
+                    .get("code")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or_default()
+                    == 0
+            })
+            .and_then(|response| response.get("data"))
+            .ok_or_else(|| anyhow::anyhow!("QQ_QR_CLIENT_LOGIN_RESPONSE_MISSING_DATA"))?;
+        let cookie =
+            normalize_login_cookie(data, &session.state.guid, false, "QQ_QR_COOKIE_MISSING")?;
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|err| anyhow::anyhow!(err))?;
@@ -501,16 +518,42 @@ fn build_authorize_form(gtk: u64) -> Vec<(&'static str, String)> {
     ]
 }
 
-fn build_musicu_body(gtk: u64, code: &str) -> String {
+fn qq_client_login_request(code: &str, guid: &str) -> serde_json::Value {
     serde_json::json!({
-        "comm": { "g_tk": gtk, "platform": "yqq", "ct": 24, "cv": 0 },
-        "req": {
-            "module": "QQConnectLogin.LoginServer",
-            "method": "QQLogin",
-            "param": { "code": code }
+        "music.login.LoginServer.Login": {
+            "method": "Login",
+            "module": "music.login.LoginServer",
+            "param": {
+                "appid": 100497308,
+                "code": code,
+                "deviceName": qq_music_device_name(),
+                "forceRefreshToken": 0,
+                "onlyNeedAccessToken": 0
+            }
+        },
+        "comm": {
+            "ct": 19,
+            "cv": 2230,
+            "guid": guid,
+            "tmeAppID": "qqmusic",
+            "tmeLoginType": 2,
+            "uin": "0",
+            "wid": "4810302018970526720"
         }
     })
-    .to_string()
+}
+
+fn qq_uin(cookies: &CookieMap) -> String {
+    let uin = cookie_value(cookies, "uin");
+    let digits = uin
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        "0".to_owned()
+    } else {
+        digits
+    }
 }
 
 fn xlogin_url() -> String {
@@ -614,6 +657,22 @@ mod tests {
     use reqwest::header::HeaderValue;
 
     use super::*;
+
+    #[test]
+    fn qq_client_login_uses_the_confirmed_native_exchange_shape() {
+        let request = qq_client_login_request("oauth-code", "session-guid");
+        let exchange = &request["music.login.LoginServer.Login"];
+
+        assert_eq!(exchange["module"], "music.login.LoginServer");
+        assert_eq!(exchange["method"], "Login");
+        assert_eq!(exchange["param"]["appid"], 100497308);
+        assert_eq!(exchange["param"]["code"], "oauth-code");
+        assert_eq!(exchange["param"]["deviceName"], qq_music_device_name());
+        assert_eq!(exchange["param"]["forceRefreshToken"], 0);
+        assert_eq!(exchange["param"]["onlyNeedAccessToken"], 0);
+        assert_eq!(request["comm"]["guid"], "session-guid");
+        assert_eq!(request["comm"]["tmeLoginType"], 2);
+    }
 
     #[test]
     fn merge_cookies_reads_every_set_cookie_header() {

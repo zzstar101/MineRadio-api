@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow, bail};
 use reqwest::Client;
@@ -9,26 +9,21 @@ use crate::{
     services::{
         auth_session::set_runtime_provider_cookie,
         qq_mqtt_login::{MqttLoginEvent, MqttLoginSession},
+        qq_qr_login_common::{
+            check_qq_login_error, check_response, flatten_data_to_map, normalize_login_cookie,
+            required_key,
+        },
         qr_login::{QrLogin, QrSession, QrSessionStore},
     },
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{get_guid, sign},
+    utils::cryptors::qq::{x5, x9},
 };
 
 const QQ_MUSIC_API_URL: &str = "https://u.y.qq.com/cgi-bin/musics.fcg";
 const QQ_MUSIC_REFERER: &str = "https://y.qq.com/";
 const QQ_MUSIC_USER_AGENT: &str =
     "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
-
-pub(crate) const QQ_LOGIN_COOKIE_REMAPS: &[(&str, &str)] = &[
-    ("access_token", "psrf_qqaccess_token"),
-    ("openid", "psrf_qqopenid"),
-    ("unionid", "psrf_qqunionid"),
-    ("refresh_token", "psrf_qqrefresh_token"),
-    ("expired_at", "psrf_access_token_expiresAt"),
-    ("musickey", "qm_keyst"),
-    ("encryptUin", "euin"),
-];
+const MQTT_LOGIN_REQUEST_KEY: &str = "music.login.LoginServer.Login";
 
 #[derive(Clone)]
 pub struct QqMusicQrLoginDeps {
@@ -47,6 +42,7 @@ impl Default for QqMusicQrLoginDeps {
 
 struct QqQrLoginSession {
     mqtt: MqttLoginSession,
+    guid: String,
     finished: bool,
 }
 
@@ -59,7 +55,8 @@ pub struct QqMusicQrLoginService {
 #[async_trait::async_trait]
 impl QrLogin for QqMusicQrLoginService {
     async fn create_key(&self) -> Result<ProviderLoginQrKey> {
-        let payload = self.music_api(create_qr_request()).await?;
+        let guid = x5();
+        let payload = self.music_api(create_qr_request(&guid)).await?;
         let data = payload
             .get("result")
             .and_then(|value| value.get("data"))
@@ -72,6 +69,7 @@ impl QrLogin for QqMusicQrLoginService {
                 image,
                 QqQrLoginSession {
                     mqtt: MqttLoginSession::new(&key),
+                    guid,
                     finished: false,
                 },
             )
@@ -153,7 +151,11 @@ impl QrLogin for QqMusicQrLoginService {
             MqttLoginEvent::Cookies {
                 music_id,
                 music_key,
-            } => self.complete_mqtt_login(&key, &music_id, &music_key).await,
+            } => {
+                let guid = session.state.guid.clone();
+                self.complete_mqtt_login(&key, &music_id, &music_key, &guid)
+                    .await
+            }
         };
 
         if terminal {
@@ -178,23 +180,23 @@ impl QqMusicQrLoginService {
         qrcode_id: &str,
         music_id: &str,
         music_key: &str,
+        guid: &str,
     ) -> Result<ProviderLoginQrCheck> {
         let music_id = music_id
             .parse::<u64>()
             .map_err(|_| anyhow!("QQ_MQTT_LOGIN_INVALID_MUSIC_ID"))?;
         let payload = self
             .music_api(login_with_mqtt_ticket_request(
-                qrcode_id, music_id, music_key,
+                qrcode_id, music_id, music_key, guid,
             ))
             .await?;
 
         check_qq_login_error(&payload)?;
         let data = payload
-            .get("result")
+            .get(MQTT_LOGIN_REQUEST_KEY)
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("QQ_MQTT_LOGIN_RESPONSE_MISSING_DATA"))?;
-
-        let mut data_map = flatten_data_to_map(data);
+        let data_map = flatten_data_to_map(data);
         let login_type = data_map
             .get("loginType")
             .and_then(|v| v.as_u64())
@@ -202,24 +204,15 @@ impl QqMusicQrLoginService {
 
         match login_type {
             2 => {
-                remap_qq_login_data_map(&mut data_map, false);
-                let cookie = cookie_from_data_map(&data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
+                let cookie =
+                    normalize_login_cookie(data, guid, false, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
             }
             1 => {
-                let wechat_body = build_wechat_exchange_request(&data_map);
-                let wechat_payload = self.music_api(wechat_body).await?;
-                check_qq_login_error(&wechat_payload)?;
-
-                let wechat_data = wechat_payload
-                    .get("result")
-                    .and_then(|v| v.get("data"))
-                    .ok_or_else(|| anyhow!("QQ_MQTT_WECHAT_LOGIN_RESPONSE_MISSING_DATA"))?;
-                let mut wechat_data_map = flatten_data_to_map(wechat_data);
-                remap_qq_login_data_map(&mut wechat_data_map, true);
-                let cookie = cookie_from_data_map(&wechat_data_map, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
+                let cookie =
+                    normalize_login_cookie(data, guid, true, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
@@ -241,7 +234,7 @@ impl QqMusicQrLoginService {
     }
 
     async fn music_api(&self, body: Value) -> Result<Value> {
-        let sign = sign(&serde_json::to_string(&body)?);
+        let sign = x9(&serde_json::to_string(&body)?);
         self.deps
             .client
             .post(QQ_MUSIC_API_URL)
@@ -266,20 +259,25 @@ pub fn create_qqmusic_qr_login_service(deps: QqMusicQrLoginDeps) -> QqMusicQrLog
     }
 }
 
-fn create_qr_request() -> Value {
+fn create_qr_request(guid: &str) -> Value {
     json!({
         "result": {
             "module": "music.login.LoginServer",
             "method": "CreateQRCode",
             "param": { "tmeAppID": "qqmusic", "ct": 19, "cv": 2201 }
         },
-        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": get_guid() }
+        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": guid }
     })
 }
 
-fn login_with_mqtt_ticket_request(qrcode_id: &str, music_id: u64, music_key: &str) -> Value {
+fn login_with_mqtt_ticket_request(
+    qrcode_id: &str,
+    music_id: u64,
+    music_key: &str,
+    guid: &str,
+) -> Value {
     json!({
-        "result": {
+        "music.login.LoginServer.Login": {
             "module": "music.login.LoginServer",
             "method": "Login",
             "param": {
@@ -288,42 +286,8 @@ fn login_with_mqtt_ticket_request(qrcode_id: &str, music_id: u64, music_key: &st
                 "token": music_key
             }
         },
-        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": get_guid(), "tmeLoginType": 6 }
+        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": guid, "tmeLoginType": 6 }
     })
-}
-
-fn build_wechat_exchange_request(data_map: &HashMap<String, Value>) -> Value {
-    let mut param = serde_json::Map::new();
-    for (key, value) in data_map {
-        param.insert(key.clone(), value.clone());
-    }
-    param.insert("strAppid".to_string(), json!("wx48db31d50e334801"));
-    param.insert(
-        "deviceName".to_string(),
-        json!(format!("Mineradio{}", &get_guid()[..1])),
-    );
-    param.insert("deviceType".to_string(), json!("Widnows"));
-    json!({
-        "result": {
-            "module": "music.login.LoginServer",
-            "method": "Login",
-            "param": param
-        },
-        "comm": {
-            "ct": 19,
-            "cv": 2201,
-            "chid": "0",
-            "guid": get_guid()
-        }
-    })
-}
-
-pub(crate) fn required_key(key: &str, error: &'static str) -> Result<String> {
-    let key = key.trim();
-    if key.is_empty() {
-        bail!(error);
-    }
-    Ok(key.to_owned())
 }
 
 fn required_string(data: &Value, field: &str, error: &'static str) -> Result<String> {
@@ -335,127 +299,23 @@ fn required_string(data: &Value, field: &str, error: &'static str) -> Result<Str
         .ok_or_else(|| anyhow!(error))
 }
 
-pub(crate) fn flatten_data_to_map(data: &Value) -> HashMap<String, Value> {
-    let mut map = HashMap::new();
-    if let Value::Object(obj) = data {
-        for (key, value) in obj {
-            match value {
-                Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null => {
-                    map.insert(key.clone(), value.clone());
-                }
-                _ => {} // skip nested objects and arrays
-            }
-        }
-    }
-    map
-}
-
-pub(crate) fn remap_qq_login_data_map(data_map: &mut HashMap<String, Value>, is_wechat: bool) {
-    for (source, target) in QQ_LOGIN_COOKIE_REMAPS {
-        remap_qq_login_data_key(data_map, source, target);
-    }
-    remap_qq_login_data_key(data_map, "musicid", "uin");
-    if is_wechat {
-        remap_qq_login_data_key(data_map, "musicid", "wxuin");
-    }
-}
-
-fn remap_qq_login_data_key(data_map: &mut HashMap<String, Value>, source: &str, target: &str) {
-    let Some(value) = data_map.get(source).cloned() else {
-        return;
-    };
-    if matches!(&value, Value::Null) || value.as_str().is_some_and(|text| text.trim().is_empty()) {
-        return;
-    }
-    data_map.insert(target.to_owned(), value);
-}
-
-/// 将 source_key 的值补到 target_key；目标键不存在或为空时才补，避免覆盖有效值。
-/// Build cookie string from a flattened data map.
-/// Each non-empty base-type value becomes a `key=value` pair.
-pub(crate) fn cookie_from_data_map(
-    data_map: &HashMap<String, Value>,
-    empty_error: &'static str,
-) -> Result<String> {
-    let mut parts: Vec<String> = Vec::new();
-    for (key, value) in data_map {
-        let s = match value {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Null => continue,
-            _ => continue,
-        };
-        if s.is_empty() {
-            continue;
-        }
-        parts.push(format!("{key}={s}"));
-    }
-    if parts.is_empty() {
-        bail!(empty_error);
-    }
-    Ok(parts.join("; "))
-}
-
-pub(crate) fn check_response(
-    key: &str,
-    code: i64,
-    message: &str,
-    logged_in: bool,
-    scanned: bool,
-    expired: bool,
-    stored: bool,
-) -> ProviderLoginQrCheck {
-    ProviderLoginQrCheck {
-        provider: ProviderId::Qq,
-        key: key.to_owned(),
-        code,
-        message: Some(message.to_owned()),
-        logged_in,
-        scanned: Some(scanned),
-        expired: Some(expired),
-        stored: Some(stored),
-    }
-}
-
-pub(crate) fn check_qq_login_error(value: &Value) -> Result<()> {
-    let Some(err_tip) = find_err_tip(value) else {
-        return Ok(());
-    };
-    if err_tip.contains("限制") && err_tip.contains("超出登录") {
-        bail!("QQ_LOGIN_DEVICE_LIMIT: {err_tip}");
-    }
-    Ok(())
-}
-
-fn find_err_tip(value: &Value) -> Option<&str> {
-    match value {
-        Value::Object(object) => {
-            if let Some(err_tip) = object.get("errTip").and_then(Value::as_str) {
-                return Some(err_tip);
-            }
-            object.values().find_map(find_err_tip)
-        }
-        Value::Array(values) => values.iter().find_map(find_err_tip),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use crate::services::qq_qr_login_common::{
+        cookie_from_data_map, cookie_with_qqmusic_guid, remap_qq_login_data_map,
+    };
+
     use super::*;
 
     #[test]
     fn create_qr_request_has_required_protocol_fields() {
-        let request = create_qr_request();
+        let request = create_qr_request("session-guid");
         assert_eq!(request["result"]["module"], "music.login.LoginServer");
         assert_eq!(request["result"]["method"], "CreateQRCode");
         assert_eq!(request["result"]["param"]["tmeAppID"], "qqmusic");
-        assert!(
-            request["comm"]["guid"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
+        assert_eq!(request["comm"]["guid"], "session-guid");
     }
 
     #[test]
@@ -476,11 +336,19 @@ mod tests {
 
     #[test]
     fn login_ticket_exchange_matches_the_source_protocol() {
-        let request = login_with_mqtt_ticket_request("qr-id", 10001, "event-key");
-        assert_eq!(request["result"]["method"], "Login");
-        assert_eq!(request["result"]["param"]["qrCodeID"], "qr-id");
-        assert_eq!(request["result"]["param"]["token"], "event-key");
+        let request = login_with_mqtt_ticket_request("qr-id", 10001, "event-key", "session-guid");
+        assert_eq!(request[MQTT_LOGIN_REQUEST_KEY]["method"], "Login");
+        assert_eq!(request[MQTT_LOGIN_REQUEST_KEY]["param"]["musicid"], 10001);
+        assert_eq!(
+            request[MQTT_LOGIN_REQUEST_KEY]["param"]["qrCodeID"],
+            "qr-id"
+        );
+        assert_eq!(
+            request[MQTT_LOGIN_REQUEST_KEY]["param"]["token"],
+            "event-key"
+        );
         assert_eq!(request["comm"]["tmeLoginType"], 6);
+        assert_eq!(request["comm"]["guid"], "session-guid");
     }
 
     #[test]
@@ -499,6 +367,56 @@ mod tests {
             parts.join("; "),
             "loginType=6; musicid=10001; musickey=login-key"
         );
+    }
+
+    #[test]
+    fn login_cookie_persists_the_session_guid() {
+        assert_eq!(
+            cookie_with_qqmusic_guid("uin=10001".to_owned(), "session-guid"),
+            "uin=10001; qqmusic_guid=session-guid"
+        );
+    }
+
+    #[test]
+    fn normalize_login_cookie_uses_the_shared_response_formatter() {
+        let cookie = normalize_login_cookie(
+            &json!({ "musicid": 10001, "musickey": "login-key" }),
+            "session-guid",
+            true,
+            "QQ_LOGIN_COOKIE_EMPTY",
+        )
+        .unwrap();
+        let mut parts: Vec<_> = cookie.split("; ").collect();
+        parts.sort();
+        assert_eq!(
+            parts.join("; "),
+            "musicid=10001; musickey=login-key; qm_keyst=login-key; qqmusic_guid=session-guid; tmeLoginType=1; uin=10001; wxuin=10001"
+        );
+    }
+
+    #[test]
+    fn mqtt_wechat_first_exchange_preserves_the_continuation_fields() {
+        let cookie = normalize_login_cookie(
+            &json!({
+                "loginType": 1,
+                "musicid": 1152921505274451474u64,
+                "musickey": "music-key",
+                "refresh_key": "refresh-key"
+            }),
+            "session-guid",
+            true,
+            "QQ_MQTT_LOGIN_COOKIE_EMPTY",
+        )
+        .unwrap();
+        let map = cookie
+            .split("; ")
+            .filter_map(|entry| entry.split_once('='))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(map["tmeLoginType"], "1");
+        assert_eq!(map["musicid"], "1152921505274451474");
+        assert_eq!(map["qm_keyst"], "music-key");
+        assert_eq!(map["refresh_key"], "refresh-key");
     }
 
     #[test]
