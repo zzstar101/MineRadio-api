@@ -450,7 +450,7 @@ mod tests {
         parts.sort();
         assert_eq!(
             parts.join("; "),
-            "musicid=10001; musickey=login-key; qm_keyst=login-key; uin=10001; wxuin=10001"
+            "musicid=10001; musickey=login-key; qm_keyst=login-key; tmeLoginType=1; uin=10001; wxuin=10001"
         );
     }
 }
