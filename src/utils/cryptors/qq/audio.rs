@@ -8,12 +8,9 @@ const MUSICEX_MAGIC: &[u8; 8] = b"musicex\0";
 const QTAG_MAGIC: &[u8; 4] = b"QTag";
 const STAG_MAGIC: &[u8; 4] = b"STag";
 const ENCV2_PREFIX: &[u8] = b"QQMusic EncV2,Key:";
-const ENCV2_KEY1: [u8; 16] = [
-    0x33, 0x38, 0x36, 0x5a, 0x4a, 0x59, 0x21, 0x40, 0x23, 0x2a, 0x24, 0x25, 0x5e, 0x26, 0x29, 0x28,
-];
-const ENCV2_KEY2: [u8; 16] = [
-    0x2a, 0x24, 0x25, 0x5e, 0x26, 0x29, 0x28, 0x23, 0x40, 0x21, 0x33, 0x38, 0x36, 0x5a, 0x4a, 0x59,
-];
+
+const ENCV2_KEY1: [u8; 16] = *b"386ZJY!@#*$%^&)(";
+const ENCV2_KEY2: [u8; 16] = *b"**#!(#$%&^a1cZ,T";
 const SIMPLE_KEY: [u8; 8] = [0x69, 0x56, 0x46, 0x38, 0x2b, 0x20, 0x15, 0x0b];
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -160,37 +157,55 @@ fn decode_utf16_field(data: &[u8]) -> String {
 
 pub fn derive_qmc2_key_from_ekey(ekey: &str) -> Result<Vec<u8>> {
     let raw_key = base64::engine::general_purpose::STANDARD
-        .decode(ekey.trim())
+        .decode(ekey.trim_matches(char::from(0)))
         .map_err(|error| format!("invalid Base64 EKey: {error}"))?;
     derive_qmc2_key(&raw_key).ok_or_else(|| "invalid QQ Music EKey payload".to_owned())
 }
 
 pub fn derive_qmc2_key(raw_key: &[u8]) -> Option<Vec<u8>> {
-    let raw_key = if raw_key.starts_with(ENCV2_PREFIX) {
-        decrypt_encv2(raw_key)?
+    if raw_key.is_empty() {
+        return None;
+    }
+
+    let decoded = if raw_key.starts_with(ENCV2_PREFIX) {
+        let encv2_blob = &raw_key[ENCV2_PREFIX.len()..];
+        let stage1 = decrypt_tencent_tea(encv2_blob, &ENCV2_KEY1)?;
+        let stage2 = decrypt_tencent_tea(&stage1, &ENCV2_KEY2)?;
+        base64::engine::general_purpose::STANDARD
+            .decode(stage2)
+            .ok()?
     } else {
         raw_key.to_vec()
     };
-    if raw_key.len() < 8 {
+
+    if decoded.len() < 8 {
         return None;
     }
+
+    let (header, body) = decoded.split_at(8);
+    if body.is_empty() {
+        return Some(header.to_vec());
+    }
+
+    let tea_key = derive_tea_key(header);
+    if let Some(decrypted_body) = decrypt_tencent_tea(body, &tea_key) {
+        let mut result = Vec::with_capacity(8 + decrypted_body.len());
+        result.extend_from_slice(header);
+        result.extend_from_slice(&decrypted_body);
+        Some(result)
+    } else {
+        // Not EncV1 — the decoded blob is already the raw key (API-issued ekey).
+        Some(decoded)
+    }
+}
+
+fn derive_tea_key(ekey_header: &[u8]) -> [u8; 16] {
     let mut tea_key = [0_u8; 16];
     for index in 0..8 {
         tea_key[index * 2] = SIMPLE_KEY[index];
-        tea_key[index * 2 + 1] = raw_key[index];
+        tea_key[index * 2 + 1] = ekey_header[index];
     }
-    let decrypted = decrypt_tencent_tea(&raw_key[8..], &tea_key)?;
-    let mut result = raw_key[..8].to_vec();
-    result.extend(decrypted);
-    Some(result)
-}
-
-fn decrypt_encv2(raw_key: &[u8]) -> Option<Vec<u8>> {
-    let first = decrypt_tencent_tea(&raw_key[ENCV2_PREFIX.len()..], &ENCV2_KEY1)?;
-    let second = decrypt_tencent_tea(&first, &ENCV2_KEY2)?;
-    base64::engine::general_purpose::STANDARD
-        .decode(second)
-        .ok()
+    tea_key
 }
 
 fn tea_decrypt_block(block: &[u8], key: &[u8; 16]) -> [u8; 8] {
@@ -218,70 +233,45 @@ fn tea_decrypt_block(block: &[u8], key: &[u8; 16]) -> [u8; 8] {
 }
 
 fn decrypt_tencent_tea(data: &[u8], key: &[u8; 16]) -> Option<Vec<u8>> {
-    if data.len() < 16 || !data.len().is_multiple_of(8) {
-        return None;
-    }
-    let mut current_block = tea_decrypt_block(&data[..8], key);
-    let padding = (current_block[0] & 0x07) as usize;
-    let output_len = data.len().checked_sub(1 + padding + 2 + 7)?;
-    if output_len == 0 {
-        return None;
-    }
-    let mut previous_cipher = [0_u8; 8];
-    let mut current_cipher: [u8; 8] = data[..8].try_into().expect("TEA block has eight bytes");
-    let mut input_position = 8;
-    let mut block_position = 1 + padding;
+    // Layout: [pad_len(1)] [padding(0-7)] [salt(2)] [body(?)] [zero(7)].
+    // Matches the tc_tea crate: FIXED_PADDING_LEN = 1 + 2 + 7 = 10.
+    const SALT_LEN: usize = 2;
+    const ZERO_LEN: usize = 7;
 
-    let next_block = |current_block: &mut [u8; 8],
-                      previous_cipher: &mut [u8; 8],
-                      current_cipher: &mut [u8; 8],
-                      input_position: &mut usize| {
-        if *input_position + 8 > data.len() {
-            return None;
-        }
-        let next_cipher: [u8; 8] = data[*input_position..*input_position + 8].try_into().ok()?;
+    let len = data.len();
+    if len < 10 || len % 8 != 0 {
+        return None;
+    }
+
+    let mut decrypted = data.to_vec();
+
+    // Block 0 is plain TEA-ECB decryption.
+    decrypted[0..8].copy_from_slice(&tea_decrypt_block(&data[..8], key));
+
+    // Later blocks: XOR with the previously *decrypted* block, then ECB-decrypt.
+    for block in 1..(len / 8) {
+        let start = block * 8;
         let mut mixed = [0_u8; 8];
         for index in 0..8 {
-            mixed[index] = current_block[index] ^ next_cipher[index];
+            mixed[index] = decrypted[start + index] ^ decrypted[start - 8 + index];
         }
-        let decoded = tea_decrypt_block(&mixed, key);
-        *previous_cipher = *current_cipher;
-        *current_cipher = next_cipher;
-        *current_block = decoded;
-        *input_position += 8;
-        Some(())
-    };
-
-    for _ in 0..2 {
-        if block_position < 8 {
-            block_position += 1;
-        } else {
-            next_block(
-                &mut current_block,
-                &mut previous_cipher,
-                &mut current_cipher,
-                &mut input_position,
-            )?;
-            block_position = 0;
-        }
+        decrypted[start..start + 8].copy_from_slice(&tea_decrypt_block(&mixed, key));
     }
 
-    let mut output = Vec::with_capacity(output_len);
-    while output.len() < output_len {
-        if block_position < 8 {
-            output.push(current_block[block_position] ^ previous_cipher[block_position]);
-            block_position += 1;
-        } else {
-            next_block(
-                &mut current_block,
-                &mut previous_cipher,
-                &mut current_cipher,
-                &mut input_position,
-            )?;
-            block_position = 0;
-        }
+    // Final pass: XOR each byte from index 8 onward with the original
+    // ciphertext shifted by 8 (reverses the encrypt-side iv chaining).
+    for index in 8..len {
+        decrypted[index] ^= data[index - 8];
     }
-    Some(output)
+
+    let pad_size = usize::from(decrypted[0] & 0b111);
+    let start_loc = 1 + pad_size + SALT_LEN;
+    let end_loc = len - ZERO_LEN;
+
+    if start_loc > end_loc || !decrypted[end_loc..].iter().all(|byte| *byte == 0) {
+        return None;
+    }
+    Some(decrypted[start_loc..end_loc].to_vec())
 }
 
 pub fn qmc2_decrypt_in_place(key: &[u8], buffer: &mut [u8], offset: u64) -> Result<()> {
@@ -289,95 +279,195 @@ pub fn qmc2_decrypt_in_place(key: &[u8], buffer: &mut [u8], offset: u64) -> Resu
         return Err("QMC2 key is empty".to_owned());
     }
     if key.len() > 300 {
-        rc4_decrypt(key, buffer, offset);
+        Qmc2Rc4Crypto::new(key).decrypt(offset as usize, buffer);
     } else {
-        map_decrypt(key, buffer, offset);
+        Qmc2MapCrypto::new(key).decrypt(offset as usize, buffer);
     }
     Ok(())
 }
 
-fn map_decrypt(key: &[u8], buffer: &mut [u8], offset: u64) {
-    for (index, byte) in buffer.iter_mut().enumerate() {
-        *byte ^= map_mask(key, offset + index as u64);
-    }
+// QMC2 ciphers ported from qmc-decoder's `qmc2.rs`:
+// - key length <= 300: QMC2 Map (XOR with a scrambled key)
+// - key length > 300:  QMC2 RC4 (modified RC4 stream cipher)
+
+struct Qmc2MapCrypto {
+    key: Vec<u8>,
 }
 
-fn map_mask(key: &[u8], mut offset: u64) -> u8 {
-    if offset > 0x7fff {
-        offset %= 0x7fff;
+impl Qmc2MapCrypto {
+    fn new(key: &[u8]) -> Self {
+        Self { key: key.to_vec() }
     }
-    let index = ((offset as u128 * offset as u128 + 71_214) % key.len() as u128) as usize;
-    let shift = (index + 4) % 8;
-    // QMC2 defines this as two same-direction shifts, not a bit rotation.
-    (((key[index] as u16) << shift) | ((key[index] as u16) >> shift)) as u8
-}
 
-fn rc4_decrypt(key: &[u8], buffer: &mut [u8], mut offset: u64) {
-    const FIRST_SEGMENT_SIZE: u64 = 128;
-    const SEGMENT_SIZE: u64 = 5120;
-    let key_len = key.len();
-    let mut box_state: Vec<u8> = (0..key_len).map(|index| index as u8).collect();
-    let mut cursor = 0_usize;
-    for index in 0..key_len {
-        cursor = (cursor + box_state[index] as usize + key[index] as usize) % key_len;
-        box_state.swap(index, cursor);
+    /// Rotate a key byte by its index (two same-direction shifts).
+    #[inline]
+    fn scramble_by_index(value: u8, index: usize) -> u8 {
+        let rotation = ((index as u32).wrapping_add(4)) & 0b111;
+        let left = value.wrapping_shl(rotation);
+        let right = value.wrapping_shr(rotation);
+        left | right
     }
-    let hash = rc4_hash(key);
-    let mut processed = 0_usize;
 
-    if offset < FIRST_SEGMENT_SIZE {
-        let length = (FIRST_SEGMENT_SIZE - offset).min(buffer.len() as u64) as usize;
-        for index in 0..length {
-            buffer[index] ^= key[rc4_segment_skip(key, hash, offset + index as u64)];
+    /// XOR mask for the given absolute byte offset.
+    #[inline]
+    fn map_l(&self, offset: usize) -> u8 {
+        let mut offset_local = offset;
+        if offset_local > 0x7FFF {
+            offset_local %= 0x7FFF;
         }
-        processed += length;
-        offset += length as u64;
+        let index = (offset_local * offset_local + 71214) % self.key.len();
+        Self::scramble_by_index(self.key[index], index)
     }
-    while processed < buffer.len() {
-        let segment_offset = offset % SEGMENT_SIZE;
-        let length =
-            (SEGMENT_SIZE - segment_offset).min((buffer.len() - processed) as u64) as usize;
-        let mut box_copy = box_state.clone();
-        let mut cursor_a = 0_usize;
-        let mut cursor_b = 0_usize;
-        let skip = segment_offset as usize + rc4_segment_skip(key, hash, offset / SEGMENT_SIZE);
-        for index in 0..skip + length {
-            cursor_a = (cursor_a + 1) % key_len;
-            cursor_b = (box_copy[cursor_a] as usize + cursor_b) % key_len;
-            box_copy.swap(cursor_a, cursor_b);
-            if index >= skip {
-                let mask =
-                    box_copy[(box_copy[cursor_a] as usize + box_copy[cursor_b] as usize) % key_len];
-                buffer[processed + index - skip] ^= mask;
+
+    fn decrypt(&self, offset: usize, buf: &mut [u8]) {
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte ^= self.map_l(offset + i);
+        }
+    }
+}
+
+const FIRST_SEGMENT_SIZE: usize = 0x80;
+const OTHER_SEGMENT_SIZE: usize = 0x1400;
+
+struct Qmc2Rc4Crypto {
+    /// RC4 seed box (S-box)
+    s: Vec<u8>,
+    /// Hash base for segment key calculation
+    hash: u32,
+    /// RC4 key
+    rc4_key: Vec<u8>,
+}
+
+impl Qmc2Rc4Crypto {
+    fn new(rc4_key: &[u8]) -> Self {
+        let n = rc4_key.len();
+
+        // QMC2 uses a variable-size S-box equal to the key length; for keys
+        // longer than 255 bytes the values wrap modulo 256.
+        let mut s: Vec<u8> = (0..n as u8).collect();
+        if n > 256 {
+            s = (0..=255u8).collect();
+            s.extend((0..=255u8).cycle().take(n - 256));
+        }
+
+        // KSA (Key Scheduling Algorithm)
+        let mut j = 0usize;
+        for i in 0..n {
+            j = (j + s[i] as usize + rc4_key[i] as usize) % n;
+            s.swap(i, j);
+        }
+
+        Qmc2Rc4Crypto {
+            s,
+            hash: Self::calc_hash_base(rc4_key),
+            rc4_key: rc4_key.to_vec(),
+        }
+    }
+
+    fn calc_hash_base(data: &[u8]) -> u32 {
+        let mut hash: u32 = 1;
+        for &value in data.iter() {
+            let value = u32::from(value);
+            if value == 0 {
+                continue;
             }
+            let next_hash = hash.wrapping_mul(value);
+            if next_hash == 0 || next_hash <= hash {
+                break;
+            }
+            hash = next_hash;
         }
-        processed += length;
-        offset += length as u64;
+        hash
     }
-}
 
-fn rc4_hash(key: &[u8]) -> u32 {
-    let mut result = 1_u32;
-    for &value in key {
-        if value == 0 {
-            continue;
-        }
-        let next = result.wrapping_mul(value as u32);
-        if next == 0 || next <= result {
-            break;
-        }
-        result = next;
+    #[inline]
+    fn calc_segment_key(&self, id: usize, seed: u8) -> usize {
+        let dividend = f64::from(self.hash);
+        let divisor = ((id + 1) * usize::from(seed)) as f64;
+        let key = dividend / divisor * 100.0;
+        key as u64 as usize
     }
-    result
-}
 
-fn rc4_segment_skip(key: &[u8], hash: u32, segment_id: u64) -> usize {
-    let seed = key[(segment_id % key.len() as u64) as usize];
-    if seed == 0 {
-        return 0;
+    /// RC4 PRGA — derive one byte.
+    #[inline]
+    fn rc4_derive(n: usize, s: &mut Vec<u8>, j: &mut usize, k: &mut usize) -> u8 {
+        *j = (*j + 1) % n;
+        *k = (usize::from(s[*j]) + *k) % n;
+        s.swap(*j, *k);
+        let index = usize::from(s[*j]) + usize::from(s[*k]);
+        s[index % n]
     }
-    (((hash as f64 / ((segment_id + 1) as f64 * seed as f64) * 100.0) as u64) % key.len() as u64)
-        as usize
+
+    /// Encrypt/decrypt the first segment (offset < 0x80).
+    fn encode_first_segment(&self, offset: usize, buf: &mut [u8]) {
+        let n = self.rc4_key.len();
+        let mut offset = offset;
+        for byte in buf.iter_mut() {
+            let key1 = self.rc4_key[offset % n];
+            let key2 = self.calc_segment_key(offset, key1);
+            *byte ^= self.rc4_key[key2 % n];
+            offset += 1;
+        }
+    }
+
+    /// Encrypt/decrypt any segment at or beyond 0x80.
+    fn encode_other_segment(&self, offset: usize, buf: &mut [u8]) {
+        let seg_id = offset / OTHER_SEGMENT_SIZE;
+        let seg_id_small = seg_id & 0x1FF;
+
+        let mut discard_count = self.calc_segment_key(seg_id, self.rc4_key[seg_id_small]) & 0x1FF;
+        discard_count += offset % OTHER_SEGMENT_SIZE;
+
+        let n = self.rc4_key.len();
+        let mut s = self.s.clone();
+        let mut j = 0usize;
+        let mut k = 0usize;
+        for _ in 0..discard_count {
+            Self::rc4_derive(n, &mut s, &mut j, &mut k);
+        }
+
+        for byte in buf.iter_mut() {
+            *byte ^= Self::rc4_derive(n, &mut s, &mut j, &mut k);
+        }
+    }
+
+    fn decrypt(&self, offset: usize, buf: &mut [u8]) {
+        let mut offset = offset;
+        let mut len = buf.len();
+        let mut i = 0usize;
+
+        // First segment has a different algorithm.
+        if offset < FIRST_SEGMENT_SIZE {
+            let len_processed = std::cmp::min(len, FIRST_SEGMENT_SIZE - offset);
+            self.encode_first_segment(offset, &mut buf[i..i + len_processed]);
+            i += len_processed;
+            len -= len_processed;
+            offset += len_processed;
+        }
+
+        // Align to the segment boundary.
+        let to_align = offset % OTHER_SEGMENT_SIZE;
+        if to_align != 0 {
+            let len_processed = std::cmp::min(len, OTHER_SEGMENT_SIZE - to_align);
+            self.encode_other_segment(offset, &mut buf[i..i + len_processed]);
+            i += len_processed;
+            len -= len_processed;
+            offset += len_processed;
+        }
+
+        // Process full segments.
+        while len > OTHER_SEGMENT_SIZE {
+            self.encode_other_segment(offset, &mut buf[i..i + OTHER_SEGMENT_SIZE]);
+            i += OTHER_SEGMENT_SIZE;
+            len -= OTHER_SEGMENT_SIZE;
+            offset += OTHER_SEGMENT_SIZE;
+        }
+
+        // Remaining bytes.
+        if len > 0 {
+            self.encode_other_segment(offset, &mut buf[i..i + len]);
+        }
+    }
 }
 
 pub fn decrypt_file(
@@ -470,7 +560,7 @@ mod tests {
             qmc2_decrypt_in_place(&key, &mut chunked[start..end], start as u64).unwrap();
         }
         assert_eq!(one_pass, chunked);
-        assert_eq!(fnv1a64(&one_pass), 0x3581_72b7_549d_958d);
+        assert_eq!(fnv1a64(&one_pass), 0x2698_05be_c3cc_a2a8);
     }
 
     #[test]
@@ -491,6 +581,126 @@ mod tests {
     #[test]
     fn derives_key_from_python_implementation_vector() {
         let ekey = "MTIzNDU2NzhQWhkuzlyHosmotu2+kFP0";
+        assert_eq!(derive_qmc2_key_from_ekey(ekey).unwrap(), b"12345678abcdef");
+    }
+
+    #[test]
+    fn parse_ekey_derives_test_key() {
+        // Reference vector from qmc-decoder's test_parse_ekey.
+        let ekey = "VGhpcyBpcyBHFWEh4cjZ1Vi7rJ56XeoPlqGM1sxBGPg7mt89umKclFBr9iqfmFdS";
+        assert_eq!(
+            std::str::from_utf8(&derive_qmc2_key_from_ekey(ekey).unwrap()).unwrap(),
+            "This is a test key for test purpose :D"
+        );
+    }
+
+    #[test]
+    fn derive_tea_key_interleaves_simple_key_and_header() {
+        // Reference vector from qmc-decoder's test_derive_tea_key.
+        let ekey_header = [0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8];
+        assert_eq!(
+            derive_tea_key(&ekey_header),
+            [
+                0x69, 0xf1, 0x56, 0xf2, 0x46, 0xf3, 0x38, 0xf4, 0x2b, 0xf5, 0x20, 0xf6, 0x15, 0xf7,
+                0x0b, 0xf8,
+            ]
+        );
+    }
+
+    #[test]
+    fn simple_key_matches_reference() {
+        // Reference vector from qmc-decoder's test_simple_make_key.
+        assert_eq!(SIMPLE_KEY, [0x69, 0x56, 0x46, 0x38, 0x2b, 0x20, 0x15, 0x0b]);
+    }
+
+    #[test]
+    fn map_cipher_matches_reference_vector() {
+        // Reference vector from qmc-decoder's test_map_l (pins the 71214 constant).
+        let key: [u8; 16] = [
+            0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E,
+            0x4F, 0x50,
+        ];
+        let mut data = [0u8; 16];
+        Qmc2MapCrypto::new(&key).decrypt(0, &mut data);
+        assert_eq!(
+            data,
+            [
+                0x3F, 0x8A, 0xC1, 0x49, 0x3F, 0x49, 0xC1, 0x8A, 0x3F, 0x8A, 0xC1, 0x49, 0x3F, 0x49,
+                0xC1, 0x8A
+            ]
+        );
+    }
+
+    #[test]
+    fn map_cipher_matches_reference_vector_at_boundary() {
+        // Reference vector from qmc-decoder's test_map_l_boundary.
+        let key: [u8; 16] = [
+            0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E,
+            0x4F, 0x50,
+        ];
+        let mut data = [0u8; 16];
+        Qmc2MapCrypto::new(&key).decrypt(0x7FFF - 8, &mut data);
+        assert_eq!(
+            data,
+            [
+                0x8A, 0x3F, 0x8A, 0xC1, 0x49, 0x3F, 0x49, 0xC1, 0x8A, 0x8A, 0xC1, 0x49, 0x3F, 0x49,
+                0xC1, 0x8A
+            ]
+        );
+    }
+
+    #[test]
+    fn rc4_hash_base_matches_reference() {
+        // Reference vectors from qmc-decoder's test_rc4_hash_base.
+        assert_eq!(Qmc2Rc4Crypto::calc_hash_base(&[1u8, 99]), 1);
+        assert_eq!(Qmc2Rc4Crypto::calc_hash_base(&[0xff; 16]), 0xfc05fc01);
+    }
+
+    #[test]
+    fn rc4_first_segment_matches_reference() {
+        // Reference vector from qmc-decoder's test_rc4_first_segment.
+        let mut rc4_key = [0u8; 255];
+        for (i, p) in rc4_key.iter_mut().enumerate() {
+            *p = i as u8;
+        }
+        let mut data = [0u8; 16];
+        Qmc2Rc4Crypto::new(&rc4_key).decrypt(0, &mut data);
+        assert_eq!(data, [0, 50, 16, 8, 5, 3, 2, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn tc_tea_decrypts_reference_vector() {
+        // Known-good vector from the tc_tea crate.
+        const GOOD_ENCRYPTED_DATA: [u8; 24] = [
+            0x91, 0x09, 0x51, 0x62, 0xe3, 0xf5, 0xb6, 0xdc, 0x6b, 0x41, 0x4b, 0x50, 0xd1, 0xa5,
+            0xb8, 0x4e, 0xc5, 0x0d, 0x0c, 0x1b, 0x11, 0x96, 0xfd, 0x3c,
+        ];
+        const KEY: [u8; 16] = *b"12345678ABCDEFGH";
+        assert_eq!(
+            decrypt_tencent_tea(&GOOD_ENCRYPTED_DATA, &KEY).unwrap(),
+            vec![1u8, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
+
+    #[test]
+    fn empty_body_ekey_uses_header_as_key() {
+        let ekey = base64::engine::general_purpose::STANDARD.encode(b"ABCDEFGH");
+        assert_eq!(derive_qmc2_key_from_ekey(&ekey).unwrap(), b"ABCDEFGH");
+    }
+
+    #[test]
+    fn short_body_ekey_falls_back_to_raw_key() {
+        // 8-byte header + 9-byte body: the body is too short for TEA, so the
+        // whole decoded blob is used as the raw key (API-issued ekey).
+        let mut blob = b"HEADER00".to_vec();
+        blob.extend_from_slice(b"123456789");
+        let ekey = base64::engine::general_purpose::STANDARD.encode(&blob);
+        assert_eq!(derive_qmc2_key_from_ekey(&ekey).unwrap(), blob);
+    }
+
+    #[test]
+    fn null_bytes_in_ekey_are_stripped() {
+        let ekey = "MTIzNDU2NzhQWhkuzlyHosmotu2+kFP0\u{0}\u{0}";
         assert_eq!(derive_qmc2_key_from_ekey(ekey).unwrap(), b"12345678abcdef");
     }
 
