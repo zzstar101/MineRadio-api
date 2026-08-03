@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use reqwest::{
@@ -11,7 +11,9 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::providers::qq::model::{QqLoginStatusResp, QqSongUrlResp, QqVipIconResp};
+use crate::providers::qq::model::{
+    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqSongUrlResp, QqVipIconResp,
+};
 use crate::utils::cryptors::qq::{x4, x5, x9, xj};
 use crate::{
     providers::{
@@ -33,6 +35,12 @@ pub struct QqClient {
     http: Client,
     uin: Arc<RwLock<Option<String>>>,
     euin: Arc<RwLock<Option<String>>>,
+    cdn_cache: Arc<RwLock<Option<QqCdnCache>>>,
+}
+
+struct QqCdnCache {
+    cdn: String,
+    expires_at: Instant,
 }
 
 impl QqClient {
@@ -41,6 +49,7 @@ impl QqClient {
             http: Client::new(),
             uin: Arc::new(RwLock::new(None)),
             euin: Arc::new(RwLock::new(None)),
+            cdn_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -270,6 +279,7 @@ impl QqClient {
         &self,
         song_mid: &str,
         filenames: String,
+        encrypted: bool,
     ) -> ProviderResult<QqSongUrlResp> {
         let cookie = self.current_cookie().await;
         let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
@@ -278,8 +288,8 @@ impl QqClient {
         self.post_json_with_sign(
             json!({
                 "req_0": {
-                    "module": "music.vkey.GetVkey",
-                    "method": "UrlGetVkey",
+                    "module": if encrypted { "music.vkey.GetEVkey" } else { "music.vkey.GetVkey" },
+                    "method": if encrypted { "CgiGetEVkey" } else { "UrlGetVkey" },
                     "param": {
                         "guid": x5(),
                         "uin": uin,
@@ -306,6 +316,94 @@ impl QqClient {
             true,
         )
         .await
+    }
+
+    pub(super) async fn cdn(&self) -> ProviderResult<String> {
+        if let Some(cache) = self.cdn_cache.read().await.as_ref()
+            && cache.expires_at > Instant::now()
+        {
+            return Ok(cache.cdn.clone());
+        }
+
+        let mut cache = self.cdn_cache.write().await;
+        if let Some(cache) = cache.as_ref()
+            && cache.expires_at > Instant::now()
+        {
+            return Ok(cache.cdn.clone());
+        }
+
+        let dispatch = self.cdn_dispatch().await?;
+        let cdn = self
+            .fastest_cdn(&dispatch)
+            .await
+            .ok_or_else(|| ProviderError {
+                code: ProviderErrorCode::NoUrl,
+                provider: ProviderId::Qq,
+                message: "qq cdn speed test failed".to_owned(),
+                retryable: true,
+                action: None,
+                raw_message: None,
+            })?;
+        *cache = Some(QqCdnCache {
+            cdn: cdn.clone(),
+            expires_at: Instant::now() + Duration::from_secs(60),
+        });
+        Ok(cdn)
+    }
+
+    async fn cdn_dispatch(&self) -> ProviderResult<QqCdnDispatch> {
+        let cookie = self.current_cookie().await;
+        let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
+        let response: QqCdnTestResp = self
+            .post_json_with_sign(
+                json!({
+                    "modulecdn": {
+                        "module": "music.audioCdnDispatch.cdnDispatch",
+                        "method": "GetCdnDispatch",
+                        "param": {
+                            "ctx": 1,
+                            "guid": x5(),
+                            "referer": "y.qq.com",
+                            "scene": 0,
+                            "uin": uin,
+                        }
+                    }
+                }),
+                None,
+                cookie.as_deref(),
+                "cdn_dispatch",
+                true,
+            )
+            .await?;
+        response.standardize().ok_or_else(|| ProviderError {
+            code: ProviderErrorCode::NoUrl,
+            provider: ProviderId::Qq,
+            message: "qq cdn dispatch returned no usable SIP".to_owned(),
+            retryable: true,
+            action: None,
+            raw_message: None,
+        })
+    }
+
+    async fn fastest_cdn(&self, dispatch: &QqCdnDispatch) -> Option<String> {
+        let mut fastest = None;
+        for sip in &dispatch.sips {
+            let test_url = format!("{}{}", sip, dispatch.test_file);
+            let started = Instant::now();
+            let result = tokio::time::timeout(Duration::from_secs(5), async {
+                let response = self.http.get(test_url).send().await.ok()?;
+                response.status().is_success().then_some(())?;
+                response.bytes().await.ok().map(|_| ())
+            })
+            .await;
+            if matches!(result, Ok(Some(()))) {
+                let elapsed = started.elapsed();
+                if fastest.as_ref().is_none_or(|(best, _)| elapsed < *best) {
+                    fastest = Some((elapsed, sip.clone()));
+                }
+            }
+        }
+        fastest.map(|(_, sip)| sip)
     }
 
     pub(super) async fn lyric(&self, song_mid: &str) -> ProviderResult<QqLyricResp> {
@@ -683,6 +781,7 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
+        println!("{}", String::from_utf8_lossy(&raw).into_owned());
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,

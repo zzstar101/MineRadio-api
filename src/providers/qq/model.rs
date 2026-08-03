@@ -837,6 +837,104 @@ fn vip_badge_icon(value: &str) -> Option<VipBadgeIcon> {
     })
 }
 
+#[derive(Deserialize)]
+pub(super) struct QqSongUrlResp {
+    req_0: QqSongUrlReq,
+}
+
+impl QqSongUrlResp {
+    pub(super) fn standardize(self, cdn: &str, en: bool) -> Option<SongUrlResult> {
+        let data = self.req_0.data;
+        if !data.msg.contains("fnameHitCache_200") {
+            return None;
+        }
+        let (url, ekey) = data
+            .midurlinfo
+            .into_iter()
+            .find(|_a| true)
+            .map(|i| (i.purl, i.ekey))?;
+        if url.trim().is_empty() {
+            return None;
+        }
+        let mut url = format!(
+            "{}/{}",
+            cdn.trim_end_matches('/'),
+            url.trim_start_matches('/')
+        );
+        if !ekey.trim().is_empty() && en {
+            url = url + "|||" + &ekey;
+        }
+
+        Some(SongUrlResult {
+            url: url,
+            proxied: en,
+            provider: Some(ProviderId::Qq),
+            trial: Some(false),
+            expires_at: None,
+            ..Default::default()
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlReq {
+    data: QqSongUrlData,
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlData {
+    msg: String,
+    midurlinfo: Vec<QqSongUrlInfo>,
+}
+
+#[derive(Deserialize)]
+struct QqSongUrlInfo {
+    purl: String,
+    ekey: String,
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqCdnTestResp {
+    code: i64,
+    modulecdn: Modulecdn,
+}
+
+pub(super) struct QqCdnDispatch {
+    pub(super) sips: Vec<String>,
+    pub(super) test_file: String,
+}
+
+impl QqCdnTestResp {
+    pub(super) fn standardize(self) -> Option<QqCdnDispatch> {
+        let data = self.modulecdn.data;
+        if self.code != 0 || data.retcode != 0 {
+            return None;
+        }
+        let sips = data
+            .sip
+            .into_iter()
+            .map(|sip| format!("{}/", sip.trim_end_matches('/')))
+            .filter(|sip| !sip.trim().is_empty())
+            .collect::<Vec<_>>();
+        (!sips.is_empty()).then_some(QqCdnDispatch {
+            sips,
+            test_file: data.testfilewifi,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct Modulecdn {
+    data: CdnData,
+}
+
+#[derive(Deserialize)]
+struct CdnData {
+    retcode: i64,
+    sip: Vec<String>,
+    testfilewifi: String,
+}
+
 //Reusable Struct
 #[derive(Debug, Deserialize)]
 struct File {
@@ -899,7 +997,7 @@ fn qq_quality_label(quality: &str) -> &'static str {
         "master" => "臻品母带",
         "flac" => "SQ无损",
         "320k" => "HQ高品质",
-        "nac" => "NAC",
+        "nac" => "NAC品质",
         "128k" => "标准品质",
         _ => "QQ",
     }
@@ -994,54 +1092,4 @@ mod tests {
 
         assert!(response.succeeded());
     }
-}
-
-#[derive(Deserialize)]
-pub(super) struct QqSongUrlResp {
-    req_0: QqSongUrlReq,
-}
-
-impl QqSongUrlResp {
-    pub(super) fn standardize(self) -> Option<SongUrlResult> {
-        let data = self.req_0.data;
-        let url = data
-            .midurlinfo
-            .into_iter()
-            .find(|_a| true)
-            .map(|i| i.purl)?;
-        if url.trim().is_empty() {
-            return None;
-        }
-        let url = data
-            .sip
-            .into_iter()
-            .find(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "https://ws.stream.qqmusic.qq.com/".to_owned())
-            + &url;
-
-        Some(SongUrlResult {
-            url: url,
-            proxied: false,
-            provider: Some(ProviderId::Qq),
-            trial: Some(false),
-            expires_at: None,
-            ..Default::default()
-        })
-    }
-}
-
-#[derive(Deserialize)]
-struct QqSongUrlReq {
-    data: QqSongUrlData,
-}
-
-#[derive(Deserialize)]
-struct QqSongUrlData {
-    sip: Vec<String>,
-    midurlinfo: Vec<QqSongUrlInfo>,
-}
-
-#[derive(Deserialize)]
-struct QqSongUrlInfo {
-    purl: String,
 }

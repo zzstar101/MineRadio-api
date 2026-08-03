@@ -168,25 +168,38 @@ impl ProviderAdapter for QqAdapter {
             .and_then(|o| o.quality)
             .unwrap_or_else(|| "128k".to_owned());
         let media_mid = track.id.clone();
-        let filename = qq_filename(qq_quality_candidates(false), &requested, &media_mid).unwrap();
-        if let Some(r) = self
-            .client
-            .song_url(&track.source_id, filename)
-            .await?
-            .standardize()
-        {
-            Ok(r)
-        } else {
-            self.client.ensure_login().await?;
-            Err(ProviderError {
-                code: ProviderErrorCode::NoUrl,
-                provider: ProviderId::Qq,
-                message: format!("qq did not return a playable URL for {requested}"),
-                retryable: false,
-                action: None,
-                raw_message: None,
-            })
+        let cdn = self.client.cdn().await?;
+        if let Some(filename) = qq_filename(qq_quality_candidates(false), &requested, &media_mid) {
+            if let Some(r) = self
+                .client
+                .song_url(&track.source_id, filename, false)
+                .await?
+                .standardize(&cdn, false)
+            {
+                return Ok(r);
+            }
         }
+
+        if let Some(filename) = qq_filename(qq_quality_candidates(true), &requested, &media_mid) {
+            if let Some(r) = self
+                .client
+                .song_url(&track.source_id, filename, true)
+                .await?
+                .standardize(&cdn, true)
+            {
+                return Ok(r);
+            }
+        }
+
+        self.client.ensure_login().await?;
+        Err(ProviderError {
+            code: ProviderErrorCode::NoUrl,
+            provider: ProviderId::Qq,
+            message: format!("qq did not return a playable URL for {requested}"),
+            retryable: false,
+            action: None,
+            raw_message: None,
+        })
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
