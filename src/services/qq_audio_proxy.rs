@@ -19,7 +19,13 @@ const DEFAULT_MAX_CACHE_ENTRIES: usize = 12;
 pub struct QqAudioProxyRequest {
     pub target: String,
     pub request: Request<Body>,
+    /// Explicit EKey extracted from the target (e.g. `url|||ekey`).
+    pub ekey: Option<String>,
+    /// QQ Music cookie string (e.g. from auth_session). Sent as `Cookie` header to upstream.
+    pub cookie: Option<String>,
 }
+
+const EKEY_SEPARATOR: &str = "|||";
 
 #[derive(Clone)]
 pub struct QqAudioProxyDeps {
@@ -27,8 +33,11 @@ pub struct QqAudioProxyDeps {
     pub max_cache_entries: usize,
 }
 
-pub type QqAudioFetch =
-    Arc<dyn Fn(String) -> BoxFuture<'static, anyhow::Result<QqAudioFetchResponse>> + Send + Sync>;
+pub type QqAudioFetch = Arc<
+    dyn Fn(String, Option<String>) -> BoxFuture<'static, anyhow::Result<QqAudioFetchResponse>>
+        + Send
+        + Sync,
+>;
 
 pub struct QqAudioFetchResponse {
     pub status: StatusCode,
@@ -36,14 +45,24 @@ pub struct QqAudioFetchResponse {
     pub body: Vec<u8>,
 }
 
+const QQ_AUDIO_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.47.134 Safari/537.36 QBCore/3.53.47.400 QQBrowser/9.0.2524.400 pcqqmusic/22.30.3563.0626 SkinId/10001|00cc65|0|1|||1fd4af";
+const QQ_AUDIO_REFERER: &str = "https://y.qq.com/";
+
 impl Default for QqAudioProxyDeps {
     fn default() -> Self {
         let client = reqwest::Client::new();
         Self {
-            fetch: Arc::new(move |target| {
+            fetch: Arc::new(move |target, cookie| {
                 let client = client.clone();
                 async move {
-                    let upstream = client.get(target).send().await?;
+                    let mut req = client
+                        .get(target)
+                        .header("user-agent", QQ_AUDIO_USER_AGENT)
+                        .header("referer", QQ_AUDIO_REFERER);
+                    if let Some(ref ck) = cookie {
+                        req = req.header("cookie", ck.as_str());
+                    }
+                    let upstream = req.send().await?;
                     let status = StatusCode::from_u16(upstream.status().as_u16())?;
                     let headers = upstream.headers().clone();
                     let body = upstream.bytes().await?.to_vec();
@@ -106,13 +125,23 @@ async fn proxy_qq_audio(
     deps: &QqAudioProxyDeps,
     cache: &Arc<Mutex<QqAudioCache>>,
 ) -> Response {
-    let parsed = match parse_target_url(&input.target) {
+    // Parse "url|||ekey" format from the target field.
+    let (url_part, ekey_from_target) = split_target_ekey(&input.target);
+    let parsed = match parse_target_url(url_part) {
         Ok(url) => url,
         Err(message) => return bad_request(message),
     };
 
+    // input.ekey takes priority over the one spliced in the target.
+    let ekey = input.ekey.filter(|v| !v.trim().is_empty()).or_else(|| {
+        ekey_from_target
+            .filter(|v| !v.trim().is_empty())
+            .map(str::to_owned)
+    });
+
     let target = parsed.as_str();
-    match get_or_create_cached_audio(cache, deps, target).await {
+    let cookie = input.cookie.as_deref();
+    match get_or_create_cached_audio(cache, deps, target, ekey.as_deref(), cookie).await {
         Ok(cached) => {
             let range = parse_range(
                 input
@@ -124,21 +153,37 @@ async fn proxy_qq_audio(
             );
             response_for_cached_audio(&cached, range)
         }
-        Err(err) => upstream_failure(err.to_string()),
+        Err(err) => qq_proxy_error_response(err),
     }
+}
+
+/// Split `raw` on `|||`. Returns `(url_part, optional_ekey)`.
+fn split_target_ekey(raw: &str) -> (&str, Option<&str>) {
+    let mut parts = raw.splitn(2, EKEY_SEPARATOR);
+    let url_part = parts.next().unwrap_or("");
+    let ekey = parts
+        .next()
+        .and_then(|v| if v.is_empty() { None } else { Some(v) });
+    (url_part, ekey)
 }
 
 async fn get_or_create_cached_audio(
     cache: &Arc<Mutex<QqAudioCache>>,
     deps: &QqAudioProxyDeps,
     target: &str,
+    ekey: Option<&str>,
+    cookie: Option<&str>,
 ) -> anyhow::Result<CachedQqAudio> {
-    let cache_key = target.to_owned();
+    // Include EKey in cache key so different keys for the same URL don't collide.
+    let cache_key = match ekey {
+        Some(ek) => format!("{target}\n{ek}"),
+        None => target.to_owned(),
+    };
     if let Some(existing) = cache.lock().await.get_refresh(&cache_key) {
         return Ok(existing);
     }
 
-    let upstream = (deps.fetch)(target.to_owned()).await?;
+    let upstream = (deps.fetch)(target.to_owned(), cookie.map(str::to_owned)).await?;
     if !upstream.status.is_success() {
         anyhow::bail!("qq audio request returned {}", upstream.status.as_u16());
     }
@@ -149,7 +194,17 @@ async fn get_or_create_cached_audio(
         .get("content-type")
         .and_then(|v| v.to_str().ok());
 
-    let decrypted = decrypt_qq_audio_data(encrypted_body, target, upstream_content_type, None)?;
+    let decrypted = decrypt_qq_audio_data(encrypted_body, target, upstream_content_type, ekey)
+        .map_err(|err| {
+            // Upgrade the "no embedded EKey" case to a structured error so the
+            // router can surface it as a ProviderError.
+            let msg = err.to_string();
+            if msg.contains("has no embedded EKey") || msg.contains("pass it explicitly") {
+                anyhow::anyhow!(QqAudioProxyError::EKeyRequired(msg))
+            } else {
+                err
+            }
+        })?;
 
     let cached = CachedQqAudio {
         bytes: decrypted.data,
@@ -164,6 +219,24 @@ async fn get_or_create_cached_audio(
     }
     Ok(cached)
 }
+
+// ── Error types ───────────────────────────────────────────────────────────
+
+/// Structured error for QQ audio proxy failures that maps to ProviderError.
+#[derive(Debug)]
+enum QqAudioProxyError {
+    EKeyRequired(String),
+}
+
+impl std::fmt::Display for QqAudioProxyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QqAudioProxyError::EKeyRequired(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for QqAudioProxyError {}
 
 // ── Cache ───────────────────────────────────────────────────────────────
 
@@ -256,7 +329,7 @@ fn decrypt_qq_audio_data(
     })
 }
 
-// ── In-memory tail parsing (adapted from audio::parse_encrypted_tail) ───
+// ── In-memory tail parsing ───────────────────────────────────────────────
 
 const MUSICEX_MAGIC: &[u8; 8] = b"musicex\0";
 const QTAG_MAGIC: &[u8; 4] = b"QTag";
@@ -468,6 +541,19 @@ fn build_response(status: StatusCode, headers: HeaderMap, body: Vec<u8>) -> Resp
             response
         })
         .unwrap_or_else(|_| upstream_failure("qq audio proxy failed"))
+}
+
+/// Convert proxy errors to HTTP responses. Maps `EKeyRequired` to a
+/// ProviderError-style response and everything else to a generic BAD_GATEWAY.
+fn qq_proxy_error_response(err: anyhow::Error) -> Response {
+    if let Some(qq_err) = err.downcast_ref::<QqAudioProxyError>() {
+        match qq_err {
+            QqAudioProxyError::EKeyRequired(msg) => {
+                return fail(StatusCode::BAD_REQUEST, "EKEY_REQUIRED", msg);
+            }
+        }
+    }
+    upstream_failure(err.to_string())
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────
@@ -709,7 +795,7 @@ mod tests {
         let encrypted_payload_for_dep = encrypted_payload.clone();
 
         let service = create_qq_audio_proxy(QqAudioProxyDeps {
-            fetch: Arc::new(move |target| {
+            fetch: Arc::new(move |target, _cookie| {
                 let fetch_calls = Arc::clone(&fetch_calls_for_dep);
                 let encrypted_payload = encrypted_payload_for_dep.clone();
                 async move {
@@ -733,6 +819,8 @@ mod tests {
         let target = "https://media.example.test/cache-song.mgg";
         let first = service
             .resolve(QqAudioProxyRequest {
+                ekey: None,
+                cookie: None,
                 target: target.to_owned(),
                 request: request(),
             })
@@ -745,6 +833,8 @@ mod tests {
 
         let second = service
             .resolve(QqAudioProxyRequest {
+                ekey: None,
+                cookie: None,
                 target: target.to_owned(),
                 request: request(),
             })
@@ -769,7 +859,7 @@ mod tests {
         let encrypted_payload_for_dep = encrypted_payload.clone();
 
         let service = create_qq_audio_proxy(QqAudioProxyDeps {
-            fetch: Arc::new(move |target| {
+            fetch: Arc::new(move |target, _cookie| {
                 let fetch_calls = Arc::clone(&fetch_calls_for_dep);
                 let encrypted_payload = encrypted_payload_for_dep.clone();
                 async move {
@@ -795,6 +885,8 @@ mod tests {
         // Warm cache
         let warmup = service
             .resolve(QqAudioProxyRequest {
+                ekey: None,
+                cookie: None,
                 target: target.to_owned(),
                 request: request(),
             })
@@ -804,6 +896,8 @@ mod tests {
         // Range request
         let ranged = service
             .resolve(QqAudioProxyRequest {
+                ekey: None,
+                cookie: None,
                 target: target.to_owned(),
                 request: range_request("bytes=4-9"),
             })
@@ -827,7 +921,7 @@ mod tests {
         let ekey = "MTIzNDU2NzhQWhkuzlyHosmotu2+kFP0";
 
         let service = create_qq_audio_proxy(QqAudioProxyDeps {
-            fetch: Arc::new(move |target| {
+            fetch: Arc::new(move |target, _cookie| {
                 let fetch_calls = Arc::clone(&fetch_calls_for_dep);
                 let encrypted = build_qtag_encrypted_payload(original, ekey, "001evict");
                 async move {
@@ -854,6 +948,8 @@ mod tests {
         assert_eq!(
             service
                 .resolve(QqAudioProxyRequest {
+                    ekey: None,
+                    cookie: None,
                     target: first_target.to_owned(),
                     request: request(),
                 })
@@ -864,6 +960,8 @@ mod tests {
         assert_eq!(
             service
                 .resolve(QqAudioProxyRequest {
+                    ekey: None,
+                    cookie: None,
                     target: second_target.to_owned(),
                     request: request(),
                 })
@@ -875,6 +973,8 @@ mod tests {
         assert_eq!(
             service
                 .resolve(QqAudioProxyRequest {
+                    ekey: None,
+                    cookie: None,
                     target: first_target.to_owned(),
                     request: request(),
                 })
@@ -898,6 +998,8 @@ mod tests {
         let service = create_qq_audio_proxy(QqAudioProxyDeps::default());
         let response = service
             .resolve(QqAudioProxyRequest {
+                ekey: None,
+                cookie: None,
                 target: "".to_owned(),
                 request: request(),
             })

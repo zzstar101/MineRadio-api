@@ -26,6 +26,7 @@ use crate::{
         },
         netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
         podcast::{PodcastService, create_podcast_service_with_client},
+        qq_audio_proxy::{QqAudioProxy, QqAudioProxyDeps, create_qq_audio_proxy},
         qq_qr_login_mqtt::{
             QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
         },
@@ -50,6 +51,7 @@ pub struct AppServices {
     pub qq_qr_login: Arc<QqQrLoginService>,
     pub qqmusic_qr_login: Arc<QqMusicQrLoginService>,
     pub wechat_qr_login: Arc<WechatQrLoginService>,
+    pub qq_audio_proxy: QqAudioProxy,
     pub soda_audio_proxy: SodaAudioProxy,
     pub soda_qr_login: Arc<SodaQrLoginService>,
     pub spotify_audio_proxy: SpotifyAudioProxy,
@@ -105,6 +107,7 @@ impl AppState {
                     client: qq_qr_client,
                     timeout_ms: 10_000,
                 })),
+                qq_audio_proxy: create_qq_audio_proxy(QqAudioProxyDeps::default()),
                 soda_audio_proxy: create_soda_audio_proxy(SodaAudioProxyDeps::default()),
                 soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps {
                     client: shared_http_client,

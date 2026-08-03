@@ -55,6 +55,10 @@ pub fn build(state: AppState) -> Router {
             "/providers/spotify/audio-proxy",
             get(spotify_audio_proxy).options(preflight),
         )
+        .route(
+            "/providers/qq/audio-proxy",
+            get(qq_audio_proxy_handler).options(preflight),
+        )
         .route("/weather/radio", get(weather_radio).options(preflight))
         .route("/discover/home", get(discover_home).options(preflight))
         .route("/podcast/search", get(podcast_search).options(preflight))
@@ -352,6 +356,25 @@ async fn spotify_audio_proxy(
         .resolve(services::spotify_audio_proxy::SpotifyAudioProxyRequest {
             track_id: query.id.unwrap_or_default(),
             quality: query.quality,
+        })
+        .await
+}
+
+async fn qq_audio_proxy_handler(
+    State(state): State<AppState>,
+    Query(query): Query<ProxyQuery>,
+    request: Request,
+) -> Response {
+    let target = proxy_target(query);
+    let cookie = services::auth_session::get_provider_cookie(&ProviderId::Qq).await;
+    state
+        .services
+        .qq_audio_proxy
+        .resolve(services::qq_audio_proxy::QqAudioProxyRequest {
+            target,
+            request: request.map(Body::new),
+            ekey: None,
+            cookie,
         })
         .await
 }
