@@ -7,6 +7,7 @@ pub mod image_proxy;
 pub mod kugou_qr_login;
 pub mod netease_qr_login;
 pub mod podcast;
+pub mod qq_audio_proxy;
 mod qq_mqtt_login;
 pub(crate) mod qq_qr_login_common;
 pub mod qq_qr_login_mqtt;
