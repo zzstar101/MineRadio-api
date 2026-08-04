@@ -3,7 +3,7 @@ mod error;
 mod provider;
 mod qr_login;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use reqwest::Client;
 use serde_json::json;
@@ -15,7 +15,6 @@ use crate::{
         kugou::adapter::KugouAdapter,
         netease::{adapter::NeteaseAdapter, client::NeteaseClient},
         qq::adapter::QqAdapter,
-        registry::ProviderRegistry,
         soda::adapter::SodaAdapter,
         spotify::{adapter::SpotifyAdapter, client::SpotifyClient},
     },
@@ -53,8 +52,12 @@ pub use crate::types::{
 
 pub(crate) struct ApiInner {
     config: LibraryConfig,
-    providers: Arc<ProviderRegistry>,
     cross_source: cross_source::CrossSourceApi,
+    qq: Arc<dyn ProviderAdapter>,
+    netease: Arc<dyn ProviderAdapter>,
+    soda: Arc<dyn ProviderAdapter>,
+    kugou: Arc<dyn ProviderAdapter>,
+    spotify: Arc<dyn ProviderAdapter>,
     discover_requester: Arc<dyn DiscoverRequester>,
     podcast: PodcastService,
     weather_radio: WeatherRadioService,
@@ -74,21 +77,26 @@ impl ApiInner {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| Client::new());
-        let mut registry = ProviderRegistry::default();
-        registry.register(Arc::new(NeteaseAdapter::new(netease_client.clone())));
-        registry.register(QqAdapter::shared());
-        registry.register(SodaAdapter::shared());
-        registry.register(KugouAdapter::shared());
+        let netease: Arc<dyn ProviderAdapter> = Arc::new(NeteaseAdapter::new(netease_client.clone()));
+        let qq: Arc<dyn ProviderAdapter> = QqAdapter::shared();
+        let soda: Arc<dyn ProviderAdapter> = SodaAdapter::shared();
+        let kugou: Arc<dyn ProviderAdapter> = KugouAdapter::shared();
         let spotify_client = Arc::new(SpotifyClient::new());
-        registry.register(Arc::new(SpotifyAdapter::new(spotify_client)));
-        let providers = Arc::new(registry);
+        let spotify: Arc<dyn ProviderAdapter> = Arc::new(SpotifyAdapter::new(spotify_client));
+        let provider_map = HashMap::from([
+            (ProviderId::Netease, netease.clone()),
+            (ProviderId::Qq, qq.clone()),
+            (ProviderId::Soda, soda.clone()),
+            (ProviderId::Kugou, kugou.clone()),
+            (ProviderId::Spotify, spotify.clone()),
+        ]);
 
         Self {
             config,
             cross_source: cross_source::CrossSourceApi::new(
                 cross_source_resolver::create_cross_source_resolver(
                     cross_source_resolver::CrossSourceResolverDeps {
-                        providers: Some(providers.all()),
+                        providers: Some(provider_map),
                         provider_order: None,
                     },
                 ),
@@ -96,6 +104,11 @@ impl ApiInner {
             discover_requester: netease_client.clone(),
             podcast: create_podcast_service_with_client(netease_client),
             weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),
+            qq,
+            netease,
+            soda,
+            kugou,
+            spotify,
             qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps {
                 client: qq_qr_client.clone(),
                 timeout_ms: 15_000,
@@ -118,7 +131,6 @@ impl ApiInner {
             kugou_qr_login: Arc::new(create_kugou_qr_login_service(KugouQrLoginDeps {
                 api: Box::new(KugouQrHttpApi::with_client(shared_http_client.clone())),
             })),
-            providers,
         }
     }
 }
@@ -142,11 +154,6 @@ impl Api {
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
         let inner = Arc::new(ApiInner::new(config));
-        let qq = provider_adapter(&inner.providers, ProviderId::Qq)?;
-        let netease = provider_adapter(&inner.providers, ProviderId::Netease)?;
-        let soda = provider_adapter(&inner.providers, ProviderId::Soda)?;
-        let kugou = provider_adapter(&inner.providers, ProviderId::Kugou)?;
-        let spotify = provider_adapter(&inner.providers, ProviderId::Spotify)?;
         let qq_qr_login = QrLoginApi::new(inner.qq_qr_login.clone());
         let netease_qr_login = QrLoginApi::new(inner.netease_qr_login.clone());
         let soda_qr_login = QrLoginApi::new(inner.soda_qr_login.clone());
@@ -163,13 +170,13 @@ impl Api {
 
         Ok(Self {
             qq: ProviderApi::new(
-                qq,
+                inner.qq.clone(),
                 vec![qq_qr_login, qqmusic_qr_login, wechat_qr_login],
             ),
-            netease: ProviderApi::new(netease, vec![netease_qr_login]),
-            soda: ProviderApi::new(soda, vec![soda_qr_login]),
-            kugou: ProviderApi::new(kugou, vec![kugou_qr_login]),
-            spotify: ProviderApi::new(spotify, Vec::new()),
+            netease: ProviderApi::new(inner.netease.clone(), vec![netease_qr_login]),
+            soda: ProviderApi::new(inner.soda.clone(), vec![soda_qr_login]),
+            kugou: ProviderApi::new(inner.kugou.clone(), vec![kugou_qr_login]),
+            spotify: ProviderApi::new(inner.spotify.clone(), Vec::new()),
             inner,
         })
     }
@@ -201,16 +208,4 @@ impl Api {
     pub fn app_version(&self) -> &str {
         &self.inner.config.app_version
     }
-}
-
-fn provider_adapter(
-    registry: &ProviderRegistry,
-    provider: ProviderId,
-) -> ApiResult<Arc<dyn ProviderAdapter>> {
-    registry.get(&provider).ok_or_else(|| {
-        ApiError::new(
-            ApiErrorCode::Internal,
-            format!("provider {provider} was not initialized"),
-        )
-    })
 }
