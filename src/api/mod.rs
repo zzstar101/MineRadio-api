@@ -2,15 +2,16 @@ mod cross_source;
 mod error;
 mod provider;
 mod qr_login;
+pub(crate) mod runtime;
 
 use std::sync::Arc;
 
 use crate::{
     config::LibraryConfig,
     providers::{ProviderAdapter, registry::ProviderRegistry},
-    server::AppState,
     services::{auth_session, cross_source_resolver, sidecar_log},
 };
+use runtime::AppState;
 use serde_json::json;
 
 pub use error::{ApiError, ApiErrorCode, ApiResult};
@@ -48,7 +49,7 @@ impl Api {
         sidecar_log::configure_library_logger(config.log_path.as_deref())
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
-        let state = AppState::new(config.into());
+        let state = AppState::new(config);
         let qq = provider_adapter(&state.providers, ProviderId::Qq)?;
         let netease = provider_adapter(&state.providers, ProviderId::Netease)?;
         let soda = provider_adapter(&state.providers, ProviderId::Soda)?;

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     providers::registry::ProviderStatusEntry,
-    server::AppState,
+    api::runtime::AppState,
     services::sidecar_log::{redact_log_value, sidecar_log_file},
 };
 

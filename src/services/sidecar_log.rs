@@ -8,7 +8,7 @@ use std::{
 use serde_json::{Map, Value};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use crate::config::Config;
+use crate::config::LibraryConfig;
 
 const DEFAULT_MAX_BYTES: u64 = 1024 * 1024;
 const REDACTED: &str = "[redacted]";
@@ -38,7 +38,7 @@ const SENSITIVE_VALUE_PATTERNS: [&str; 10] = [
 ];
 static SIDECAR_LOGGER: OnceLock<SidecarLogger> = OnceLock::new();
 
-pub fn init(config: &Config) {
+pub fn init(config: &LibraryConfig) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let fmt_layer = fmt::layer().with_target(true);
 

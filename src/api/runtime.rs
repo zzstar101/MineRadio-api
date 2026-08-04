@@ -1,13 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::Context;
 use reqwest::Client;
-use serde_json::json;
-use tokio::net::TcpListener;
-use tracing::info;
 
 use crate::{
-    config::Config,
+    config::LibraryConfig,
     providers::{
         kugou::adapter::KugouAdapter,
         netease::{adapter::NeteaseAdapter, client::NeteaseClient},
@@ -16,7 +12,6 @@ use crate::{
         soda::adapter::SodaAdapter,
         spotify::{adapter::SpotifyAdapter, client::SpotifyClient},
     },
-    router,
     services::{
         audio_proxy::{AudioProxy, AudioProxyDeps, create_audio_proxy},
         discover_home::DiscoverRequester,
@@ -32,7 +27,6 @@ use crate::{
         },
         qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
-        sidecar_log,
         soda_audio_proxy::{SodaAudioProxy, SodaAudioProxyDeps, create_soda_audio_proxy},
         soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
         spotify_audio_proxy::{SpotifyAudioProxy, create_spotify_audio_proxy},
@@ -41,32 +35,32 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct AppServices {
-    pub audio_proxy: AudioProxy,
-    pub discover_requester: Arc<dyn DiscoverRequester>,
-    pub image_proxy: ImageProxy,
-    pub kugou_qr_login: Arc<KugouQrLoginService>,
-    pub netease_qr_login: Arc<NeteaseQrLoginService>,
-    pub podcast: PodcastService,
-    pub qq_qr_login: Arc<QqQrLoginService>,
-    pub qqmusic_qr_login: Arc<QqMusicQrLoginService>,
-    pub wechat_qr_login: Arc<WechatQrLoginService>,
-    pub qq_audio_proxy: QqAudioProxy,
-    pub soda_audio_proxy: SodaAudioProxy,
-    pub soda_qr_login: Arc<SodaQrLoginService>,
-    pub spotify_audio_proxy: SpotifyAudioProxy,
-    pub weather_radio: WeatherRadioService,
+pub(crate) struct AppServices {
+    pub(crate) audio_proxy: AudioProxy,
+    pub(crate) discover_requester: Arc<dyn DiscoverRequester>,
+    pub(crate) image_proxy: ImageProxy,
+    pub(crate) kugou_qr_login: Arc<KugouQrLoginService>,
+    pub(crate) netease_qr_login: Arc<NeteaseQrLoginService>,
+    pub(crate) podcast: PodcastService,
+    pub(crate) qq_qr_login: Arc<QqQrLoginService>,
+    pub(crate) qqmusic_qr_login: Arc<QqMusicQrLoginService>,
+    pub(crate) wechat_qr_login: Arc<WechatQrLoginService>,
+    pub(crate) qq_audio_proxy: QqAudioProxy,
+    pub(crate) soda_audio_proxy: SodaAudioProxy,
+    pub(crate) soda_qr_login: Arc<SodaQrLoginService>,
+    pub(crate) spotify_audio_proxy: SpotifyAudioProxy,
+    pub(crate) weather_radio: WeatherRadioService,
 }
 
 #[derive(Clone)]
-pub struct AppState {
-    pub config: Config,
-    pub providers: Arc<ProviderRegistry>,
-    pub services: AppServices,
+pub(crate) struct AppState {
+    pub(crate) config: LibraryConfig,
+    pub(crate) providers: Arc<ProviderRegistry>,
+    pub(crate) services: AppServices,
 }
 
 impl AppState {
-    pub fn new(config: Config) -> Self {
+    pub(crate) fn new(config: LibraryConfig) -> Self {
         let shared_http_client = Client::new();
         let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
         let qq_qr_client = Client::builder()
@@ -118,29 +112,4 @@ impl AppState {
             },
         }
     }
-}
-
-pub async fn serve(config: Config) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(config.bind_addr())
-        .await
-        .with_context(|| format!("failed to bind {}", config.bind_addr()))?;
-    let local_addr = listener.local_addr()?;
-    let state = AppState::new(config);
-    let app_version = state.config.app_version.clone();
-    let api_version = state.config.api_version.clone();
-    let schema_version = state.config.schema_version.clone();
-    let app = router::build(state);
-
-    info!(%local_addr, "MineRadio API sidecar listening");
-    sidecar_log::spawn_runtime_log(json!({
-        "event": "startup",
-        "localAddr": local_addr.to_string(),
-        "appVersion": app_version,
-        "apiVersion": api_version,
-        "schemaVersion": schema_version
-    }));
-
-    axum::serve(listener, app)
-        .await
-        .context("MineRadio API server stopped unexpectedly")
 }

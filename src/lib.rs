@@ -15,8 +15,6 @@ mod librespot_metadata;
 mod librespot_protocol;
 pub(crate) mod parsers;
 pub(crate) mod providers;
-pub(crate) mod router;
-pub(crate) mod server;
 pub(crate) mod services;
 mod types;
 pub(crate) mod utils;
