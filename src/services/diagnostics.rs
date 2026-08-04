@@ -4,8 +4,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    providers::registry::ProviderStatusEntry,
-    api::runtime::AppState,
+    config::LibraryConfig,
+    providers::registry::{ProviderRegistry, ProviderStatusEntry},
     services::sidecar_log::{redact_log_value, sidecar_log_file},
 };
 
@@ -30,13 +30,13 @@ pub struct DiagnosticsPayload {
 static RECENT_ERRORS: OnceLock<Mutex<Vec<Value>>> = OnceLock::new();
 const RECENT_ERRORS_MAX: usize = 20;
 
-pub fn build_diagnostics(state: &AppState) -> DiagnosticsPayload {
-    let matrix = state.providers.build_capability_matrix();
+pub fn build_diagnostics(config: &LibraryConfig, providers: &ProviderRegistry) -> DiagnosticsPayload {
+    let matrix = providers.build_capability_matrix();
     DiagnosticsPayload {
         ok: true,
-        app_version: state.config.app_version.clone(),
-        api_version: state.config.api_version.clone(),
-        schema_version: state.config.schema_version.clone(),
+        app_version: config.app_version.clone(),
+        api_version: config.api_version.clone(),
+        schema_version: config.schema_version.clone(),
         providers: matrix.providers,
         recent_errors: recent_errors()
             .lock()
@@ -48,8 +48,8 @@ pub fn build_diagnostics(state: &AppState) -> DiagnosticsPayload {
     }
 }
 
-pub fn snapshot(state: &AppState) -> DiagnosticsPayload {
-    build_diagnostics(state)
+pub fn snapshot(config: &LibraryConfig, providers: &ProviderRegistry) -> DiagnosticsPayload {
+    build_diagnostics(config, providers)
 }
 
 pub fn push_recent_error(entry: Value) {
