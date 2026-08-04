@@ -27,6 +27,8 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let config = Config::from_env();
+    services::auth_session::configure(config.cookie_file.clone())
+        .map_err(anyhow::Error::msg)?;
     services::sidecar_log::init(&config);
 
     server::serve(config).await

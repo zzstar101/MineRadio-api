@@ -1,23 +1,27 @@
-use std::{collections::HashMap, env, fs, path::PathBuf, sync::OnceLock};
+use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::types::ProviderId;
 
-const SESSION_FILE_ENV: &str = "MINERADIO_SESSION_FILE";
-
 static AUTH_SESSION: OnceLock<AuthSession> = OnceLock::new();
 
 #[derive(Debug)]
 pub struct AuthSession {
     runtime: RwLock<HashMap<ProviderId, String>>,
+    cookie_file: Option<PathBuf>,
 }
 
 impl AuthSession {
     pub fn new() -> Self {
+        Self::with_cookie_file(None)
+    }
+
+    pub fn with_cookie_file(cookie_file: Option<PathBuf>) -> Self {
         Self {
             runtime: RwLock::new(HashMap::new()),
+            cookie_file,
         }
     }
 
@@ -27,8 +31,7 @@ impl AuthSession {
             .await
             .get(provider)
             .cloned()
-            .or_else(|| read_persisted_cookies().remove(provider))
-            .or_else(|| env_cookie(provider))
+            .or_else(|| self.read_persisted_cookies().remove(provider))
     }
 
     pub async fn set_runtime_provider_cookie(
@@ -44,13 +47,13 @@ impl AuthSession {
             .write()
             .await
             .insert(provider.clone(), normalized.clone());
-        set_persisted_provider_cookie(&provider, &normalized);
+        self.set_persisted_provider_cookie(&provider, &normalized);
         Ok(())
     }
 
     pub async fn clear_runtime_provider_cookie(&self, provider: &ProviderId) {
         self.runtime.write().await.remove(provider);
-        clear_persisted_provider_cookie(provider);
+        self.clear_persisted_provider_cookie(provider);
     }
 }
 
@@ -83,91 +86,81 @@ pub async fn get_provider_cookie(provider: &ProviderId) -> Option<String> {
     auth_session().get_provider_cookie(provider).await
 }
 
+pub fn configure(cookie_file: Option<PathBuf>) -> Result<(), &'static str> {
+    if let Some(existing) = AUTH_SESSION.get() {
+        return if existing.cookie_file == cookie_file {
+            Ok(())
+        } else {
+            Err("provider cookie storage has already been initialized with a different path")
+        };
+    }
+
+    let session = AuthSession::with_cookie_file(cookie_file);
+    AUTH_SESSION
+        .set(session)
+        .map_err(|_| "provider cookie storage has already been initialized")
+}
+
 fn auth_session() -> &'static AuthSession {
     AUTH_SESSION.get_or_init(AuthSession::new)
 }
 
-fn env_cookie(provider: &ProviderId) -> Option<String> {
-    let key = match provider {
-        ProviderId::Netease => "MINERADIO_NETEASE_COOKIE",
-        ProviderId::Qq => "MINERADIO_QQ_COOKIE",
-        ProviderId::Soda => "MINERADIO_SODA_COOKIE",
-        ProviderId::Kugou => "MINERADIO_KUGOU_COOKIE",
-        ProviderId::Spotify => "MINERADIO_SPOTIFY_TOKEN",
-        ProviderId::Unknown => return None,
-    };
-    env::var(key)
-        .ok()
-        .map(|cookie| cookie.trim().to_owned())
-        .filter(|cookie| !cookie.is_empty())
-}
+impl AuthSession {
+    fn read_persisted_cookies(&self) -> HashMap<ProviderId, String> {
+        let Some(file) = &self.cookie_file else {
+            return HashMap::new();
+        };
+        let Ok(raw) = fs::read_to_string(file) else {
+            return HashMap::new();
+        };
+        let Ok(parsed) = serde_json::from_str::<PersistedProviderSessions>(&raw) else {
+            return HashMap::new();
+        };
 
-fn session_file_path() -> Option<PathBuf> {
-    env::var_os(SESSION_FILE_ENV)
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .or_else(|| {
-            env::var_os("MINERADIO_APP_DATA_DIR")
-                .map(PathBuf::from)
-                .filter(|path| !path.as_os_str().is_empty())
-                .map(|path| path.join("provider-sessions.json"))
-        })
-}
-
-fn read_persisted_cookies() -> HashMap<ProviderId, String> {
-    let Some(file) = session_file_path() else {
-        return HashMap::new();
-    };
-    let Ok(raw) = fs::read_to_string(file) else {
-        return HashMap::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<PersistedProviderSessions>(&raw) else {
-        return HashMap::new();
-    };
-
-    parsed
-        .providers
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(provider, cookie)| {
-            let normalized = cookie.trim().to_owned();
-            if matches!(
-                provider.as_str(),
-                "netease" | "qq" | "soda" | "kugou" | "spotify"
-            ) && !normalized.is_empty()
-            {
-                Some((provider, normalized))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn write_persisted_cookies(cookies: HashMap<ProviderId, String>) {
-    let Some(file) = session_file_path() else {
-        return;
-    };
-    if let Some(parent) = file.parent() {
-        let _ = fs::create_dir_all(parent);
+        parsed
+            .providers
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(provider, cookie)| {
+                let normalized = cookie.trim().to_owned();
+                if matches!(
+                    provider.as_str(),
+                    "netease" | "qq" | "soda" | "kugou" | "spotify"
+                ) && !normalized.is_empty()
+                {
+                    Some((provider, normalized))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
-    let body = PersistedProviderSessions {
-        version: Some(1),
-        providers: Some(cookies),
-    };
-    if let Ok(json) = serde_json::to_string_pretty(&body) {
-        let _ = fs::write(file, json);
+
+    fn write_persisted_cookies(&self, cookies: HashMap<ProviderId, String>) {
+        let Some(file) = &self.cookie_file else {
+            return;
+        };
+        if let Some(parent) = file.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let body = PersistedProviderSessions {
+            version: Some(1),
+            providers: Some(cookies),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&body) {
+            let _ = fs::write(file, json);
+        }
     }
-}
 
-fn set_persisted_provider_cookie(provider: &ProviderId, cookie: &str) {
-    let mut cookies = read_persisted_cookies();
-    cookies.insert(*provider, cookie.to_owned());
-    write_persisted_cookies(cookies);
-}
+    fn set_persisted_provider_cookie(&self, provider: &ProviderId, cookie: &str) {
+        let mut cookies = self.read_persisted_cookies();
+        cookies.insert(*provider, cookie.to_owned());
+        self.write_persisted_cookies(cookies);
+    }
 
-fn clear_persisted_provider_cookie(provider: &ProviderId) {
-    let mut cookies = read_persisted_cookies();
-    cookies.remove(provider);
-    write_persisted_cookies(cookies);
+    fn clear_persisted_provider_cookie(&self, provider: &ProviderId) {
+        let mut cookies = self.read_persisted_cookies();
+        cookies.remove(provider);
+        self.write_persisted_cookies(cookies);
+    }
 }

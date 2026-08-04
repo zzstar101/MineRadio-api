@@ -1,5 +1,6 @@
 use std::{
-    env,
+    fs,
+    io,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -45,10 +46,9 @@ pub fn init(config: &Config) {
         .with(filter)
         .with(fmt_layer)
         .init();
-    let _ = SIDECAR_LOGGER.set(create_sidecar_logger(SidecarLoggerOptions {
-        file_path: config.log_file.clone(),
-        max_bytes: None,
-    }));
+    let _ = configure_library_logger(config.log_path.as_deref()).map_err(|error| {
+        tracing::warn!(%error, "failed to configure sidecar JSON logging");
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -72,21 +72,60 @@ impl SidecarLogger {
     }
 }
 
-pub fn sidecar_log_file() -> Option<String> {
-    env::var("MINERADIO_SIDECAR_LOG_FILE")
-        .ok()
-        .map(|raw| raw.trim().to_owned())
-        .filter(|raw| !raw.is_empty())
+pub fn configure_library_logger(log_path: Option<&Path>) -> io::Result<()> {
+    let logger = create_sidecar_logger(SidecarLoggerOptions {
+        file_path: log_path.map(PathBuf::from),
+        max_bytes: None,
+    })?;
+
+    if let Some(existing) = SIDECAR_LOGGER.get() {
+        if existing.file_path == logger.file_path {
+            return Ok(());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "MineRadio logging has already been initialized with a different path",
+        ));
+    }
+
+    let _ = SIDECAR_LOGGER.set(logger);
+    Ok(())
 }
 
-pub fn create_sidecar_logger(opts: SidecarLoggerOptions) -> SidecarLogger {
+pub fn create_sidecar_logger(opts: SidecarLoggerOptions) -> io::Result<SidecarLogger> {
     let file_path = opts
         .file_path
-        .or_else(|| sidecar_log_file().map(PathBuf::from));
-    SidecarLogger {
+        .map(|path| resolve_log_file_path(&path))
+        .transpose()?;
+    Ok(SidecarLogger {
         file_path,
         max_bytes: opts.max_bytes.unwrap_or(DEFAULT_MAX_BYTES).max(1),
+    })
+}
+
+pub fn sidecar_log_file() -> Option<String> {
+    global_logger()
+        .and_then(|logger| logger.file_path.as_ref())
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn resolve_log_file_path(path: &Path) -> io::Result<PathBuf> {
+    if path.is_dir() || (!path.exists() && path.extension().is_none()) {
+        fs::create_dir_all(path)?;
+        return Ok(path.join(format!("mineradio-{}.jsonl", timestamp_for_file_name())));
     }
+
+    Ok(path.to_path_buf())
+}
+
+fn timestamp_for_file_name() -> String {
+    let format = time::format_description::parse_borrowed::<3>(
+        "[year][month][day]-[hour][minute][second]",
+    )
+    .expect("valid log timestamp format");
+    time::OffsetDateTime::now_utc()
+        .format(&format)
+        .expect("time format should be supported")
 }
 
 pub fn global_logger() -> Option<&'static SidecarLogger> {

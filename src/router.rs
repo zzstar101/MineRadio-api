@@ -14,11 +14,10 @@ use crate::{
     providers::registry::{CapabilityMatrix, PROVIDER_IDS, build_capability_matrix},
     providers::{
         error::{ProviderError, ProviderErrorCode},
-        registry::ProviderRegistry,
     },
     server::AppState,
     services::{
-        self, cross_source_resolver, podcast,
+        self, podcast,
         qr_login::{QrLogin, QrLoginKind},
         sidecar_log,
         weather_radio::WeatherRadioParams,
@@ -77,8 +76,6 @@ pub fn build(state: AppState) -> Router {
             "/podcast/dj-beatmap",
             get(podcast_dj_beatmap).options(preflight),
         )
-        .route("/search", get(search).options(preflight))
-        .route("/song-url", post(song_url).options(preflight))
         .route(
             "/shared-playlist/import",
             post(shared_playlist_import).options(preflight),
@@ -530,43 +527,6 @@ async fn podcast_dj_beatmap(
             err.to_string(),
         ),
         Err(err) => internal_error(err.to_string()),
-    }
-}
-
-async fn search(State(state): State<AppState>, Query(query): Query<SearchQuery>) -> Response {
-    let keyword = search_keyword(&query);
-    if keyword.is_empty() {
-        return bad_request("keyword required");
-    }
-
-    let resolver = build_cross_source_resolver(&state.providers);
-    match resolver
-        .resolve_search(cross_source_resolver::ResolveSearchQuery {
-            keyword,
-            provider: query
-                .provider
-                .filter(|value| !value.trim().is_empty())
-                .and_then(|value| value.parse().ok()),
-            limit: query.limit.unwrap_or(20).max(1),
-        })
-        .await
-    {
-        Ok(tracks) => ok(tracks),
-        Err(err) => anyhow_error_response(err),
-    }
-}
-
-async fn song_url(
-    State(state): State<AppState>,
-    axum::Json(body): axum::Json<serde_json::Value>,
-) -> Response {
-    let Some((track, options)) = parse_song_url_body(body) else {
-        return bad_request("invalid or missing Track body");
-    };
-    let resolver = build_cross_source_resolver(&state.providers);
-    match resolver.resolve_song_url(track, options).await {
-        Ok(result) => ok(result),
-        Err(err) => anyhow_error_response(err),
     }
 }
 
@@ -1040,17 +1000,6 @@ fn search_keyword(query: &SearchQuery) -> String {
         .unwrap_or_default()
         .trim()
         .to_owned()
-}
-
-fn build_cross_source_resolver(
-    registry: &ProviderRegistry,
-) -> cross_source_resolver::CrossSourceResolver {
-    cross_source_resolver::create_cross_source_resolver(
-        cross_source_resolver::CrossSourceResolverDeps {
-            providers: Some(registry.all()),
-            provider_order: None,
-        },
-    )
 }
 
 fn is_known_provider(provider: ProviderId) -> bool {
