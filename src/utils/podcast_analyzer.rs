@@ -1,15 +1,13 @@
 use std::{
     cmp::Ordering,
     io::Cursor,
+    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::api::{ApiError, ApiErrorCode, ApiResult};
 use anyhow::Context;
-use reqwest::{
-    Client,
-    header::{HeaderMap, HeaderValue, RANGE, REFERER, USER_AGENT},
-};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use symphonia::core::{
     audio::GenericAudioBufferRef,
@@ -20,116 +18,165 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 use symphonia::default::{get_codecs, get_probe};
-use url::Url;
 
-const DEFAULT_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const FULL_STREAM_QUALITY_LIMIT_SEC: f64 = 7200.0;
-const DEFAULT_RANGE_FETCH_BYTES: usize = 8 * 1024 * 1024;
-
-#[derive(Clone, Debug)]
-pub struct PodcastDjAnalyzerParams {
-    pub duration_sec: u32,
-    pub intro_sec: Option<u32>,
-    pub user_agent: Option<String>,
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PodcastAudioFormat {
+    Mp3,
+    Ogg,
+    M4a,
+    Flac,
+    Wav,
 }
 
-pub async fn analyze_podcast_dj_beatmap(
-    audio_url: &str,
-    params: &PodcastDjAnalyzerParams,
-) -> anyhow::Result<Value> {
-    if !audio_url.starts_with("http://") && !audio_url.starts_with("https://") {
-        anyhow::bail!("Invalid audio url");
+impl PodcastAudioFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Mp3 => "mp3",
+            Self::Ogg => "ogg",
+            Self::M4a => "m4a",
+            Self::Flac => "flac",
+            Self::Wav => "wav",
+        }
     }
+}
 
-    let client = Client::builder().build()?;
-    let map = if let Some(intro_sec) = params.intro_sec.filter(|value| *value > 0) {
-        analyze_podcast_dj_intro(
-            &client,
-            audio_url,
-            params.duration_sec as f64,
-            intro_sec as f64,
-            params.user_agent.as_deref().unwrap_or(DEFAULT_UA),
-        )
-        .await?
+impl FromStr for PodcastAudioFormat {
+    type Err = ApiError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "mp3" => Ok(Self::Mp3),
+            "ogg" => Ok(Self::Ogg),
+            "m4a" | "mp4" => Ok(Self::M4a),
+            "flac" => Ok(Self::Flac),
+            "wav" | "wave" => Ok(Self::Wav),
+            _ => Err(ApiError::new(
+                ApiErrorCode::BadRequest,
+                format!("unsupported audio format: {value}"),
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PodcastDjAnalyzerParams {
+    pub format: PodcastAudioFormat,
+    pub intro_sec: Option<u32>,
+}
+
+pub fn analyze_podcast_dj_beatmap(
+    audio: &[u8],
+    params: &PodcastDjAnalyzerParams,
+) -> ApiResult<PodcastDjBeatMap> {
+    if audio.is_empty() {
+        return Err(ApiError::new(
+            ApiErrorCode::BadRequest,
+            "audio data required",
+        ));
+    }
+    let decoded = decode_podcast_dj_bytes(audio, params.format, None).map_err(map_decode_error)?;
+    let mut map = if let Some(intro_sec) = params.intro_sec.filter(|value| *value > 0) {
+        let frame_limit = clamp_usize(
+            ((intro_sec as f64 + 2.0) / decoded.hop_sec.max(0.010)).ceil() as usize,
+            1,
+            decoded.low_energy.len(),
+        );
+        let duration = (intro_sec as f64).min(frame_limit as f64 * decoded.hop_sec);
+        let mut map = build_beat_map_from_low_energy(
+            &decoded.low_energy[..frame_limit],
+            &decoded.hit_energy[..frame_limit],
+            decoded.hop_sec,
+            duration,
+        );
+        map.partial = Some(true);
+        map.partial_until_sec = Some(duration);
+        map.full_duration = Some(decoded.duration);
+        map.tempo_source = "podcast-dj-intro".to_owned();
+        map
     } else {
-        analyze_podcast_dj_stream(
-            &client,
-            audio_url,
-            params.duration_sec as f64,
-            params.user_agent.as_deref().unwrap_or(DEFAULT_UA),
+        build_beat_map_from_low_energy(
+            &decoded.low_energy,
+            &decoded.hit_energy,
+            decoded.hop_sec,
+            decoded.duration,
         )
-        .await?
     };
-
-    Ok(serde_json::to_value(map)?)
+    map.decode = Some(decoded.decode);
+    Ok(map)
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct BeatMap {
-    kicks: Vec<f64>,
-    beats: Vec<Beat>,
-    pulse_beats: Vec<PulseBeat>,
-    camera_beats: Vec<Beat>,
+pub struct PodcastDjBeatMap {
+    pub kicks: Vec<f64>,
+    pub beats: Vec<PodcastDjBeat>,
+    pub pulse_beats: Vec<PodcastDjPulseBeat>,
+    pub camera_beats: Vec<PodcastDjBeat>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    grid_step: Option<f64>,
+    pub grid_step: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    section_steps: Vec<f64>,
-    tempo_source: String,
-    duration: f64,
-    visual_beat_count: usize,
-    analyzed_at: u64,
+    pub section_steps: Vec<f64>,
+    pub tempo_source: String,
+    pub duration: f64,
+    pub visual_beat_count: usize,
+    pub analyzed_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    partial: Option<bool>,
+    pub partial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    partial_until_sec: Option<f64>,
+    pub partial_until_sec: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    full_duration: Option<f64>,
+    pub full_duration: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    decode: Option<Value>,
+    pub decode: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    debug: Option<Value>,
+    pub debug: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Beat {
-    time: f64,
-    strength: f64,
-    confidence: f64,
-    impact: f64,
-    primary: bool,
-    camera: bool,
-    pulse: bool,
-    tone: String,
-    low: f64,
-    body: f64,
-    snap: f64,
-    mass: f64,
-    sharpness: f64,
-    combo: String,
-    step: f64,
-    index: usize,
-    dj: bool,
-    grid: bool,
-    kick_only: bool,
-    server: bool,
+pub struct PodcastDjBeat {
+    pub time: f64,
+    pub strength: f64,
+    pub confidence: f64,
+    pub impact: f64,
+    pub primary: bool,
+    pub camera: bool,
+    pub pulse: bool,
+    pub tone: String,
+    pub low: f64,
+    pub body: f64,
+    pub snap: f64,
+    pub mass: f64,
+    pub sharpness: f64,
+    pub combo: String,
+    pub step: f64,
+    pub index: usize,
+    pub dj: bool,
+    pub grid: bool,
+    pub kick_only: bool,
+    pub server: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sampled: Option<bool>,
+    pub sampled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PulseBeat {
-    time: f64,
-    strength: f64,
-    impact: f64,
-    combo: String,
-    low: f64,
-    body: f64,
-    snap: f64,
-    dj: bool,
+pub struct PodcastDjPulseBeat {
+    pub time: f64,
+    pub strength: f64,
+    pub impact: f64,
+    pub combo: String,
+    pub low: f64,
+    pub body: f64,
+    pub snap: f64,
+    pub dj: bool,
 }
+
+type BeatMap = PodcastDjBeatMap;
+type Beat = PodcastDjBeat;
+type PulseBeat = PodcastDjPulseBeat;
 
 #[derive(Clone, Debug)]
 struct Candidate {
@@ -177,404 +224,6 @@ struct Biquad {
     x2: f64,
     y1: f64,
     y2: f64,
-}
-
-async fn analyze_podcast_dj_intro(
-    client: &Client,
-    audio_url: &str,
-    requested_duration: f64,
-    intro_sec: f64,
-    user_agent: &str,
-) -> anyhow::Result<BeatMap> {
-    let intro_sec = clamp_range(intro_sec, 90.0, 240.0);
-    let bytes =
-        match fetch_intro_bytes(client, audio_url, requested_duration, intro_sec, user_agent).await
-        {
-            Ok(bytes) => bytes,
-            Err(_) => fetch_audio_bytes(client, audio_url, None, user_agent).await?,
-        };
-    let decoded = decode_podcast_dj_bytes(
-        audio_url,
-        bytes,
-        requested_duration,
-        Some(intro_sec + 8.0),
-        user_agent,
-        None,
-    )?;
-    let frame_limit = clamp_usize(
-        ((intro_sec + 2.0) / decoded.hop_sec.max(0.010)).ceil() as usize,
-        1,
-        decoded.low_energy.len(),
-    );
-    let low_energy = decoded.low_energy[..frame_limit].to_vec();
-    let hit_energy = decoded.hit_energy[..frame_limit].to_vec();
-    let map_duration = intro_sec.min(low_energy.len() as f64 * decoded.hop_sec);
-    let mut map =
-        build_beat_map_from_low_energy(&low_energy, &hit_energy, decoded.hop_sec, map_duration);
-    map.partial = Some(true);
-    map.partial_until_sec = Some(map_duration);
-    map.full_duration = Some(requested_duration.max(0.0));
-    map.tempo_source = "podcast-dj-server-intro-offline".to_owned();
-    map.decode = Some(json!({
-        "chunks": decoded.decode["chunks"],
-        "decodedSamples": decoded.decode["decodedSamples"],
-        "sampleRate": decoded.decode["sampleRate"],
-        "effectiveSampleRate": decoded.decode["effectiveSampleRate"],
-        "frames": decoded.decode["frames"],
-        "intro": true,
-        "requestedDurationSec": requested_duration,
-        "effectiveDurationSec": decoded.duration,
-        "partialUntilSec": map_duration
-    }));
-    map.debug = Some(json!({
-        "intro": true,
-        "partialUntilSec": map_duration,
-        "hopSec": decoded.hop_sec
-    }));
-    Ok(map)
-}
-
-async fn analyze_podcast_dj_stream(
-    client: &Client,
-    audio_url: &str,
-    duration_sec: f64,
-    user_agent: &str,
-) -> anyhow::Result<BeatMap> {
-    if duration_sec > 3300.0 && duration_sec <= FULL_STREAM_QUALITY_LIMIT_SEC {
-        match analyze_podcast_dj_stream_full(client, audio_url, duration_sec, user_agent, true)
-            .await
-        {
-            Ok(mut map) => {
-                let mut debug = map.debug.take().unwrap_or_else(|| json!({}));
-                if let Some(record) = debug.as_object_mut() {
-                    record.insert("fullStreamQuality".to_owned(), Value::Bool(true));
-                    record.insert("requestedDurationSec".to_owned(), Value::from(duration_sec));
-                }
-                map.debug = Some(debug);
-                return Ok(map);
-            }
-            Err(_) => {
-                return analyze_podcast_dj_range_samples(
-                    client,
-                    audio_url,
-                    duration_sec,
-                    user_agent,
-                )
-                .await;
-            }
-        }
-    }
-    if duration_sec > FULL_STREAM_QUALITY_LIMIT_SEC {
-        return analyze_podcast_dj_range_samples(client, audio_url, duration_sec, user_agent).await;
-    }
-    analyze_podcast_dj_stream_full(client, audio_url, duration_sec, user_agent, false).await
-}
-
-async fn analyze_podcast_dj_stream_full(
-    client: &Client,
-    audio_url: &str,
-    duration_sec: f64,
-    user_agent: &str,
-    prefer_quality_full_stream: bool,
-) -> anyhow::Result<BeatMap> {
-    let bytes = fetch_audio_bytes(client, audio_url, None, user_agent).await?;
-    let decoded = decode_podcast_dj_bytes(audio_url, bytes, duration_sec, None, user_agent, None)?;
-    let effective_duration = decoded.duration;
-    let duration = if effective_duration > 0.0 {
-        effective_duration
-    } else {
-        duration_sec
-    };
-    let mut map = build_beat_map_from_low_energy(
-        &decoded.low_energy,
-        &decoded.hit_energy,
-        decoded.hop_sec,
-        duration,
-    );
-    map.decode = Some(json!({
-        "chunks": decoded.decode["chunks"],
-        "decodedSamples": decoded.decode["decodedSamples"],
-        "sampleRate": decoded.decode["sampleRate"],
-        "effectiveSampleRate": decoded.decode["effectiveSampleRate"],
-        "frames": decoded.decode["frames"],
-        "requestedDurationSec": duration_sec,
-        "effectiveDurationSec": effective_duration,
-        "fullStreamQuality": prefer_quality_full_stream
-    }));
-    Ok(map)
-}
-
-async fn analyze_podcast_dj_range_samples(
-    client: &Client,
-    audio_url: &str,
-    duration_sec: f64,
-    user_agent: &str,
-) -> anyhow::Result<BeatMap> {
-    if duration_sec <= 0.0 {
-        anyhow::bail!("Long podcast analysis needs duration");
-    }
-
-    let content_length = fetch_content_length(client, audio_url, user_agent)
-        .await
-        .unwrap_or(0);
-    if content_length == 0 {
-        return analyze_podcast_dj_stream_full(client, audio_url, duration_sec, user_agent, false)
-            .await;
-    }
-
-    let sample_count = if duration_sec > 14400.0 {
-        12
-    } else if duration_sec > 9000.0 {
-        10
-    } else {
-        8
-    };
-    let mut sample_starts = Vec::with_capacity(sample_count);
-    for index in 0..sample_count {
-        let pos = if sample_count == 1 {
-            0.0
-        } else {
-            index as f64 / (sample_count - 1) as f64
-        };
-        let shaped = if index == 0 {
-            0.0
-        } else if index == sample_count - 1 {
-            0.88
-        } else {
-            0.08 + pos * 0.80
-        };
-        sample_starts.push(duration_sec * shaped);
-    }
-
-    let sample_window = if duration_sec > 14400.0 {
-        82.0
-    } else if duration_sec > 9000.0 {
-        88.0
-    } else {
-        96.0
-    };
-
-    let mut sample_maps = Vec::new();
-    let mut total_chunks = 0_u64;
-    let mut total_decoded = 0_u64;
-
-    for target_time in sample_starts {
-        let target_time = clamp_range(target_time, 0.0, (duration_sec - sample_window).max(0.0));
-        let bytes_per_sec = content_length as f64 / duration_sec.max(1.0);
-        let preroll_bytes = if target_time <= 0.0 {
-            0_u64
-        } else {
-            (bytes_per_sec * 4.0).floor().min((384 * 1024) as f64) as u64
-        };
-        let start_byte =
-            ((target_time * bytes_per_sec).floor() as u64).saturating_sub(preroll_bytes);
-        let window_bytes = ((sample_window * bytes_per_sec).floor() as u64)
-            .max((768 * 1024) as u64)
-            .saturating_add(preroll_bytes)
-            .saturating_add((128 * 1024) as u64);
-        let end_byte = start_byte
-            .saturating_add(window_bytes)
-            .min(content_length.saturating_sub(1));
-        let approx_offset = start_byte as f64 / content_length as f64 * duration_sec;
-        let bytes =
-            fetch_audio_bytes(client, audio_url, Some((start_byte, end_byte)), user_agent).await?;
-        let decoded = decode_podcast_dj_bytes(
-            audio_url,
-            bytes,
-            sample_window,
-            None,
-            user_agent,
-            Some((start_byte, end_byte)),
-        )?;
-        total_chunks += decoded.decode["chunks"].as_u64().unwrap_or(0);
-        total_decoded += decoded.decode["decodedSamples"].as_u64().unwrap_or(0);
-        let map = build_beat_map_from_low_energy(
-            &decoded.low_energy,
-            &decoded.hit_energy,
-            decoded.hop_sec,
-            if decoded.duration > 0.0 {
-                decoded.duration
-            } else {
-                sample_window
-            },
-        );
-        if map.visual_beat_count >= 8 && map.grid_step.unwrap_or_default() > 0.0 {
-            sample_maps.push((approx_offset, map));
-        }
-    }
-
-    if sample_maps.is_empty() {
-        return Ok(empty_map(
-            duration_sec,
-            "podcast-dj-server-range-empty",
-            None,
-            None,
-        ));
-    }
-
-    let mut step_votes = Vec::new();
-    for (_, map) in &sample_maps {
-        let weight = ((map.visual_beat_count as f64 / 16.0).round() as usize).clamp(1, 16);
-        if let Some(step) = map.grid_step {
-            for _ in 0..weight {
-                step_votes.push(step);
-            }
-        }
-    }
-    let global_step = clamp_range(
-        median(&step_votes).unwrap_or_else(|| sample_maps[0].1.grid_step.unwrap_or(0.50)),
-        0.32,
-        0.86,
-    );
-    let first_map = &sample_maps[0].1;
-    let mut anchor = first_map
-        .camera_beats
-        .first()
-        .or_else(|| first_map.beats.first())
-        .map(|beat| beat.time)
-        .unwrap_or(0.0);
-    while anchor - global_step > 0.05 {
-        anchor -= global_step;
-    }
-
-    let mut profiles = sample_maps
-        .into_iter()
-        .map(|(offset, map)| {
-            let beats = if !map.camera_beats.is_empty() {
-                map.camera_beats.clone()
-            } else {
-                map.beats.clone()
-            };
-            let impacts = beats
-                .iter()
-                .map(|beat| {
-                    if beat.impact.is_finite() {
-                        beat.impact
-                    } else {
-                        beat.strength
-                    }
-                })
-                .filter(|value| value.is_finite())
-                .collect::<Vec<_>>();
-            let active_impacts = impacts
-                .iter()
-                .copied()
-                .filter(|value| *value >= 0.10)
-                .collect::<Vec<_>>();
-            let avg_impact = if active_impacts.is_empty() {
-                0.16
-            } else {
-                active_impacts.iter().sum::<f64>() / active_impacts.len() as f64
-            };
-            let hi_impact = percentile(&impacts, 0.90, 4000).unwrap_or(avg_impact.max(0.55));
-            let activity = beats.len() as f64 / map.duration.max(20.0);
-            let phase = phase_from_map(&map, global_step);
-            Profile {
-                time: offset,
-                avg: clamp_range(
-                    avg_impact * clamp_range(activity / 1.65, 0.38, 1.05),
-                    0.08,
-                    0.72,
-                ),
-                hi: clamp_range(hi_impact, 0.18, 0.96),
-                activity: clamp_range(activity / 1.65, 0.18, 1.12),
-                step: global_step,
-                anchor: offset + phase.phase,
-            }
-        })
-        .collect::<Vec<_>>();
-    profiles.sort_by(|left, right| {
-        left.time
-            .partial_cmp(&right.time)
-            .unwrap_or(Ordering::Equal)
-    });
-
-    let mut beats = Vec::new();
-    let mut grid_index = 0_usize;
-    for index in 0..profiles.len() {
-        let profile = profiles[index].clone();
-        let start = if index == 0 {
-            0.0
-        } else {
-            (profiles[index - 1].time + profile.time) * 0.5
-        };
-        let end = if index == profiles.len() - 1 {
-            duration_sec
-        } else {
-            (profile.time + profiles[index + 1].time) * 0.5
-        };
-        let local_step = global_step;
-        let mut time = if profile.anchor.is_finite() {
-            profile.anchor
-        } else {
-            anchor
-        };
-        while time - local_step > start {
-            time -= local_step;
-        }
-        while time < start {
-            time += local_step;
-        }
-        while time < end - 0.04 {
-            beats.push(build_range_beat(time, local_step, grid_index, &profiles));
-            grid_index += 1;
-            time += local_step;
-        }
-    }
-
-    let camera_beats = beats
-        .iter()
-        .filter(|beat| beat.camera)
-        .cloned()
-        .collect::<Vec<_>>();
-    let pulse_beats = beats
-        .iter()
-        .filter(|beat| beat.pulse && (beat.impact >= 0.16 || beat.combo == "downbeat"))
-        .map(|beat| PulseBeat {
-            time: beat.time,
-            strength: beat.strength,
-            impact: beat.impact,
-            combo: beat.combo.clone(),
-            low: beat.low,
-            body: beat.body,
-            snap: beat.snap,
-            dj: true,
-        })
-        .collect::<Vec<_>>();
-
-    Ok(BeatMap {
-        kicks: beats.iter().map(|beat| beat.time).collect(),
-        beats,
-        pulse_beats,
-        camera_beats: camera_beats.clone(),
-        grid_step: Some(global_step),
-        section_steps: profiles.iter().map(|profile| profile.step).collect(),
-        tempo_source: "podcast-dj-server-range-offline".to_owned(),
-        duration: duration_sec,
-        visual_beat_count: camera_beats.len(),
-        analyzed_at: now_millis(),
-        partial: None,
-        partial_until_sec: None,
-        full_duration: None,
-        decode: None,
-        debug: Some(json!({
-            "rangeSampled": true,
-            "samples": profiles.len(),
-            "profiles": profiles.iter().map(|profile| json!({
-                "time": profile.time,
-                "avg": profile.avg,
-                "hi": profile.hi,
-                "activity": profile.activity,
-                "step": profile.step,
-                "anchor": profile.anchor
-            })).collect::<Vec<_>>(),
-            "contentLength": content_length,
-            "decode": {
-                "chunks": total_chunks,
-                "decodedSamples": total_decoded
-            }
-        })),
-    })
 }
 
 fn build_range_beat(
@@ -1426,101 +1075,15 @@ fn run_biquad(state: &mut Biquad, sample: f64) -> f64 {
     value
 }
 
-async fn fetch_content_length(
-    client: &Client,
-    audio_url: &str,
-    user_agent: &str,
-) -> anyhow::Result<u64> {
-    let response = client
-        .head(audio_url)
-        .headers(default_audio_headers(user_agent, None)?)
-        .send()
-        .await?;
-    Ok(response
-        .headers()
-        .get("content-length")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0))
-}
-
-async fn fetch_intro_bytes(
-    client: &Client,
-    audio_url: &str,
-    requested_duration: f64,
-    intro_sec: f64,
-    user_agent: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let content_length = fetch_content_length(client, audio_url, user_agent)
-        .await
-        .unwrap_or(0);
-    if content_length == 0 || requested_duration <= 0.0 {
-        return fetch_audio_bytes(
-            client,
-            audio_url,
-            Some((0, DEFAULT_RANGE_FETCH_BYTES as u64 - 1)),
-            user_agent,
-        )
-        .await;
-    }
-    let bytes_per_sec = content_length as f64 / requested_duration.max(1.0);
-    let needed = ((intro_sec + 8.0) * bytes_per_sec).ceil() as u64;
-    let end = needed
-        .saturating_add((256 * 1024) as u64)
-        .max((512 * 1024) as u64)
-        .min(content_length.saturating_sub(1));
-    fetch_audio_bytes(client, audio_url, Some((0, end)), user_agent).await
-}
-
-async fn fetch_audio_bytes(
-    client: &Client,
-    audio_url: &str,
-    range: Option<(u64, u64)>,
-    user_agent: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let response = client
-        .get(audio_url)
-        .headers(default_audio_headers(user_agent, range)?)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch audio bytes from {audio_url}"))?;
-    if !response.status().is_success() && response.status().as_u16() != 206 {
-        anyhow::bail!("Audio fetch failed: {}", response.status());
-    }
-    Ok(response.bytes().await?.to_vec())
-}
-
-fn default_audio_headers(user_agent: &str, range: Option<(u64, u64)>) -> anyhow::Result<HeaderMap> {
-    let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_str(user_agent)?);
-    headers.insert(REFERER, HeaderValue::from_static("https://music.163.com/"));
-    if let Some((start, end)) = range {
-        headers.insert(
-            RANGE,
-            HeaderValue::from_str(&format!("bytes={start}-{end}"))?,
-        );
-    }
-    Ok(headers)
-}
-
 fn decode_podcast_dj_bytes(
-    audio_url: &str,
-    bytes: Vec<u8>,
-    duration_hint: f64,
+    audio: &[u8],
+    format: PodcastAudioFormat,
     limit_sec: Option<f64>,
-    _user_agent: &str,
-    _range: Option<(u64, u64)>,
 ) -> anyhow::Result<EnergyDecode> {
-    let extension = Url::parse(audio_url)
-        .ok()
-        .and_then(|url| url.path_segments()?.last().map(str::to_owned))
-        .and_then(|name| name.rsplit('.').next().map(str::to_owned));
     let mut hint = Hint::new();
-    if let Some(extension) = extension.as_deref() {
-        hint.with_extension(extension);
-    }
+    hint.with_extension(format.extension());
 
-    let source = Cursor::new(bytes);
+    let source = Cursor::new(audio.to_vec());
     let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
     let mut format = get_probe().probe(
         &hint,
@@ -1549,11 +1112,7 @@ fn decode_podcast_dj_bytes(
     let mut decoder =
         get_codecs().make_audio_decoder(audio_codec_params, &AudioDecoderOptions::default())?;
 
-    let hop_sec = if duration_hint > 4200.0 {
-        0.0125
-    } else {
-        0.010
-    };
+    let hop_sec = 0.010;
     let mut state = DecodeState::new(hop_sec);
     let mut chunks = 0_u64;
     let mut decoded_samples = 0_u64;
@@ -1603,6 +1162,32 @@ fn decode_podcast_dj_bytes(
         duration,
         decode,
     })
+}
+
+fn map_decode_error(error: anyhow::Error) -> ApiError {
+    let message = error.to_string();
+    let lower = message.to_ascii_lowercase();
+    let code = if lower.contains("unsupported") {
+        ApiErrorCode::Unavailable
+    } else if lower.contains("decoder reset") || lower.contains("conversion") {
+        ApiErrorCode::Internal
+    } else {
+        ApiErrorCode::BadRequest
+    };
+    ApiError::new(code, format!("audio analysis failed: {message}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_format_parses_known_values_and_rejects_unknown_values() {
+        assert!(matches!("MP3".parse(), Ok(PodcastAudioFormat::Mp3)));
+        assert!(matches!("wave".parse(), Ok(PodcastAudioFormat::Wav)));
+        let error = "aac".parse::<PodcastAudioFormat>().unwrap_err();
+        assert_eq!(error.code, ApiErrorCode::BadRequest);
+    }
 }
 
 struct DecodeState {
