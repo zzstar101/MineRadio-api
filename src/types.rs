@@ -421,3 +421,31 @@ pub struct PlaylistAddSongAck {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<i64>,
 }
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+pub enum RecommendationType {
+    Track,
+    Radio,
+    Playlist,
+    #[default]
+    Unknown,
+}
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+pub struct RecommendationCard {
+    pub id: String,
+    pub title: String,
+    pub subtitle: String, //副标题或介绍
+    pub kind: RecommendationType,
+    pub cover_url: String,
+    pub collected: Option<bool>,
+}
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+pub struct RecommendationModule {
+    pub title: String, //模块名
+    pub list: Vec<RecommendationCard>,
+}
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+pub struct RecommendationPage {
+    pub provider: ProviderId,
+    pub list: Vec<RecommendationModule>,
+}

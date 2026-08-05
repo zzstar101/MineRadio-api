@@ -3,12 +3,12 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 use futures_util::FutureExt;
 
 use crate::{
-    api::{error::from_provider_error, ApiResult, QrLoginApi},
+    api::{ApiResult, QrLoginApi, error::from_provider_error},
     providers::{ProviderAdapter, ProviderResult},
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
-        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
+        SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
 };
 
@@ -51,8 +51,11 @@ impl ProviderApi {
         offset: u32,
         limit: u32,
     ) -> ApiResult<Vec<Track>> {
-        self.call("search_track", self.adapter.search_track(keyword, offset, limit))
-            .await
+        self.call(
+            "search_track",
+            self.adapter.search_track(keyword, offset, limit),
+        )
+        .await
     }
 
     pub async fn search_album(
@@ -61,8 +64,11 @@ impl ProviderApi {
         offset: u32,
         limit: u32,
     ) -> ApiResult<Vec<AlbumSummary>> {
-        self.call("search_album", self.adapter.search_album(keyword, offset, limit))
-            .await
+        self.call(
+            "search_album",
+            self.adapter.search_album(keyword, offset, limit),
+        )
+        .await
     }
 
     pub async fn search_playlist(
@@ -83,7 +89,8 @@ impl ProviderApi {
         track: &Track,
         options: Option<SongUrlOptions>,
     ) -> ApiResult<SongUrlResult> {
-        self.call("song_url", self.adapter.song_url(track, options)).await
+        self.call("song_url", self.adapter.song_url(track, options))
+            .await
     }
 
     pub async fn track_qualities(&self, track: &Track) -> ApiResult<TrackQualityAvailability> {
@@ -96,7 +103,8 @@ impl ProviderApi {
     }
 
     pub async fn playlist_list(&self) -> ApiResult<Vec<PlaylistSummary>> {
-        self.call("playlist_list", self.adapter.playlist_list()).await
+        self.call("playlist_list", self.adapter.playlist_list())
+            .await
     }
 
     pub async fn playlist_detail(
@@ -121,7 +129,8 @@ impl ProviderApi {
     }
 
     pub async fn like_song(&self, id: &str, liked: bool) -> ApiResult<SongLikeAck> {
-        self.call("like_song", self.adapter.like_song(id, liked)).await
+        self.call("like_song", self.adapter.like_song(id, liked))
+            .await
     }
 
     pub async fn check_song_likes(&self, ids: &[String]) -> ApiResult<SongLikeCheckAck> {
@@ -147,13 +156,13 @@ impl ProviderApi {
         self.call("album_list", self.adapter.album_list()).await
     }
 
-    pub async fn album_detail(
-        &self,
-        id: &str,
-        offset: u32,
-        limit: u32,
-    ) -> ApiResult<AlbumDetail> {
+    pub async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ApiResult<AlbumDetail> {
         self.call("album_detail", self.adapter.album_detail(id, offset, limit))
+            .await
+    }
+
+    pub async fn recommendation_page(&self) -> ApiResult<RecommendationPage> {
+        self.call("recommendation_page", self.adapter.recommendation_page())
             .await
     }
 }

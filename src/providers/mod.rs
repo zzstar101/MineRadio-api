@@ -51,7 +51,6 @@ pub mod error;
 pub mod kugou;
 pub mod netease;
 pub mod qq;
-pub mod registry;
 pub mod soda;
 pub mod spotify;
 
@@ -59,8 +58,8 @@ use async_trait::async_trait;
 
 use crate::types::{
     AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail, PlaylistSummary,
-    ProviderLoginStatus, SearchType, SongLikeAck, SongLikeCheckAck, SongUrlOptions, SongUrlResult,
-    Track, TrackQualityAvailability,
+    ProviderLoginStatus, RecommendationPage, SearchType, SongLikeAck, SongLikeCheckAck,
+    SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
 };
 
 pub type ProviderResult<T> = std::result::Result<T, error::ProviderError>;
@@ -184,6 +183,13 @@ pub trait ProviderAdapter: Send + Sync {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "album_list",
+        ))
+    }
+
+    async fn recommendation_page(&self) -> ProviderResult<RecommendationPage> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "recommend_page",
         ))
     }
 }

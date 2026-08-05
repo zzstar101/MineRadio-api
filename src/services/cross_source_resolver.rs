@@ -11,12 +11,19 @@ use crate::{
     providers::{
         ProviderAdapter,
         error::{ProviderError, ProviderErrorCode},
-        registry::PROVIDER_IDS,
     },
-    types::{PlayableState, ProviderId, SongUrlOptions, SongUrlResult, Track},
+    types::{PlayableState, ProviderId, RecommendationPage, SongUrlOptions, SongUrlResult, Track},
 };
 
 pub type ProviderMap = HashMap<ProviderId, Arc<dyn ProviderAdapter>>;
+
+pub const PROVIDER_IDS: [ProviderId; 5] = [
+    ProviderId::Netease,
+    ProviderId::Qq,
+    ProviderId::Soda,
+    ProviderId::Kugou,
+    ProviderId::Spotify,
+];
 
 static BRACKETED_TEXT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[(（\[【].*?[)）\]】]").expect("valid bracket regex"));
@@ -61,6 +68,19 @@ pub struct CrossSourceResolver {
 }
 
 impl CrossSourceResolver {
+    pub async fn resolve_recommendation_page(&self) -> anyhow::Result<Vec<RecommendationPage>> {
+        let requests = self.provider_order().into_iter().filter_map(|provider_id| {
+            let provider = self.provider(&provider_id)?;
+            Some(async move { provider.recommendation_page().await })
+        });
+
+        Ok(join_all(requests)
+            .await
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect())
+    }
+
     pub async fn resolve_search(&self, query: ResolveSearchQuery) -> anyhow::Result<Vec<Track>> {
         if query.provider.is_none() {
             return self.resolve_merged_search(query).await;
@@ -547,8 +567,8 @@ mod tests {
     use crate::{
         providers,
         types::{
-            LyricPayload, PlaylistDetail, PlaylistSummary, ProviderLoginStatus, SongUrlResult,
-            TrackQualityAvailability,
+            LyricPayload, PlaylistDetail, PlaylistSummary, ProviderLoginStatus, RecommendationPage,
+            SongUrlResult, TrackQualityAvailability,
         },
     };
     use async_trait::async_trait;
@@ -569,6 +589,7 @@ mod tests {
         search_barrier: Option<Arc<Barrier>>,
         song_url_result: Option<SongUrlResult>,
         song_url_error: Option<ProviderError>,
+        recommendation_page: Option<RecommendationPage>,
     }
 
     impl MockProvider {
@@ -581,6 +602,7 @@ mod tests {
                 search_barrier: None,
                 song_url_result: None,
                 song_url_error: None,
+                recommendation_page: None,
             }
         }
 
@@ -608,6 +630,11 @@ mod tests {
                 vip_level: None,
                 expires_at: None,
             });
+            self
+        }
+
+        fn with_recommendation_page(mut self, page: RecommendationPage) -> Self {
+            self.recommendation_page = Some(page);
             self
         }
     }
@@ -700,6 +727,21 @@ mod tests {
         async fn logout(&self) -> providers::ProviderResult<()> {
             Ok(())
         }
+
+        async fn recommendation_page(&self) -> providers::ProviderResult<RecommendationPage> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("{}:recommendationPage", self.id));
+            self.recommendation_page.clone().ok_or_else(|| {
+                provider_error(
+                    self.id,
+                    ProviderErrorCode::NotImplemented,
+                    "recommendation page unavailable",
+                    false,
+                )
+            })
+        }
     }
 
     fn provider_error(
@@ -782,6 +824,32 @@ mod tests {
 
         assert_eq!(result[0].title, "夜航");
         assert_eq!(calls.lock().unwrap().as_slice(), &["netease:search:夜航:5"]);
+    }
+
+    #[tokio::test]
+    async fn resolve_recommendation_page_collects_successful_provider_pages() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let resolver = resolver(
+            vec![
+                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)),
+                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_recommendation_page(
+                    RecommendationPage {
+                        provider: ProviderId::Qq,
+                        list: Vec::new(),
+                    },
+                ),
+            ],
+            vec![ProviderId::Netease, ProviderId::Qq],
+        );
+
+        let pages = resolver.resolve_recommendation_page().await.unwrap();
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].provider, ProviderId::Qq);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &["netease:recommendationPage", "qq:recommendationPage"]
+        );
     }
 
     #[tokio::test]

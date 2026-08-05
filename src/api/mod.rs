@@ -19,9 +19,7 @@ use crate::{
         spotify::{adapter::SpotifyAdapter, client::SpotifyClient},
     },
     services::{
-        auth_session,
-        cross_source_resolver,
-        discover_home::DiscoverRequester,
+        auth_session, cross_source_resolver,
         kugou_qr_login::{
             KugouQrHttpApi, KugouQrLoginDeps, KugouQrLoginService, create_kugou_qr_login_service,
         },
@@ -32,7 +30,7 @@ use crate::{
         },
         qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
-        sidecar_log,
+        sidecar_log::{self, SidecarLogger, SidecarLoggerOptions},
         soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
         weather_radio::{WeatherRadioDeps, WeatherRadioService, create_weather_radio_service},
     },
@@ -45,20 +43,21 @@ pub use qr_login::QrLoginApi;
 pub use crate::types::{
     AlbumDetail, AlbumSummary, LyricLine, LyricPayload, LyricWord, PlayableState,
     PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginQrCheck,
-    ProviderLoginQrImage, ProviderLoginQrKey, ProviderLoginStatus, SearchType, SongLikeAck,
+    ProviderLoginQrImage, ProviderLoginQrKey, ProviderLoginStatus, RecommendationCard,
+    RecommendationModule, RecommendationPage, RecommendationType, SearchType, SongLikeAck,
     SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     TrackQualityOption, VipLevel,
 };
 
 pub(crate) struct ApiInner {
     config: LibraryConfig,
+    logger: SidecarLogger,
     cross_source: cross_source::CrossSourceApi,
     qq: Arc<dyn ProviderAdapter>,
     netease: Arc<dyn ProviderAdapter>,
     soda: Arc<dyn ProviderAdapter>,
     kugou: Arc<dyn ProviderAdapter>,
     spotify: Arc<dyn ProviderAdapter>,
-    discover_requester: Arc<dyn DiscoverRequester>,
     podcast: PodcastService,
     weather_radio: WeatherRadioService,
     qq_qr_login: Arc<QqQrLoginService>,
@@ -70,14 +69,15 @@ pub(crate) struct ApiInner {
 }
 
 impl ApiInner {
-    fn new(config: LibraryConfig) -> Self {
+    fn new(config: LibraryConfig, logger: SidecarLogger) -> Self {
         let shared_http_client = Client::new();
         let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
         let qq_qr_client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| Client::new());
-        let netease: Arc<dyn ProviderAdapter> = Arc::new(NeteaseAdapter::new(netease_client.clone()));
+        let netease: Arc<dyn ProviderAdapter> =
+            Arc::new(NeteaseAdapter::new(netease_client.clone()));
         let qq: Arc<dyn ProviderAdapter> = QqAdapter::shared();
         let soda: Arc<dyn ProviderAdapter> = SodaAdapter::shared();
         let kugou: Arc<dyn ProviderAdapter> = KugouAdapter::shared();
@@ -93,6 +93,7 @@ impl ApiInner {
 
         Self {
             config,
+            logger,
             cross_source: cross_source::CrossSourceApi::new(
                 cross_source_resolver::create_cross_source_resolver(
                     cross_source_resolver::CrossSourceResolverDeps {
@@ -101,7 +102,6 @@ impl ApiInner {
                     },
                 ),
             ),
-            discover_requester: netease_client.clone(),
             podcast: create_podcast_service_with_client(netease_client),
             weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),
             qq,
@@ -150,10 +150,13 @@ impl Api {
     pub async fn init(config: LibraryConfig) -> ApiResult<Self> {
         auth_session::configure(config.cookie_file.clone())
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
-        sidecar_log::configure_library_logger(config.log_path.as_deref())
-            .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
+        let logger = sidecar_log::create_sidecar_logger(SidecarLoggerOptions {
+            file_path: config.log_path.clone(),
+            max_bytes: None,
+        })
+        .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
-        let inner = Arc::new(ApiInner::new(config));
+        let inner = Arc::new(ApiInner::new(config, logger));
         let qq_qr_login = QrLoginApi::new(inner.qq_qr_login.clone());
         let netease_qr_login = QrLoginApi::new(inner.netease_qr_login.clone());
         let soda_qr_login = QrLoginApi::new(inner.soda_qr_login.clone());
@@ -161,12 +164,15 @@ impl Api {
         let qqmusic_qr_login = QrLoginApi::new(inner.qqmusic_qr_login.clone());
         let wechat_qr_login = QrLoginApi::new(inner.wechat_qr_login.clone());
 
-        sidecar_log::spawn_runtime_log(json!({
-            "event": "library-startup",
-            "appVersion": inner.config.app_version,
-            "apiVersion": inner.config.api_version,
-            "schemaVersion": inner.config.schema_version,
-        }));
+        inner
+            .logger
+            .log(json!({
+                "event": "library-startup",
+                "appVersion": inner.config.app_version,
+                "apiVersion": inner.config.api_version,
+                "schemaVersion": inner.config.schema_version,
+            }))
+            .await;
 
         Ok(Self {
             qq: ProviderApi::new(
@@ -182,6 +188,15 @@ impl Api {
     }
 
     pub async fn shutdown(&self) -> ApiResult<()> {
+        self.inner
+            .logger
+            .log(json!({
+                "event": "library-shutdown",
+                "appVersion": self.inner.config.app_version,
+                "apiVersion": self.inner.config.api_version,
+                "schemaVersion": self.inner.config.schema_version,
+            }))
+            .await;
         Ok(())
     }
 
@@ -203,6 +218,10 @@ impl Api {
         options: Option<SongUrlOptions>,
     ) -> ApiResult<SongUrlResult> {
         self.inner.cross_source.song_url(track, options).await
+    }
+
+    pub async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
+        self.inner.cross_source.recommendation_pages().await
     }
 
     pub fn app_version(&self) -> &str {
