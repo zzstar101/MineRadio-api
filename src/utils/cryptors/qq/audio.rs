@@ -4,6 +4,10 @@ use std::path::Path;
 
 use base64::Engine;
 
+use crate::api::{ApiError, ApiErrorCode, ApiResult};
+
+use super::super::AudioDecryptResult;
+
 const MUSICEX_MAGIC: &[u8; 8] = b"musicex\0";
 const QTAG_MAGIC: &[u8; 4] = b"QTag";
 const STAG_MAGIC: &[u8; 4] = b"STag";
@@ -742,20 +746,14 @@ mod tests {
     }
 }
 
-pub struct QqDecryptResult {
-    pub data: Vec<u8>,
-    pub content_type: String,
-}
-
 /// Attempt to decrypt QQ Music encrypted audio data (MGG/MFLAC/MNAC).
 ///
-/// If `explicit_ekey` is provided it takes priority; otherwise the EKey is
-// Unencrypted input is passed through.
-/// tail) and no explicit EKey was given, it is passed through unchanged.
+/// If `explicit_ekey` is provided it takes priority; otherwise an embedded
+/// EKey is used. Unencrypted input is passed through unchanged.
 pub fn decrypt_qq_audio(
     mut data: Vec<u8>,
     explicit_ekey: Option<&str>,
-) -> anyhow::Result<QqDecryptResult> {
+) -> ApiResult<AudioDecryptResult> {
     // Resolve EKey: explicit > embedded tail > error (if encrypted tail found but no EKey)
     let (ekey_str, audio_size) =
         if let Some(ekey) = explicit_ekey.map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -768,16 +766,19 @@ pub fn decrypt_qq_audio(
             match parse_encrypted_tail_from_bytes(&data) {
                 Some(tail) => {
                     let ekey = tail.ekey.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "qq encrypted file ({:?}) has no embedded EKey; pass it explicitly",
-                            tail.format
+                        ApiError::new(
+                            ApiErrorCode::BadRequest,
+                            format!(
+                                "qq encrypted file ({:?}) has no embedded EKey; pass it explicitly",
+                                tail.format,
+                            ),
                         )
                     })?;
                     (ekey, tail.audio_size as usize)
                 }
                 None => {
                     // Unencrypted input is passed through.
-                    return Ok(QqDecryptResult {
+                    return Ok(AudioDecryptResult {
                         content_type: detect_content_type("", &data).to_owned(),
                         data,
                     });
@@ -786,21 +787,32 @@ pub fn decrypt_qq_audio(
         };
 
     if audio_size == 0 || audio_size > data.len() {
-        anyhow::bail!("qq encrypted audio has invalid audio size ({audio_size})");
+        return Err(ApiError::new(
+            ApiErrorCode::BadRequest,
+            format!("qq encrypted audio has invalid audio size ({audio_size})"),
+        ));
     }
 
-    let key = derive_qmc2_key_from_ekey(&ekey_str)
-        .map_err(|e| anyhow::anyhow!("qq EKey derivation failed: {e}"))?;
+    let key = derive_qmc2_key_from_ekey(&ekey_str).map_err(|error| {
+        ApiError::new(
+            ApiErrorCode::BadRequest,
+            format!("qq EKey derivation failed: {error}"),
+        )
+    })?;
 
-    qmc2_decrypt_in_place(&key, &mut data[..audio_size], 0)
-        .map_err(|e| anyhow::anyhow!("qq audio decrypt failed: {e}"))?;
+    qmc2_decrypt_in_place(&key, &mut data[..audio_size], 0).map_err(|error| {
+        ApiError::new(
+            ApiErrorCode::Internal,
+            format!("qq audio decrypt failed: {error}"),
+        )
+    })?;
 
     // Truncate to just the decrypted audio portion (strip the tail)
     data.truncate(audio_size);
 
     let content_type = detect_content_type("", &data);
 
-    Ok(QqDecryptResult {
+    Ok(AudioDecryptResult {
         data,
         content_type: content_type.to_owned(),
     })

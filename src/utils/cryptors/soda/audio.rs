@@ -1,6 +1,9 @@
 use aes::Aes128;
 use ctr::cipher::{KeyIvInit, StreamCipher};
-use serde::{Deserialize, Serialize};
+
+use crate::api::{ApiError, ApiErrorCode, ApiResult};
+
+use super::super::AudioDecryptResult;
 
 type Aes128Ctr64BE = ctr::Ctr64BE<Aes128>;
 
@@ -8,14 +11,7 @@ const ENCA_BYTES: &[u8] = b"enca";
 const MP4A_BYTES: &[u8] = b"mp4a";
 const SPADE_PREFIX: [u8; 2] = [0xfa, 0x55];
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct DecryptDataResult {
-    pub data: Vec<u8>,
-    pub decrypted: bool,
-    pub reason: String,
-}
-
-pub fn decrypt_soda_audio(file_data: Vec<u8>, play_auth: &str) -> DecryptDataResult {
+pub fn decrypt_soda_audio(file_data: Vec<u8>, play_auth: &str) -> ApiResult<AudioDecryptResult> {
     decrypt_soda_audio_data_inner(file_data, play_auth)
 }
 
@@ -153,7 +149,10 @@ fn find_box(data: &[u8], box_type: &str, start: usize, end: usize) -> Option<Mp4
     None
 }
 
-fn decrypt_soda_audio_data_inner(file_data: Vec<u8>, play_auth: &str) -> DecryptDataResult {
+fn decrypt_soda_audio_data_inner(
+    file_data: Vec<u8>,
+    play_auth: &str,
+) -> ApiResult<AudioDecryptResult> {
     let Some(hex_key) = SpadeDecryptor::extract_key(play_auth) else {
         return not_decrypted(file_data, "playAuth key extraction failed");
     };
@@ -273,17 +272,29 @@ fn decrypt_soda_audio_data_inner(file_data: Vec<u8>, play_auth: &str) -> Decrypt
         }
     }
 
-    DecryptDataResult {
+    Ok(AudioDecryptResult {
         data: output,
-        decrypted: true,
-        reason: "decrypted".to_owned(),
-    }
+        content_type: "audio/mp4".to_owned(),
+    })
 }
 
-fn not_decrypted(data: Vec<u8>, reason: &str) -> DecryptDataResult {
-    DecryptDataResult {
-        data,
-        decrypted: false,
-        reason: reason.to_owned(),
+fn not_decrypted(_data: Vec<u8>, reason: &str) -> ApiResult<AudioDecryptResult> {
+    let code = if reason == "soda audio subsample encryption is not supported" {
+        ApiErrorCode::Unavailable
+    } else {
+        ApiErrorCode::BadRequest
+    };
+    Err(ApiError::new(code, reason))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_input_returns_bad_request() {
+        let error = decrypt_soda_audio(Vec::new(), "invalid play auth").unwrap_err();
+
+        assert_eq!(error.code, ApiErrorCode::BadRequest);
     }
 }

@@ -8,6 +8,12 @@ pub mod netease;
 pub mod qq;
 pub mod soda;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioDecryptResult {
+    pub data: Vec<u8>,
+    pub content_type: String,
+}
+
 #[allow(unused_imports)]
 pub use common::{
     AesMode, CipherOutputFormat, decrypt_aes, encrypt_aes, encrypt_rsa, from_hex, to_hex_lower,
@@ -25,6 +31,6 @@ pub use netease::{
     encrypt_weapi_rsa, generate_weapi_secret_key,
 };
 #[allow(unused_imports)]
-pub use qq::{QqDecryptResult, decrypt_qq_audio, decrypt_qrc, decrypt_qrc_file};
+pub use qq::{decrypt_qq_audio, decrypt_qrc, decrypt_qrc_file};
 #[allow(unused_imports)]
-pub use soda::{DecryptDataResult, decrypt_soda_audio};
+pub use soda::decrypt_soda_audio;

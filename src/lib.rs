@@ -21,9 +21,7 @@ pub(crate) mod utils;
 pub use api::{Api, ApiError, ApiErrorCode, ApiResult};
 pub use config::LibraryConfig;
 pub use services::sidecar_log::{log_runtime, spawn_runtime_log};
-pub use utils::cryptors::{
-    DecryptDataResult, QqDecryptResult, decrypt_qq_audio, decrypt_soda_audio,
-};
+pub use utils::cryptors::{AudioDecryptResult, decrypt_qq_audio, decrypt_soda_audio};
 pub use utils::{
     PodcastAudioFormat, PodcastDjAnalyzerParams, PodcastDjBeat, PodcastDjBeatMap,
     PodcastDjPulseBeat, analyze_podcast_dj_beatmap,
