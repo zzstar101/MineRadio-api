@@ -14,8 +14,8 @@ pub mod lyric;
 
 #[allow(unused_imports)]
 pub use audio::{
-    EncryptedTail, TailFormat, decrypt_file, derive_qmc2_key, derive_qmc2_key_from_ekey,
-    parse_encrypted_tail, qmc2_decrypt_in_place,
+    EncryptedTail, QqDecryptResult, TailFormat, decrypt_file, decrypt_qq_audio, derive_qmc2_key,
+    derive_qmc2_key_from_ekey, parse_encrypted_tail, qmc2_decrypt_in_place,
 };
 pub use lyric::{decrypt_qrc, decrypt_qrc_file};
 

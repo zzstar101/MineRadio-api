@@ -194,7 +194,7 @@ pub fn derive_qmc2_key(raw_key: &[u8]) -> Option<Vec<u8>> {
         result.extend_from_slice(&decrypted_body);
         Some(result)
     } else {
-        // Not EncV1 — the decoded blob is already the raw key (API-issued ekey).
+        // The decoded blob is already the raw key (API-issued ekey).
         Some(decoded)
     }
 }
@@ -388,7 +388,7 @@ impl Qmc2Rc4Crypto {
         key as u64 as usize
     }
 
-    /// RC4 PRGA — derive one byte.
+    /// RC4 PRGA derives one byte.
     #[inline]
     fn rc4_derive(n: usize, s: &mut Vec<u8>, j: &mut usize, k: &mut usize) -> u8 {
         *j = (*j + 1) % n;
@@ -483,7 +483,10 @@ pub fn decrypt_file(
         .map(str::to_owned)
         .or_else(|| metadata.ekey.clone())
         .ok_or_else(|| {
-            "this MusicEx file has no embedded EKey; provide --ekey or --ekey-file".to_owned()
+            format!(
+                "qq encrypted file ({:?}) has no embedded EKey; pass it explicitly",
+                metadata.format
+            )
         })?;
     let key = derive_qmc2_key_from_ekey(&ekey)?;
     let mut source =
@@ -736,5 +739,211 @@ mod tests {
             field[index * 2..index * 2 + 2].copy_from_slice(&unit.to_le_bytes());
         }
         assert_eq!(decode_utf16_field(&field), "001xd0HI0X9GNq");
+    }
+}
+
+pub struct QqDecryptResult {
+    pub data: Vec<u8>,
+    pub content_type: String,
+}
+
+/// Attempt to decrypt QQ Music encrypted audio data (MGG/MFLAC/MNAC).
+///
+/// If `explicit_ekey` is provided it takes priority; otherwise the EKey is
+// Unencrypted input is passed through.
+/// tail) and no explicit EKey was given, it is passed through unchanged.
+pub fn decrypt_qq_audio(
+    mut data: Vec<u8>,
+    explicit_ekey: Option<&str>,
+) -> anyhow::Result<QqDecryptResult> {
+    // Resolve EKey: explicit > embedded tail > error (if encrypted tail found but no EKey)
+    let (ekey_str, audio_size) =
+        if let Some(ekey) = explicit_ekey.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            // The tail still determines the audio portion when available.
+            let audio_size = parse_encrypted_tail_from_bytes(&data)
+                .map(|t| t.audio_size as usize)
+                .unwrap_or(data.len());
+            (ekey.to_owned(), audio_size)
+        } else {
+            match parse_encrypted_tail_from_bytes(&data) {
+                Some(tail) => {
+                    let ekey = tail.ekey.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "qq encrypted file ({:?}) has no embedded EKey; pass it explicitly",
+                            tail.format
+                        )
+                    })?;
+                    (ekey, tail.audio_size as usize)
+                }
+                None => {
+                    // Unencrypted input is passed through.
+                    return Ok(QqDecryptResult {
+                        content_type: detect_content_type("", &data).to_owned(),
+                        data,
+                    });
+                }
+            }
+        };
+
+    if audio_size == 0 || audio_size > data.len() {
+        anyhow::bail!("qq encrypted audio has invalid audio size ({audio_size})");
+    }
+
+    let key = derive_qmc2_key_from_ekey(&ekey_str)
+        .map_err(|e| anyhow::anyhow!("qq EKey derivation failed: {e}"))?;
+
+    qmc2_decrypt_in_place(&key, &mut data[..audio_size], 0)
+        .map_err(|e| anyhow::anyhow!("qq audio decrypt failed: {e}"))?;
+
+    // Truncate to just the decrypted audio portion (strip the tail)
+    data.truncate(audio_size);
+
+    let content_type = detect_content_type("", &data);
+
+    Ok(QqDecryptResult {
+        data,
+        content_type: content_type.to_owned(),
+    })
+}
+
+// In-memory encrypted-tail parsing.
+
+const MEMORY_MUSICEX_MAGIC: &[u8; 8] = b"musicex\0";
+const MEMORY_QTAG_MAGIC: &[u8; 4] = b"QTag";
+const MEMORY_STAG_MAGIC: &[u8; 4] = b"STag";
+
+fn parse_encrypted_tail_from_bytes(data: &[u8]) -> Option<EncryptedTail> {
+    if data.len() < 8 {
+        return None;
+    }
+
+    let tail8: &[u8; 8] = data[data.len() - 8..].try_into().ok()?;
+    if tail8 == MEMORY_MUSICEX_MAGIC {
+        return parse_musicex_tail_from_bytes(data);
+    }
+
+    let tail4: &[u8; 4] = tail8[4..].try_into().ok()?;
+    if *tail4 == *MEMORY_QTAG_MAGIC || *tail4 == *MEMORY_STAG_MAGIC {
+        return parse_legacy_tail_from_bytes(data, *tail4);
+    }
+    None
+}
+
+fn parse_musicex_tail_from_bytes(data: &[u8]) -> Option<EncryptedTail> {
+    let file_size = data.len() as u64;
+    if file_size < 192 {
+        return None;
+    }
+    let tail_size =
+        u32::from_le_bytes(data[data.len() - 16..data.len() - 12].try_into().ok()?) as u64;
+    if !(17..=4096).contains(&tail_size) || tail_size > file_size {
+        return None;
+    }
+    let tail_start = data.len().checked_sub(tail_size as usize)?;
+    let tail = data.get(tail_start..)?;
+    if !tail.ends_with(MEMORY_MUSICEX_MAGIC) {
+        return None;
+    }
+
+    for (song_range, filename_range, audio_size) in [
+        (12..72, 72..168, file_size - tail_size),
+        (28..88, 88..184, file_size.saturating_sub(tail_size + 16)),
+    ] {
+        if filename_range.end > tail.len() || audio_size == 0 {
+            continue;
+        }
+        let song_mid = decode_memory_utf16_field(tail.get(song_range)?);
+        let filename = decode_memory_utf16_field(tail.get(filename_range)?);
+        if song_mid.starts_with("00") && filename.contains('.') {
+            return Some(EncryptedTail {
+                format: TailFormat::MusicEx,
+                song_mid,
+                filename,
+                audio_size,
+                ekey: None,
+            });
+        }
+    }
+    None
+}
+
+fn parse_legacy_tail_from_bytes(data: &[u8], tag: [u8; 4]) -> Option<EncryptedTail> {
+    let file_size = data.len() as u64;
+    let ekey_len = u32::from_le_bytes(data[data.len() - 8..data.len() - 4].try_into().ok()?) as u64;
+    if ekey_len == 0 || ekey_len > 4096 || ekey_len + 8 > file_size {
+        return None;
+    }
+    let audio_size = file_size - ekey_len - 8;
+    if audio_size == 0 {
+        return None;
+    }
+    let ekey_data = data.get(audio_size as usize..data.len() - 8)?;
+    let (song_mid, ekey) = if tag == *MEMORY_QTAG_MAGIC {
+        let mut fields = ekey_data.splitn(2, |byte| *byte == b',');
+        let song_mid = String::from_utf8_lossy(fields.next().unwrap_or_default()).into_owned();
+        let ekey = String::from_utf8_lossy(fields.next().unwrap_or_default()).into_owned();
+        (song_mid, ekey)
+    } else {
+        (
+            String::new(),
+            String::from_utf8_lossy(ekey_data).into_owned(),
+        )
+    };
+    if ekey.is_empty() {
+        return None;
+    }
+    Some(EncryptedTail {
+        format: TailFormat::Legacy,
+        song_mid,
+        filename: String::new(),
+        audio_size,
+        ekey: Some(ekey),
+    })
+}
+
+fn decode_memory_utf16_field(data: &[u8]) -> String {
+    let units = data
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]));
+    String::from_utf16_lossy(&units.collect::<Vec<_>>())
+        .trim_end_matches('\0')
+        .trim()
+        .to_owned()
+}
+
+// Content-type detection.
+
+fn detect_content_type(url: &str, data: &[u8]) -> &'static str {
+    // Try URL extension first
+    if let Some(ct) = content_type_from_extension(url) {
+        return ct;
+    }
+    // Fall back to magic bytes
+    content_type_from_magic(data)
+}
+
+fn content_type_from_extension(url: &str) -> Option<&'static str> {
+    let path = url.split('?').next().unwrap_or(url);
+    let ext = path.rsplit('.').next()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "mgg" | "ogg" | "opus" => Some("audio/ogg"),
+        "mflac" | "flac" => Some("audio/flac"),
+        "mnac" | "nac" => Some("audio/nac"),
+        "mp3" => Some("audio/mpeg"),
+        "m4a" => Some("audio/mp4"),
+        _ => None,
+    }
+}
+
+fn content_type_from_magic(data: &[u8]) -> &'static str {
+    if data.len() < 4 {
+        return "audio/mpeg";
+    }
+    match &data[..4] {
+        b"OggS" => "audio/ogg",
+        b"fLaC" => "audio/flac",
+        b"ID3\x04" | &[0xff, 0xfb, ..] | &[0xff, 0xf3, ..] | &[0xff, 0xf2, ..] => "audio/mpeg",
+        _ if data.starts_with(b"\x00\x00\x00") && data.get(4..8) == Some(b"ftyp") => "audio/mp4",
+        _ => "audio/mpeg",
     }
 }

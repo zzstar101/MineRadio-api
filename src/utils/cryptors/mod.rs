@@ -6,6 +6,7 @@ pub mod common;
 pub mod kugou;
 pub mod netease;
 pub mod qq;
+pub mod soda;
 
 #[allow(unused_imports)]
 pub use common::{
@@ -24,4 +25,6 @@ pub use netease::{
     encrypt_weapi_rsa, generate_weapi_secret_key,
 };
 #[allow(unused_imports)]
-pub use qq::{decrypt_qrc, decrypt_qrc_file};
+pub use qq::{QqDecryptResult, decrypt_qq_audio, decrypt_qrc, decrypt_qrc_file};
+#[allow(unused_imports)]
+pub use soda::{DecryptDataResult, decrypt_soda_audio};
