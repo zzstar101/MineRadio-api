@@ -90,7 +90,7 @@ pub fn analyze_podcast_dj_beatmap(
             decoded.hop_sec,
             duration,
         );
-        map.partial = Some(true);
+        map.partial = true;
         map.partial_until_sec = Some(duration);
         map.full_duration = Some(decoded.duration);
         map.tempo_source = "podcast-dj-intro".to_owned();
@@ -103,14 +103,13 @@ pub fn analyze_podcast_dj_beatmap(
             decoded.duration,
         )
     };
-    map.decode = Some(decoded.decode);
+    map.decode = decoded.decode;
     Ok(map)
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PodcastDjBeatMap {
-    pub kicks: Vec<f64>,
     pub beats: Vec<PodcastDjBeat>,
     pub pulse_beats: Vec<PodcastDjPulseBeat>,
     pub camera_beats: Vec<PodcastDjBeat>,
@@ -120,16 +119,13 @@ pub struct PodcastDjBeatMap {
     pub section_steps: Vec<f64>,
     pub tempo_source: String,
     pub duration: f64,
-    pub visual_beat_count: usize,
     pub analyzed_at: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partial: Option<bool>,
+    pub partial: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partial_until_sec: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_duration: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decode: Option<Value>,
+    pub decode: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug: Option<Value>,
 }
@@ -199,21 +195,6 @@ struct EnergyDecode {
 }
 
 #[derive(Clone, Debug)]
-struct Profile {
-    time: f64,
-    avg: f64,
-    hi: f64,
-    activity: f64,
-    step: f64,
-    anchor: f64,
-}
-
-#[derive(Clone, Debug)]
-struct PhaseInfo {
-    phase: f64,
-}
-
-#[derive(Clone, Debug)]
 struct Biquad {
     b0: f64,
     b1: f64,
@@ -226,211 +207,6 @@ struct Biquad {
     y2: f64,
 }
 
-fn build_range_beat(
-    time: f64,
-    step_override: f64,
-    grid_index: usize,
-    profiles: &[Profile],
-) -> Beat {
-    let profile = profile_at(profiles, time);
-    let slot = grid_index % 4;
-    let mut combo = match slot {
-        0 => "downbeat",
-        1 => "push",
-        2 => "drop",
-        _ => "rebound",
-    }
-    .to_owned();
-    let section_energy =
-        clamp01((profile.avg - 0.055) / 0.54) * clamp_range(profile.activity, 0.30, 1.10);
-    let motion = ((grid_index as f64 * 1.618 + profile.avg * 9.7).sin() * 0.5
-        + (grid_index as f64 * 0.317).sin() * 0.28)
-        * (0.08 + section_energy * 0.17);
-    let rel = clamp01(
-        0.12 + section_energy * 0.70 + motion + if combo == "downbeat" { 0.060 } else { 0.0 },
-    );
-    if rel > 0.82 && combo != "downbeat" {
-        combo = "accent".to_owned();
-    }
-    let visual_rel = if rel > 0.78 {
-        0.78 + (rel - 0.78) * 0.50
-    } else {
-        rel
-    };
-    let combo_lift = if combo == "downbeat" {
-        0.10 * section_energy
-    } else if combo == "drop" {
-        0.050 * section_energy
-    } else if combo == "accent" {
-        0.075 * section_energy
-    } else {
-        0.0
-    };
-    let impact = clamp_range(
-        0.026 + visual_rel.powf(1.48) * (0.42 + profile.hi * 0.34) + combo_lift,
-        0.020,
-        0.90,
-    );
-    let strength = clamp_range(
-        0.15 + visual_rel.powf(1.02) * 0.66 + combo_lift * 0.68,
-        0.12,
-        0.93,
-    );
-    let camera_active = impact >= 0.105 || (combo == "downbeat" && section_energy >= 0.16);
-    let low = clamp_range(
-        0.50 + visual_rel * 0.32
-            + if combo == "downbeat" {
-                0.050 * section_energy
-            } else {
-                0.0
-            }
-            - if combo == "accent" { 0.12 } else { 0.0 },
-        0.42,
-        0.90,
-    );
-    let body = clamp_range(
-        0.06 + visual_rel * 0.15
-            + if combo == "push" {
-                0.22 * section_energy
-            } else {
-                0.0
-            }
-            + if combo == "drop" {
-                0.30 * section_energy
-            } else {
-                0.0
-            },
-        0.045,
-        0.56,
-    );
-    let snap = clamp_range(
-        0.025
-            + visual_rel * 0.035
-            + if combo == "accent" {
-                0.40 * section_energy
-            } else {
-                0.0
-            }
-            + if combo == "rebound" {
-                0.12 * section_energy
-            } else {
-                0.0
-            },
-        0.02,
-        0.62,
-    );
-    Beat {
-        time,
-        strength,
-        confidence: 0.68 + visual_rel * 0.22,
-        impact,
-        primary: camera_active,
-        camera: camera_active,
-        pulse: impact > 0.16 || (combo == "downbeat" && section_energy >= 0.24),
-        tone: "podcast-dj-server-range-grid".to_owned(),
-        low,
-        body,
-        snap,
-        mass: clamp_range(low * 0.72 + visual_rel.powf(1.22) * 0.24, 0.36, 0.94),
-        sharpness: if combo == "accent" { 0.20 } else { 0.08 },
-        combo,
-        step: step_override.max(0.01),
-        index: grid_index,
-        dj: true,
-        grid: true,
-        kick_only: true,
-        server: true,
-        sampled: Some(true),
-    }
-}
-
-fn profile_at(profiles: &[Profile], time: f64) -> Profile {
-    if profiles.len() <= 1 {
-        return profiles.first().cloned().unwrap_or(Profile {
-            time,
-            avg: 0.16,
-            hi: 0.55,
-            activity: 0.5,
-            step: 0.50,
-            anchor: 0.0,
-        });
-    }
-    let mut prev = profiles[0].clone();
-    let mut next = profiles[profiles.len() - 1].clone();
-    for profile in profiles {
-        if profile.time <= time {
-            prev = profile.clone();
-        }
-        if profile.time >= time {
-            next = profile.clone();
-            break;
-        }
-    }
-    if (prev.time - next.time).abs() < f64::EPSILON {
-        return prev;
-    }
-    let mix = clamp01((time - prev.time) / (next.time - prev.time).max(1.0));
-    Profile {
-        time,
-        avg: prev.avg + (next.avg - prev.avg) * mix,
-        hi: prev.hi + (next.hi - prev.hi) * mix,
-        activity: prev.activity + (next.activity - prev.activity) * mix,
-        step: prev.step + (next.step - prev.step) * mix,
-        anchor: prev.anchor + (next.anchor - prev.anchor) * mix,
-    }
-}
-
-fn phase_from_map(map: &BeatMap, base_step: f64) -> PhaseInfo {
-    let step = clamp_range(map.grid_step.unwrap_or(base_step), 0.32, 0.86);
-    let beats = if !map.camera_beats.is_empty() {
-        map.camera_beats.clone()
-    } else {
-        map.beats.clone()
-    }
-    .into_iter()
-    .filter(|beat| beat.time.is_finite() && beat.time > 0.35)
-    .collect::<Vec<_>>();
-    if beats.is_empty() {
-        return PhaseInfo { phase: 0.0 };
-    }
-    let mut sx = 0.0;
-    let mut sy = 0.0;
-    let mut total = 0.0;
-    for beat in beats {
-        let impact = if beat.impact.is_finite() {
-            beat.impact
-        } else {
-            0.3
-        };
-        let weight = 0.20 + impact.max(0.0).powf(1.45);
-        let phase = ((beat.time % step) + step) % step;
-        let angle = phase / step * std::f64::consts::TAU;
-        sx += angle.cos() * weight;
-        sy += angle.sin() * weight;
-        total += weight;
-    }
-    if total <= 0.0 {
-        return PhaseInfo {
-            phase: beats_first_phase(map, step),
-        };
-    }
-    let mut angle = (sy / total).atan2(sx / total);
-    if angle < 0.0 {
-        angle += std::f64::consts::TAU;
-    }
-    PhaseInfo {
-        phase: angle / std::f64::consts::TAU * step,
-    }
-}
-
-fn beats_first_phase(map: &BeatMap, step: f64) -> f64 {
-    map.camera_beats
-        .first()
-        .or_else(|| map.beats.first())
-        .map(|beat| ((beat.time % step) + step) % step)
-        .unwrap_or(0.0)
-}
-
 fn build_beat_map_from_low_energy(
     low_energy: &[f64],
     hit_energy: &[f64],
@@ -439,7 +215,7 @@ fn build_beat_map_from_low_energy(
 ) -> BeatMap {
     let n_frames = low_energy.len().min(hit_energy.len());
     if n_frames < 20 {
-        return empty_map(duration_sec, "podcast-dj-server-empty", None, None);
+        return empty_map(duration_sec, "podcast-dj-server-empty", None);
     }
 
     let low_floor = percentile(low_energy, 0.22, 16000)
@@ -539,7 +315,6 @@ fn build_beat_map_from_low_energy(
         return empty_map(
             duration_sec.max(n_frames as f64 * hop_sec),
             "podcast-dj-server-empty",
-            None,
             None,
         );
     }
@@ -791,7 +566,6 @@ fn build_beat_map_from_low_energy(
         .collect::<Vec<_>>();
 
     BeatMap {
-        kicks: beats.iter().map(|beat| beat.time).collect(),
         beats,
         pulse_beats,
         camera_beats: camera_beats.clone(),
@@ -799,12 +573,11 @@ fn build_beat_map_from_low_energy(
         section_steps,
         tempo_source: "podcast-dj-server-low-offline".to_owned(),
         duration,
-        visual_beat_count: camera_beats.len(),
         analyzed_at: now_millis(),
-        partial: None,
+        partial: false,
         partial_until_sec: None,
         full_duration: None,
-        decode: None,
+        decode: Value::Null,
         debug: Some(json!({
             "candidates": candidates.len(),
             "hopSec": hop_sec,
@@ -947,14 +720,8 @@ fn estimate_step(candidates: &[Candidate]) -> Option<f64> {
     median(&median_gaps)
 }
 
-fn empty_map(
-    duration: f64,
-    tempo_source: &str,
-    decode: Option<Value>,
-    debug: Option<Value>,
-) -> BeatMap {
+fn empty_map(duration: f64, tempo_source: &str, debug: Option<Value>) -> BeatMap {
     BeatMap {
-        kicks: Vec::new(),
         beats: Vec::new(),
         pulse_beats: Vec::new(),
         camera_beats: Vec::new(),
@@ -962,12 +729,11 @@ fn empty_map(
         section_steps: Vec::new(),
         tempo_source: tempo_source.to_owned(),
         duration: duration.max(0.0),
-        visual_beat_count: 0,
         analyzed_at: now_millis(),
-        partial: None,
+        partial: false,
         partial_until_sec: None,
         full_duration: None,
-        decode,
+        decode: Value::Null,
         debug,
     }
 }
