@@ -178,18 +178,18 @@ pub async fn build_weather_radio(
 
 pub fn open_meteo_weather_label(code: Value) -> &'static str {
     match code.as_f64().map(|value| value as i64) {
-        Some(0) => "鏅?",
-        Some(1) | Some(2) => "灏戜簯",
-        Some(3) => "闃?",
-        Some(45) | Some(48) => "闆?",
-        Some(51) | Some(53) | Some(55) => "姣涙瘺闆?",
-        Some(56) | Some(57) | Some(66) | Some(67) => "鍐婚洦",
-        Some(61) | Some(63) | Some(65) => "闆?",
-        Some(71) | Some(73) | Some(75) | Some(77) => "闆?",
-        Some(80) | Some(81) | Some(82) => "闃甸洦",
-        Some(85) | Some(86) => "闃甸洩",
-        Some(95) | Some(96) | Some(99) => "闆烽洦",
-        _ => "澶╂皵",
+        Some(0) => "晴朗",
+        Some(1) | Some(2) => "少云",
+        Some(3) => "阴天",
+        Some(45) | Some(48) => "雾",
+        Some(51) | Some(53) | Some(55) => "毛毛雨",
+        Some(56) | Some(57) | Some(66) | Some(67) => "冻雨",
+        Some(61) | Some(63) | Some(65) => "雨",
+        Some(71) | Some(73) | Some(75) | Some(77) => "雪",
+        Some(80) | Some(81) | Some(82) => "阵雨",
+        Some(85) | Some(86) => "阵雪",
+        Some(95) | Some(96) | Some(99) => "雷雨",
+        _ => "天气",
     }
 }
 
@@ -217,103 +217,103 @@ fn build_weather_mood_inner(weather: &Value, hour: u32) -> WeatherMood {
 
     let mut mood = WeatherMood {
         key: "clear".to_owned(),
-        title: "鏅存湕鐢靛彴".to_owned(),
-        tagline: "璁╄妭濂忎寒涓€鐐癸紝鍍忕獥杈圭殑鍏?".to_owned(),
+        title: "晴朗电台".to_owned(),
+        tagline: "让节奏亮一点，像窗边的光。".to_owned(),
         energy: 0.62,
         warmth: 0.58,
         focus: 0.48,
         melancholy: 0.24,
         keywords: strings(&[
-            "杞诲揩 鍗庤",
+            "轻快 华语",
             "city pop",
             "indie pop",
             "chill pop",
-            "闃冲厜 姝屽崟",
+            "阳光 歌单",
         ]),
     };
     if is_storm {
         mood = WeatherMood {
             key: "storm".to_owned(),
-            title: "闆烽洦鐢靛彴".to_owned(),
-            tagline: "浣庨鏇村帤锛岄€傚悎鎶婁笘鐣屽叧灏忎竴鐐?".to_owned(),
+            title: "雷雨电台".to_owned(),
+            tagline: "低频更厚，适合把世界关小一点。".to_owned(),
             energy: 0.46,
             warmth: 0.34,
             focus: 0.66,
             melancholy: 0.62,
             keywords: strings(&[
-                "鏆楄壊 R&B",
+                "暗色 R&B",
                 "trip hop",
-                "澶滄櫄 鐢靛瓙",
-                "姘涘洿 鎽囨粴",
-                "闆ㄥ 姝屽崟",
+                "夜晚 电子",
+                "氛围 摇滚",
+                "雨夜 歌单",
             ]),
         };
     } else if is_rain {
         mood = WeatherMood {
             key: "rain".to_owned(),
-            title: "闆ㄥぉ鐢靛彴".to_owned(),
-            tagline: "鐣欎竴鐐规疆婀跨殑绌洪棿缁欐棆寰?".to_owned(),
+            title: "雨天电台".to_owned(),
+            tagline: "留一点潮湿的空间给旋律。".to_owned(),
             energy: 0.38,
             warmth: 0.42,
             focus: 0.64,
             melancholy: 0.66,
             keywords: strings(&[
-                "闆ㄥぉ R&B",
+                "雨天 R&B",
                 "lofi rainy",
-                "鍗庤 鎱㈡瓕",
+                "华语 慢歌",
                 "dream pop",
-                "闆ㄥ 姝屽崟",
+                "雨夜 歌单",
             ]),
         };
     } else if is_snow || feels <= 3.0 {
         mood = WeatherMood {
             key: "snow".to_owned(),
-            title: "鍐风┖姘旂數鍙?".to_owned(),
-            tagline: "骞插噣銆佹參閫熴€佸甫涓€鐐瑰啲澶╃殑棰楃矑鎰?".to_owned(),
+            title: "冷空气电台".to_owned(),
+            tagline: "干净、慢速、带一点冬天的颗粒感。".to_owned(),
             energy: 0.34,
             warmth: 0.28,
             focus: 0.72,
             melancholy: 0.54,
             keywords: strings(&[
-                "鍐ぉ 姘戣埃",
+                "冬天 民谣",
                 "ambient piano",
-                "鏃ョ郴 鍐ぉ",
+                "日系 冬天",
                 "indie folk",
-                "瀹夐潤 姝屽崟",
+                "安静 歌单",
             ]),
         };
     } else if feels >= 31.0 || humidity >= 78.0 {
         mood = WeatherMood {
             key: "humid".to_owned(),
-            title: "闂风儹鐢靛彴".to_owned(),
-            tagline: "闄嶄綆瀵嗗害锛岀暀鍑轰竴鐐瑰懠鍚?".to_owned(),
+            title: "闷热电台".to_owned(),
+            tagline: "降低密度，留出一点呼吸。".to_owned(),
             energy: 0.48,
             warmth: 0.76,
             focus: 0.46,
             melancholy: 0.30,
             keywords: strings(&[
-                "澶忔棩 chill",
+                "夏日 chill",
                 "bossa nova",
-                "city pop 澶忓ぉ",
-                "杞荤數瀛?",
-                "娴疯竟 姝屽崟",
+                "city pop 夏天",
+                "轻电子",
+                "海边 歌单",
             ]),
         };
     } else if is_cloud {
         mood = WeatherMood {
             key: "cloudy".to_owned(),
-            title: "闃村ぉ鐢靛彴".to_owned(),
-            tagline: "涓嶆€ョ潃鏄庝寒锛屽厛璁╁０闊冲彉杞?".to_owned(),
+            title: "阴天电台".to_owned(),
+            tagline: "不急着明亮，先让声音变软。".to_owned(),
             energy: 0.40,
             warmth: 0.46,
             focus: 0.58,
             melancholy: 0.52,
             keywords: strings(&[
-                "闃村ぉ 鍗庤",
+                "阴天 华语",
                 "indie rock mellow",
                 "neo soul",
                 "chillhop",
-                "鐙珛 姘戣埃",
+                "独立 民谣",
             ]),
         };
     }
@@ -321,58 +321,48 @@ fn build_weather_mood_inner(weather: &Value, hour: u32) -> WeatherMood {
     if is_night {
         mood.key.push_str("-night");
         mood.title = if mood.key.starts_with("clear") {
-            "澶滆壊鐢靛彴".to_owned()
+            "夜色电台".to_owned()
         } else {
-            mood.title.replace("鐢靛彴", "澶滃惉")
+            mood.title.replace("电台", "夜听")
         };
-        mood.tagline = "闊抽噺鏀句綆涓€鐐癸紝璁╁鑹插弬涓庣紪鏇?".to_owned();
+        mood.tagline = "音量放低一点，让夜色参与编曲。".to_owned();
         mood.energy = mood.energy.min(0.42);
         mood.focus = mood.focus.max(0.68);
         mood.melancholy = mood.melancholy.max(0.52);
         mood.keywords = prepend_unique(
             strings(&[
-                "澶滄櫄 R&B",
+                "夜晚 R&B",
                 "late night jazz",
                 "ambient",
                 "lofi sleep",
-                "澶滆窇 姝屽崟",
+                "夜跑 歌单",
             ]),
             mood.keywords,
             3,
         );
     } else if is_morning {
         mood.title = if mood.key.starts_with("rain") {
-            "闆ㄦ櫒鐢靛彴"
+            "雨晨电台"
         } else {
-            "鏃╂櫒鐢靛彴"
+            "早晨电台"
         }
         .to_owned();
         mood.energy = mood.energy.max(0.52);
         mood.keywords = prepend_unique(
-            strings(&[
-                "鏃╂櫒 閫氬嫟",
-                "morning acoustic",
-                "娓呮櫒 indie",
-                "杞诲揩 鍗庤",
-            ]),
+            strings(&["早晨 通勤", "morning acoustic", "清晨 indie", "轻快 华语"]),
             mood.keywords,
             3,
         );
     } else if is_dusk {
         mood.title = if mood.key.starts_with("rain") {
-            "榛勬槒闆ㄥ０"
+            "黄昏雨声"
         } else {
-            "榛勬槒鐢靛彴"
+            "黄昏电台"
         }
         .to_owned();
         mood.melancholy = mood.melancholy.max(0.48);
         mood.keywords = prepend_unique(
-            strings(&[
-                "榛勬槒 city pop",
-                "鏃ヨ惤 姝屽崟",
-                "钀芥棩椋炶溅",
-                "soul pop",
-            ]),
+            strings(&["黄昏 city pop", "日落 歌单", "落日飞车", "soul pop"]),
             mood.keywords,
             3,
         );
@@ -381,7 +371,7 @@ fn build_weather_mood_inner(weather: &Value, hour: u32) -> WeatherMood {
     if wind >= 28.0 {
         mood.energy = mood.energy.max(0.56);
         mood.keywords = prepend_unique(
-            strings(&["鍏矾 鎽囨粴", "windy day playlist"]),
+            strings(&["公路 摇滚", "windy day playlist"]),
             mood.keywords,
             4,
         );
@@ -454,7 +444,7 @@ async fn resolve_open_meteo_location(
     let lon = clamp_number(params.lon.as_ref(), -180.0, 180.0, f64::NAN);
     if lat.is_finite() && lon.is_finite() {
         return Ok(WeatherLocation {
-            name: first_param(params).unwrap_or_else(|| "褰撳墠浣嶇疆".to_owned()),
+            name: first_param(params).unwrap_or_else(|| "当前位置".to_owned()),
             country: String::new(),
             admin1: String::new(),
             latitude: Some(lat),
@@ -533,7 +523,7 @@ fn fallback_weather_for_radio(
     WeatherSnapshot {
         provider: "open-meteo".to_owned(),
         location,
-        label: "澶╂皵鏆備笉鍙敤".to_owned(),
+        label: "天气暂不可用".to_owned(),
         weather_code: None,
         temperature: None,
         apparent_temperature: None,
@@ -548,17 +538,17 @@ fn fallback_weather_for_radio(
         error: err.to_string(),
         mood: WeatherMood {
             key: "fallback".to_owned(),
-            title: "涓存椂鐢靛彴".to_owned(),
-            tagline: "澶╂皵鏆傛椂娌℃湁鍥炴潵锛屽厛鏀句竴缁勭ǔ濡ョ殑姝?".to_owned(),
+            title: "临时电台".to_owned(),
+            tagline: "天气暂时没有回来，先放一组稳妥的歌。".to_owned(),
             energy: 0.54,
             warmth: 0.55,
             focus: 0.55,
             melancholy: 0.35,
             keywords: strings(&[
-                "鍗庤 娴佽",
+                "华语 流行",
                 "indie pop",
                 "city pop",
-                "杞诲揩 姝屽崟",
+                "轻快 歌单",
                 "chill pop",
             ]),
         },
@@ -569,46 +559,46 @@ fn weather_radio_seed_queries(mood: &WeatherMood) -> Vec<String> {
     let key = &mood.key;
     if key.contains("rain") || key.contains("storm") {
         return strings(&[
-            "闄堝杩?闃村ぉ蹇箰",
-            "鍛ㄦ澃浼?闆ㄤ笅涓€鏁存櫄",
-            "瀛欑嚂濮?閬囪",
-            "鏋楀鍢?璇磋皫",
-            "姣涗笉鏄?娑堟剚",
+            "陈奕迅 阴天快乐",
+            "周杰伦 雨下一整晚",
+            "孙燕姿 遇见",
+            "林宥嘉 说谎",
+            "毛不易 消愁",
         ]);
     }
     if key.contains("snow") || key.contains("cloudy") {
         return strings(&[
-            "闄堝杩?濂戒箙涓嶈",
-            "鑾枃钄?闃村ぉ",
-            "鏉庡仴 璐濆姞灏旀箹鐣?",
-            "鏈存爲 骞冲嚒涔嬭矾",
-            "钄″仴闆?杈惧皵鏂?",
+            "陈奕迅 好久不见",
+            "莫文蔚 阴天",
+            "李健 贝加尔湖畔",
+            "朴树 平凡之路",
+            "蔡健雅 达尔文",
         ]);
     }
     if key.contains("humid") {
         return strings(&[
-            "钀芥棩椋炶溅 My Jinji",
-            "鍛婁簲浜?鐖变汉閿欒繃",
-            "澶忔棩鍏ヤ镜浼佺敾 鎯冲幓娴疯竟",
-            "闄堢划璐?鏃呰鐨勬剰涔?",
-            "鐜嬭嫢鐞?Lost in Paradise",
+            "落日飞车 My Jinji",
+            "告五人 爱人错过",
+            "夏日入侵企画 想去海边",
+            "陈绮贞 旅行的意义",
+            "王若琳 Lost in Paradise",
         ]);
     }
     if key.contains("night") {
         return strings(&[
-            "鏂瑰ぇ鍚?鐗瑰埆鐨勪汉",
-            "闄跺枂 鐖卞緢绠€鍗?",
+            "方大同 特别的人",
+            "陶喆 爱很简单",
             "Frank Ocean Pink + White",
-            "鏋楀繂鑾?澶滃お榛?",
+            "林忆莲 夜太黑",
             "Norah Jones Don't Know Why",
         ]);
     }
     strings(&[
-        "瀛欑嚂濮?澶╅粦榛?",
-        "鍛ㄦ澃浼?鏅村ぉ",
-        "浜旀湀澶?娓╂煍",
-        "闄堝杩?绋崇ǔ鐨勫垢绂?",
-        "鐜嬭彶",
+        "孙燕姿 天黑黑",
+        "周杰伦 晴天",
+        "五月天 温柔",
+        "陈奕迅 稳稳的幸福",
+        "王菲",
     ])
 }
 
@@ -648,14 +638,16 @@ fn is_low_signal_weather_song(song: &Track) -> bool {
         return true;
     }
     let patterns = [
-        r"(?i)(^|[\s\-_/锛?])ai(?:\s*(姝寍姝屾洸|闊充箰|cover|缈诲敱|鐢熸垚|浣滄洸|婕斿敱|濂冲０|鐢峰０)|$|[\s\-_/锛?])",
-        r"(?i)suno|udio|浜哄伐鏅鸿兘|鐢熸垚姝屾洸|ai姝屾洸|铏氭嫙姝屾墜|娴嬭瘯闊抽|demo|beat\s*maker",
-        r"(?i)缈昏嚜|缈诲敱|cover|remix|浼村|绾煶涔恷閽㈢惔|dj|live\s*鐗坾live鐗坾鍞編閽㈢惔|karaoke|instrumental",
-        r"(?i)鐧藉櫔闊硘闆ㄥ０|鐫＄湢|鍔╃湢|鍐ユ兂|鐤楁剤棰戠巼|鐜闊硘鑷劧澹伴煶|asmr",
-        r"(?i)[锛?](r&b|lofi|jazz|dj|edm|trap|remix|浼村|绾煶涔恷閽㈢惔|鐢靛瓙|娌绘剤|鍙ら|濂冲０|鐢峰０|鑻辨枃|涓枃鐗坾鎶栭煶|ai)[锛?]",
+        r"(?i)(^|[\s\-_/（，])ai(?:\s*(歌|歌曲|音乐|cover|翻唱|生成|作曲|演唱|女声|男声)|$|[\s\-_/），])",
+        r"(?i)suno|udio|人工智能|生成歌曲|ai歌曲|虚拟歌手|测试音频|demo|beat\s*maker",
+        r"(?i)翻自|翻唱|cover|remix|伴奏|纯音乐|钢琴|dj|live\s*版|live版|唯美钢琴|karaoke|instrumental",
+        r"(?i)白噪音|雨声|睡眠|助眠|冥想|疗愈频率|环境音|自然声音|asmr",
+        r"(?i)[（(](r&b|lofi|jazz|dj|edm|trap|remix|伴奏|纯音乐|钢琴|电子|治愈|古风|女声|男声|英文|中文版|抖音|ai)[）)]",
     ];
-    patterns.iter().any(|pattern| regex::Regex::new(pattern).unwrap().is_match(&text))
-        || regex::Regex::new(r"(?i)^(绾煶涔恷杞婚煶涔恷娌绘剤绯粅鏀炬澗|鐫＄湢|闆ㄥぉ|闃村ぉ|澶滄櫄|澶忔棩|娴疯竟)$")
+    patterns
+        .iter()
+        .any(|pattern| regex::Regex::new(pattern).unwrap().is_match(&text))
+        || regex::Regex::new(r"(?i)^(纯音乐|轻音乐|治愈系|放松|睡眠|雨天|阴天|夜晚|夏日|海边)$")
             .unwrap()
             .is_match(song.title.trim())
 }
@@ -669,33 +661,33 @@ fn score_weather_song(song: &Track, mood: &WeatherMood) -> i32 {
     if song.duration_ms.is_some() {
         score += 2;
     }
-    if regex::Regex::new(r"鍛ㄦ澃浼闄堝杩厊瀛欑嚂濮縷浜旀湀澶﹟鐜嬭彶|闄跺枂|鏂瑰ぇ鍚寍鏋楀鍢墊钄″仴闆厊鑾枃钄殀鏉庡仴|姣涗笉鏄搢鍛婁簲浜簗钀芥棩椋炶溅|闄堢划璐瀨鏈存爲").unwrap().is_match(&text) {
+    if regex::Regex::new(r"周杰伦|陈奕迅|孙燕姿|五月天|王菲|陶喆|方大同|林宥嘉|蔡健雅|莫文蔚|李健|毛不易|告五人|落日飞车|陈绮贞|朴树").unwrap().is_match(&text) {
         score += 10;
     }
     let key = &mood.key;
     if key.contains("rain")
-        && regex::Regex::new(r"闆▅闃磡澶渱鎱r&b|soul|闄堝杩厊鏋楀鍢墊瀛欑嚂濮?")
+        && regex::Regex::new(r"雨|阴|夜|慢|r&b|soul|陈奕迅|林宥嘉|孙燕姿")
             .unwrap()
             .is_match(&text)
     {
         score += 5;
     }
     if key.contains("humid")
-        && regex::Regex::new(r"澶弢娴穦city|pop|钀芥棩|鍛婁簲浜簗鏂瑰ぇ鍚寍闄跺枂")
+        && regex::Regex::new(r"夏|海|city|pop|落日|告五人|方大同|陶喆")
             .unwrap()
             .is_match(&text)
     {
         score += 5;
     }
     if key.contains("night")
-        && regex::Regex::new(r"澶渱moon|jazz|soul|r&b|鏂瑰ぇ鍚寍闄跺枂|鐜嬭彶")
+        && regex::Regex::new(r"夜|moon|jazz|soul|r&b|方大同|陶喆|王菲")
             .unwrap()
             .is_match(&text)
     {
         score += 5;
     }
     if key.contains("cloudy")
-        && regex::Regex::new(r"闃磡姘戣埃|indie|闄堢划璐瀨鏈存爲|鏉庡仴")
+        && regex::Regex::new(r"阴|民谣|indie|陈绮贞|朴树|李健")
             .unwrap()
             .is_match(&text)
     {
@@ -722,10 +714,10 @@ fn unique_weather_titles(sorted: Vec<Track>) -> Vec<Track> {
 
 fn weather_title_key(song: &Track) -> String {
     let lower = song.title.to_lowercase();
-    let no_brackets = regex::Regex::new(r"[锛?][^锛?]*[锛?]")
+    let no_brackets = regex::Regex::new(r"[（(][^）)]*[）)]")
         .unwrap()
         .replace_all(&lower, "");
-    regex::Regex::new(r#"[\s._\-路'鈥?鈥溾€濄€屻€嶃€娿€?锛?\\|]+"#)
+    regex::Regex::new(r#"[\s._\-·'“”「」《》（）\\|]+"#)
         .unwrap()
         .replace_all(&no_brackets, "")
         .trim()
@@ -757,7 +749,7 @@ fn diversify_weather_songs(sorted: Vec<Track>, artist_limit: usize) -> Vec<Track
 
 fn weather_artist_key(song: &Track) -> String {
     let raw = song.artists.first().unwrap_or(&song.title);
-    let first = regex::Regex::new(r"\s*/\s*|銆亅,|&")
+    let first = regex::Regex::new(r"\s*/\s*|、|,|&")
         .unwrap()
         .split(raw)
         .next()
@@ -773,7 +765,7 @@ fn weather_artist_key(song: &Track) -> String {
 
 fn default_location(fallback: bool) -> WeatherLocation {
     WeatherLocation {
-        name: "涓婃捣".to_owned(),
+        name: "上海".to_owned(),
         country: "China".to_owned(),
         admin1: String::new(),
         latitude: Some(31.2304),
@@ -859,7 +851,7 @@ mod tests {
             source_id: id.to_owned(),
             media_mid: None,
             title: title.to_owned(),
-            artists: vec!["闄堝杩?".to_owned()],
+            artists: vec!["陈奕迅".to_owned()],
             album: String::new(),
             cover_url: String::new(),
             quality_hints: vec!["standard".to_owned()],
@@ -871,9 +863,9 @@ mod tests {
 
     #[test]
     fn open_meteo_weather_label_preserves_baseline_weather_code_labels() {
-        assert_eq!(open_meteo_weather_label(json!(0)), "鏅?");
-        assert_eq!(open_meteo_weather_label(json!(61)), "闆?");
-        assert_eq!(open_meteo_weather_label(json!(95)), "闆烽洦");
+        assert_eq!(open_meteo_weather_label(json!(0)), "晴朗");
+        assert_eq!(open_meteo_weather_label(json!(61)), "雨");
+        assert_eq!(open_meteo_weather_label(json!(95)), "雷雨");
     }
 
     #[test]
@@ -892,8 +884,8 @@ mod tests {
         );
 
         assert_eq!(mood.key, "rain");
-        assert_eq!(mood.title, "闆ㄥぉ鐢靛彴");
-        assert!(mood.keywords.contains(&"闆ㄥぉ R&B".to_owned()));
+        assert_eq!(mood.title, "雨天电台");
+        assert!(mood.keywords.contains(&"雨天 R&B".to_owned()));
     }
 
     #[tokio::test]
@@ -902,7 +894,7 @@ mod tests {
         let searched_for_dep = Arc::clone(&searched);
         let result = build_weather_radio(
             WeatherRadioParams {
-                city: Some("涓婃捣".to_owned()),
+                city: Some("上海".to_owned()),
                 ..Default::default()
             },
             WeatherRadioDeps {
@@ -922,10 +914,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["ok"], true);
-        assert_eq!(result["weather"]["label"], "澶╂皵鏆備笉鍙敤");
-        assert_eq!(result["radio"]["title"], "涓存椂鐢靛彴");
+        assert_eq!(result["weather"]["label"], "天气暂不可用");
+        assert_eq!(result["radio"]["title"], "临时电台");
         assert_eq!(result["radio"]["songs"].as_array().unwrap().len(), 6);
-        assert_eq!(searched.lock().unwrap()[0], "瀛欑嚂濮?澶╅粦榛?:6");
+        assert_eq!(searched.lock().unwrap()[0], "孙燕姿 天黑黑:6");
     }
 
     #[tokio::test]
@@ -944,7 +936,7 @@ mod tests {
         );
         let result = build_weather_radio(
             WeatherRadioParams {
-                city: Some("涓婃捣".to_owned()),
+                city: Some("上海".to_owned()),
                 ..Default::default()
             },
             WeatherRadioDeps {
@@ -955,15 +947,15 @@ mod tests {
                         Ok(WeatherSnapshot {
                             provider: "open-meteo".to_owned(),
                             location: WeatherLocation {
-                                name: "涓婃捣".to_owned(),
-                                country: "涓浗".to_owned(),
+                                name: "上海".to_owned(),
+                                country: "中国".to_owned(),
                                 admin1: String::new(),
                                 latitude: Some(31.23),
                                 longitude: Some(121.47),
                                 timezone: "Asia/Shanghai".to_owned(),
                                 fallback: false,
                             },
-                            label: "闆?".to_owned(),
+                            label: "雨".to_owned(),
                             weather_code: Some(61.0),
                             temperature: Some(22.0),
                             apparent_temperature: Some(21.0),
@@ -984,8 +976,8 @@ mod tests {
                 search_tracks: Arc::new(|keyword, _limit| {
                     async move {
                         Ok(vec![
-                            track("same", "闃村ぉ蹇箰"),
-                            track("ai", "AI 缈诲敱 demo"),
+                            track("same", "阴天快乐"),
+                            track("ai", "AI 翻唱 demo"),
                             track(&format!("id-{keyword}"), &keyword),
                         ])
                     }
@@ -996,15 +988,15 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result["weather"]["mood"]["title"], "闆ㄥぉ鐢靛彴");
-        assert_eq!(result["radio"]["seedQueries"][0], "闄堝杩?闃村ぉ蹇箰");
+        assert_eq!(result["weather"]["mood"]["title"], "雨天电台");
+        assert_eq!(result["radio"]["seedQueries"][0], "陈奕迅 阴天快乐");
         let titles = result["radio"]["songs"]
             .as_array()
             .unwrap()
             .iter()
             .map(|song| song["title"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert!(!titles.contains(&"AI 缈诲敱 demo".to_owned()));
+        assert!(!titles.contains(&"AI 翻唱 demo".to_owned()));
         let same_count = result["radio"]["songs"]
             .as_array()
             .unwrap()
