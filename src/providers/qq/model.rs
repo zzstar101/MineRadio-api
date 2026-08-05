@@ -5,7 +5,8 @@ use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+    ProviderLoginStatus, RecommendationCard, RecommendationModule, RecommendationPage,
+    RecommendationType, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     VipLevel,
 };
 
@@ -935,6 +936,178 @@ struct CdnData {
     testfilewifi: String,
 }
 
+#[derive(Deserialize)]
+pub(super) struct QqRecommendationResp {
+    req_0: QqRecommendationReq,
+}
+
+impl QqRecommendationResp {
+    pub(super) fn track_ids(&self) -> Vec<String> {
+        self.req_0
+            .data
+            .v_shelf
+            .iter()
+            .filter(|shelf| shelf.id == 207)
+            .flat_map(|shelf| shelf.v_niche.iter())
+            .flat_map(|niche| niche.v_card.iter())
+            .map(|card| card.id.clone())
+            .collect()
+    }
+
+    pub(super) fn standardize(self, mid_by_id: &HashMap<String, String>) -> RecommendationPage {
+        RecommendationPage {
+            provider: ProviderId::Qq,
+            list: self
+                .req_0
+                .data
+                .v_shelf
+                .into_iter()
+                .filter_map(|shelf| shelf.standardize(mid_by_id))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqRecommendationReq {
+    pub(super) data: QqRecommendationData,
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqRecommendationData {
+    pub(super) v_shelf: Vec<VShelf>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct VShelf {
+    pub(super) id: u16,
+    pub(super) title_content: String,
+    pub(super) title_template: String,
+    pub(super) v_niche: Vec<VNiche>,
+}
+
+impl VShelf {
+    fn standardize(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationModule> {
+        match self.id {
+            205 => Some(self.standardize_song_menu()),
+            207 => Some(self.standardize_recommend_songs(mid_by_id)),
+            271 => Some(self.standardize_double_row_song_menu()),
+            272 => Some(self.standardize_recommend_radio()),
+            301 => Some(self.standardize_personal_radio()),
+            _ => None,
+        }
+    }
+
+    fn standardize_song_menu(self) -> RecommendationModule {
+        self.standardize_cards(RecommendationType::Playlist, &HashMap::new())
+    }
+
+    fn standardize_recommend_songs(
+        self,
+        mid_by_id: &HashMap<String, String>,
+    ) -> RecommendationModule {
+        self.standardize_cards(RecommendationType::Track, mid_by_id)
+    }
+
+    fn standardize_double_row_song_menu(self) -> RecommendationModule {
+        self.standardize_cards(RecommendationType::Playlist, &HashMap::new())
+    }
+
+    fn standardize_recommend_radio(self) -> RecommendationModule {
+        self.standardize_cards(RecommendationType::Radio, &HashMap::new())
+    }
+
+    fn standardize_personal_radio(self) -> RecommendationModule {
+        self.standardize_cards(RecommendationType::Radio, &HashMap::new())
+    }
+
+    fn standardize_cards(
+        self,
+        kind: RecommendationType,
+        mid_by_id: &HashMap<String, String>,
+    ) -> RecommendationModule {
+        RecommendationModule {
+            title: self.title_template.replace("{String}", &self.title_content),
+            list: self
+                .v_niche
+                .into_iter()
+                .flat_map(|niche| niche.v_card.into_iter())
+                .filter_map(|card| card.standardize(kind.clone(), mid_by_id))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct VNiche {
+    pub(super) v_card: Vec<VCard>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct VCard {
+    pub(super) cover: String,
+    pub(super) id: String,
+    pub(super) subtitle: String,
+    pub(super) title: String,
+}
+
+impl VCard {
+    fn standardize(
+        self,
+        kind: RecommendationType,
+        mid_by_id: &HashMap<String, String>,
+    ) -> Option<RecommendationCard> {
+        let id = match kind {
+            RecommendationType::Track => mid_by_id.get(&self.id)?.clone(),
+            _ => self.id,
+        };
+
+        Some(RecommendationCard {
+            id,
+            title: self.title,
+            subtitle: self.subtitle,
+            cover_url: self.cover,
+            collected: None,
+            kind,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct QqTrackInfo {
+    //实际上有全功能但是这里的用途是转换id->mid
+    req_0: QqTrackReq,
+}
+
+impl QqTrackInfo {
+    pub(super) fn standardize(self) -> Option<HashMap<String, String>> {
+        let mids = self
+            .req_0
+            .data
+            .tracks
+            .into_iter()
+            .map(|track| (track.id.to_string(), track.mid))
+            .collect::<HashMap<_, _>>();
+        (!mids.is_empty()).then_some(mids)
+    }
+}
+
+#[derive(Deserialize)]
+struct QqTrackReq {
+    data: QqTrackData,
+}
+
+#[derive(Deserialize)]
+struct QqTrackData {
+    tracks: Vec<QqTrackIdMid>,
+}
+
+#[derive(Deserialize)]
+struct QqTrackIdMid {
+    id: i64,
+    mid: String,
+}
+
 //Reusable Struct
 #[derive(Debug, Deserialize)]
 struct File {
@@ -1015,18 +1188,21 @@ struct Album {
 
 #[derive(Debug, Deserialize)]
 struct Identified {
-    pub mid: String,
-    pub name: String,
+    mid: String,
+    name: String,
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use serde_json::json;
 
     use super::{
         QqLoginProfile, QqLoginStatusData, QqLoginStatusResp, QqPlaylistList1Resp,
-        QqPlaylistSongWriteResp,
+        QqPlaylistSongWriteResp, QqRecommendationResp, QqTrackInfo,
     };
+    use crate::types::RecommendationType;
 
     #[test]
     fn login_status_survives_missing_vip_response() {
@@ -1091,5 +1267,67 @@ mod tests {
         .expect("deserialize QQ playlist write response");
 
         assert!(response.succeeded());
+    }
+
+    #[test]
+    fn recommendation_standardizes_known_shelves_and_replaces_track_ids_with_mids() {
+        let response: QqRecommendationResp = serde_json::from_value(json!({
+            "req_0": {
+                "data": {
+                    "v_shelf": [
+                        { "id": 205, "title_content": "", "title_template": "歌单", "v_niche": [{ "v_card": [{ "cover": "playlist-cover", "id": "playlist-id", "subtitle": "", "title": "歌单", "type": 500 }] }] },
+                        { "id": 207, "title_content": "", "title_template": "单曲", "v_niche": [{ "v_card": [{ "cover": "track-cover", "id": "123", "subtitle": "歌手", "title": "单曲", "type": 200 }, { "cover": "missing-cover", "id": "456", "subtitle": "", "title": "缺失 MID", "type": 200 }] }] },
+                        { "id": 271, "title_content": "", "title_template": "双列歌单", "v_niche": [{ "v_card": [{ "cover": "double-playlist-cover", "id": "double-playlist-id", "subtitle": "", "title": "双列歌单", "type": 500 }] }] },
+                        { "id": 272, "title_content": "", "title_template": "电台", "v_niche": [{ "v_card": [{ "cover": "radio-cover", "id": "radio-id", "subtitle": "", "title": "电台", "type": 400 }] }] },
+                        { "id": 301, "title_content": "", "title_template": "个性电台", "v_niche": [{ "v_card": [{ "cover": "personal-radio-cover", "id": "personal-radio-id", "subtitle": "", "title": "个性电台", "type": 700 }] }] },
+                        { "id": 206, "title_content": "", "title_template": "Banner", "v_niche": [{ "v_card": [{ "cover": "banner-cover", "id": "banner-id", "subtitle": "", "title": "Banner", "type": 900 }] }] }
+                    ]
+                }
+            }
+        }))
+        .expect("deserialize recommendation response");
+
+        assert_eq!(response.track_ids(), vec!["123", "456"]);
+
+        let page = response.standardize(&HashMap::from([(
+            "123".to_owned(),
+            "0039MnYb0qxYhV".to_owned(),
+        )]));
+
+        assert_eq!(page.list.len(), 5);
+        assert_eq!(page.list[1].list.len(), 1);
+        assert_eq!(page.list[1].list[0].id, "0039MnYb0qxYhV");
+        assert!(matches!(
+            page.list[1].list[0].kind,
+            RecommendationType::Track
+        ));
+        assert!(matches!(
+            page.list[3].list[0].kind,
+            RecommendationType::Radio
+        ));
+        assert!(matches!(
+            page.list[4].list[0].kind,
+            RecommendationType::Radio
+        ));
+    }
+
+    #[test]
+    fn track_info_standardizes_mids_by_numeric_id() {
+        let response: QqTrackInfo = serde_json::from_value(json!({
+            "req_0": {
+                "data": {
+                    "tracks": [
+                        { "id": 456, "mid": "004mW2K50JTkls" },
+                        { "id": 123, "mid": "0039MnYb0qxYhV" }
+                    ]
+                }
+            }
+        }))
+        .expect("deserialize track info response");
+
+        let mid_by_id = response.standardize().expect("non-empty track info");
+
+        assert_eq!(mid_by_id.get("123"), Some(&"0039MnYb0qxYhV".to_owned()));
+        assert_eq!(mid_by_id.get("456"), Some(&"004mW2K50JTkls".to_owned()));
     }
 }

@@ -12,9 +12,10 @@ use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use crate::providers::qq::model::{
-    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqSongUrlResp, QqVipIconResp,
+    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqRecommendationResp, QqSongUrlResp,
+    QqTrackInfo, QqVipIconResp,
 };
-use crate::utils::cryptors::qq::{x4, x5, x9, xj};
+use crate::utils::cryptors::qq::{x4, x5, x7, x9, xj};
 use crate::{
     providers::{
         ProviderId, ProviderResult,
@@ -665,6 +666,54 @@ impl QqClient {
         .await
     }
 
+    pub(super) async fn recommend_page(&self) -> ProviderResult<QqRecommendationResp> {
+        self.post_json_with_sign(
+            json!({
+                "req_0": {
+                    "module": "music.recommend.RecommendFeed",
+                    "method": "get_recommend_feed",
+                    "param": {
+                        "direction": 0,
+                        "page": 1,
+                        "v_cache": [],
+                        "v_uniq": [],
+                        "s_num": 0
+                    }
+                }
+            }),
+            Some("https://i2.y.qq.com/n3/wk_v20/entry/index/recommend?nosaveurl=1"),
+            self.current_cookie().await.as_deref(),
+            "recommend_page",
+            false,
+        )
+        .await
+    }
+
+    pub(super) async fn get_mids_by_ids(
+        &self,
+        ids: Vec<String>,
+    ) -> ProviderResult<std::collections::HashMap<String, String>> {
+        let q: QqTrackInfo = self
+            .post_json_with_sign(
+                json!({
+                    "req_0": {
+                        "module": "music.trackInfo.UniformRuleCtrl",
+                        "method": "CgiGetTrackInfo",
+                        "param": {
+                            "ids": ids,
+                            "types": vec![200; ids.len()],
+                        }
+                    },
+                }),
+                None,
+                self.current_cookie().await.as_deref(),
+                "get_mids_by_ids",
+                false,
+            )
+            .await?;
+        q.standardize()
+            .ok_or_else(|| unavailable_error("get_mids_by_ids"))
+    }
     async fn post_json_with_sign<T: DeserializeOwned>(
         &self,
         body: Value,
@@ -673,7 +722,6 @@ impl QqClient {
         action: &str,
         s: bool,
     ) -> ProviderResult<T> {
-        let sign = self.get_sign(&body)?;
         let now = SystemTime::now();
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
@@ -694,7 +742,13 @@ impl QqClient {
             json!(cookie_key(c, "qm_keyst").unwrap_or_default()),
         );
 
-        comm_obj.insert("ct".to_string(), json!("19"));
+        comm_obj.insert("format".to_string(), json!("json"));
+        comm_obj.insert("platform".to_string(), json!("wk_v17"));
+        comm_obj.insert("inCharset".to_string(), json!("utf-8"));
+        comm_obj.insert("outCharset".to_string(), json!("utf-8"));
+        comm_obj.insert("notice".to_string(), json!(0));
+        comm_obj.insert("needNewCode".to_string(), json!(1));
+        comm_obj.insert("ct".to_string(), json!("20"));
         comm_obj.insert("cv".to_string(), json!("2230"));
         comm_obj.insert(
             "guid".to_string(),
@@ -733,7 +787,9 @@ impl QqClient {
             json!(self.uin().await.unwrap_or_default()),
         );
         comm_obj.insert("wid".to_string(), json!("4810302018970526720"));
-
+        let g_tk = x7(&cookie_key(c, "musickey").unwrap_or_default()).to_string();
+        comm_obj.insert("g_tk_new_20200303".to_string(), json!(&g_tk));
+        comm_obj.insert("g_tk".to_string(), json!(&g_tk));
         if let Some(obj) = req.as_object_mut() {
             obj.insert("comm".to_string(), comm_obj.into());
         }
@@ -742,7 +798,7 @@ impl QqClient {
             _ => since_epoch.as_secs() * 1000 + since_epoch.subsec_millis() as u64,
         }
         .to_string();
-
+        let sign = self.get_sign(&req)?;
         let mut h = build_headers(referer, cookie, false)?;
         let q = [xj(0x7063_6163_6865_7469), xj(0x6d65)].concat();
         let query: Vec<(&str, &str)> = if s {
@@ -763,9 +819,9 @@ impl QqClient {
 
             vec![(&q, &t)]
         } else {
-            vec![("sign", sign.as_str()), ("_", &t)]
+            vec![("sign", &sign), ("_", &t)]
         };
-
+        println!("{}", req.to_string());
         let response = self
             .http
             .post("https://u.y.qq.com/cgi-bin/musics.fcg")
@@ -781,7 +837,7 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
-        println!("{}", String::from_utf8_lossy(&raw).into_owned());
+        //println!("{}", String::from_utf8_lossy(&raw).into_owned());
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,

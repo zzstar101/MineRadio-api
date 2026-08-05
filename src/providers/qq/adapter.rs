@@ -12,8 +12,8 @@ use crate::{
     services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongUrlOptions,
-        SongUrlResult, Track, TrackQualityAvailability,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
     utils::decrypt_qrc,
 };
@@ -441,6 +441,21 @@ impl ProviderAdapter for QqAdapter {
             action: None,
             raw_message: None,
         })
+    }
+
+    async fn recommendation_page(&self) -> ProviderResult<RecommendationPage> {
+        let response = self.client.recommend_page().await?;
+        let mut track_ids = response.track_ids();
+        track_ids.sort_unstable();
+        track_ids.dedup();
+
+        let mid_by_id = if track_ids.is_empty() {
+            HashMap::new()
+        } else {
+            self.client.get_mids_by_ids(track_ids).await?
+        };
+
+        Ok(response.standardize(&mid_by_id))
     }
 }
 
