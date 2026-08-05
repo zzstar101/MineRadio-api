@@ -4,7 +4,6 @@ extern crate async_trait;
 
 pub mod api;
 pub mod config;
-pub(crate) mod http;
 #[path = "vendor/librespot_audio/lib.rs"]
 mod librespot_audio;
 #[path = "vendor/librespot_core/lib.rs"]
@@ -21,3 +20,11 @@ pub(crate) mod utils;
 
 pub use api::{Api, ApiError, ApiErrorCode, ApiResult};
 pub use config::LibraryConfig;
+pub use services::sidecar_log::{log_runtime, spawn_runtime_log};
+pub use utils::cryptors::{
+    DecryptDataResult, QqDecryptResult, decrypt_qq_audio, decrypt_soda_audio,
+};
+pub use utils::{
+    PodcastAudioFormat, PodcastDjAnalyzerParams, PodcastDjBeat, PodcastDjBeatMap,
+    PodcastDjPulseBeat, analyze_podcast_dj_beatmap,
+};
