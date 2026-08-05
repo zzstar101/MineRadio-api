@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{client::NeteaseClient, map::map_playable};
+use super::{client::NeteaseClient, map::map_playable, model};
 
 #[derive(Clone, Copy)]
 struct QualityCandidate {
@@ -663,6 +663,37 @@ impl ProviderAdapter for NeteaseAdapter {
             success: true,
             code: Some(response_code(&final_response)),
         })
+    }
+
+    async fn recommendation_page(&self) -> ProviderResult<crate::types::RecommendationPage> {
+        self.client.ensure_login().await?;
+
+        let (daily_songs, recommended_playlists, personalized_playlists, hot_radios) = tokio::join!(
+            self.client.recommend_songs(),
+            self.client.recommend_resource(),
+            self.client.personalized(8),
+            self.client.dj_hot(6, 0),
+        );
+        let all_failed = daily_songs.is_err()
+            && recommended_playlists.is_err()
+            && personalized_playlists.is_err()
+            && hot_radios.is_err();
+        if all_failed {
+            return Err(unavailable(
+                "netease recommendation requests failed".to_owned(),
+            ));
+        }
+
+        let page = model::recommendation_page(
+            daily_songs.ok(),
+            recommended_playlists.ok(),
+            personalized_playlists.ok(),
+            hot_radios.ok(),
+        );
+        if page.list.is_empty() {
+            return Err(no_result("recommend_page"));
+        }
+        Ok(page)
     }
 }
 

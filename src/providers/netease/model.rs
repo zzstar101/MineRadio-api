@@ -1,12 +1,238 @@
 use serde::Deserialize;
+use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, Track, VipLevel,
+    ProviderLoginStatus, RecommendationCard, RecommendationModule, RecommendationPage,
+    RecommendationType, Track, VipLevel,
 };
 
 use super::map::normalize_provider_image_url;
+
+pub(super) fn recommendation_page(
+    daily_songs: Option<Value>,
+    recommended_playlists: Option<Value>,
+    personalized_playlists: Option<Value>,
+    hot_radios: Option<Value>,
+) -> RecommendationPage {
+    let mut list = Vec::new();
+
+    if let Some(module) = daily_songs.and_then(daily_songs_module) {
+        list.push(module);
+    }
+    if let Some(module) = recommended_playlists.and_then(recommended_playlists_module) {
+        list.push(module);
+    }
+    if let Some(module) = personalized_playlists.and_then(personalized_playlists_module) {
+        list.push(module);
+    }
+    if let Some(module) = hot_radios.and_then(hot_radios_module) {
+        list.push(module);
+    }
+
+    RecommendationPage {
+        provider: ProviderId::Netease,
+        list,
+    }
+}
+
+fn daily_songs_module(body: Value) -> Option<RecommendationModule> {
+    let response: NeteaseDailySongsResp = serde_json::from_value(body).ok()?;
+    recommendation_module(
+        "每日歌曲",
+        response
+            .data
+            .daily_songs
+            .into_iter()
+            .filter_map(|song| {
+                non_empty_card(
+                    song.id.to_string(),
+                    song.name,
+                    song.artists
+                        .into_iter()
+                        .map(|artist| artist.name)
+                        .collect::<Vec<_>>()
+                        .join(" / "),
+                    song.album.pic_url,
+                    RecommendationType::Track,
+                )
+            })
+            .take(12)
+            .collect(),
+    )
+}
+
+fn recommended_playlists_module(body: Value) -> Option<RecommendationModule> {
+    let response: NeteaseRecommendedPlaylistsResp = serde_json::from_value(body).ok()?;
+    recommendation_module(
+        "推荐歌单",
+        response
+            .recommend
+            .into_iter()
+            .filter_map(playlist_card)
+            .take(6)
+            .collect(),
+    )
+}
+
+fn personalized_playlists_module(body: Value) -> Option<RecommendationModule> {
+    let response: NeteasePersonalizedPlaylistsResp = serde_json::from_value(body).ok()?;
+    recommendation_module(
+        "个性化歌单",
+        response
+            .result
+            .into_iter()
+            .filter_map(playlist_card)
+            .take(8)
+            .collect(),
+    )
+}
+
+fn hot_radios_module(body: Value) -> Option<RecommendationModule> {
+    let response: NeteaseHotRadiosResp = serde_json::from_value(body).ok()?;
+    recommendation_module(
+        "热门电台",
+        response
+            .dj_radios
+            .into_iter()
+            .filter_map(|radio| {
+                non_empty_card(
+                    radio.id.to_string(),
+                    radio.name,
+                    non_empty_text(&[radio.description, radio.dj.nickname, radio.category]),
+                    radio.pic_url,
+                    RecommendationType::Radio,
+                )
+            })
+            .take(6)
+            .collect(),
+    )
+}
+
+fn recommendation_module(
+    title: &str,
+    list: Vec<RecommendationCard>,
+) -> Option<RecommendationModule> {
+    (!list.is_empty()).then(|| RecommendationModule {
+        title: title.to_owned(),
+        list,
+    })
+}
+
+fn playlist_card(playlist: NeteaseRecommendedPlaylist) -> Option<RecommendationCard> {
+    non_empty_card(
+        playlist.id.to_string(),
+        playlist.name,
+        playlist.copywriter,
+        playlist.pic_url,
+        RecommendationType::Playlist,
+    )
+}
+
+fn non_empty_card(
+    id: String,
+    title: String,
+    subtitle: String,
+    cover_url: String,
+    kind: RecommendationType,
+) -> Option<RecommendationCard> {
+    (!id.is_empty() && id != "0" && !title.is_empty()).then(|| RecommendationCard {
+        id,
+        title,
+        subtitle,
+        kind,
+        cover_url: normalize_provider_image_url(&cover_url),
+        collected: None,
+    })
+}
+
+fn non_empty_text(values: &[String]) -> String {
+    values
+        .iter()
+        .find(|value| !value.is_empty())
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseDailySongsResp {
+    data: NeteaseDailySongsData,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseDailySongsData {
+    daily_songs: Vec<NeteaseRecommendedSong>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseRecommendedSong {
+    id: i64,
+    name: String,
+    #[serde(rename = "ar")]
+    artists: Vec<NameOnly>,
+    #[serde(rename = "al")]
+    album: NeteaseRecommendationAlbum,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseRecommendationAlbum {
+    pic_url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseRecommendedPlaylistsResp {
+    #[serde(default)]
+    recommend: Vec<NeteaseRecommendedPlaylist>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteasePersonalizedPlaylistsResp {
+    #[serde(default)]
+    result: Vec<NeteaseRecommendedPlaylist>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseRecommendedPlaylist {
+    id: i64,
+    name: String,
+    pic_url: String,
+    copywriter: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseHotRadiosResp {
+    #[serde(default)]
+    dj_radios: Vec<NeteaseHotRadio>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeteaseHotRadio {
+    id: i64,
+    name: String,
+    pic_url: String,
+    #[serde(alias = "desc", default)]
+    description: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    dj: NeteaseRadioDj,
+}
+
+#[derive(Default, Deserialize)]
+struct NeteaseRadioDj {
+    #[serde(default)]
+    nickname: String,
+}
 
 #[derive(Deserialize)]
 pub(super) struct NeteaseSearchTrackResp {
@@ -586,5 +812,56 @@ mod tests {
         assert_eq!(tracks[0].album, "Album");
         assert_eq!(tracks[0].cover_url, "https://a/b.jpg");
         assert_eq!(tracks[0].duration_ms, Some(1234));
+    }
+
+    #[test]
+    fn recommendation_cards_keep_their_own_types() {
+        let page = recommendation_page(
+            Some(json!({
+                "data": {
+                    "dailySongs": [{
+                        "id": 1,
+                        "name": "Daily track",
+                        "ar": [{"name": "Artist"}],
+                        "al": {"picUrl": "http://img.example/song.jpg"}
+                    }]
+                }
+            })),
+            Some(json!({
+                "recommend": [{
+                    "id": 2,
+                    "name": "Recommended playlist",
+                    "picUrl": "http://img.example/playlist.jpg",
+                    "copywriter": "For you"
+                }]
+            })),
+            None,
+            Some(json!({
+                "djRadios": [{
+                    "id": 3,
+                    "name": "Radio",
+                    "picUrl": "http://img.example/radio.jpg",
+                    "desc": "Description",
+                    "category": "Talk",
+                    "dj": {"nickname": "Host"}
+                }]
+            })),
+        );
+
+        assert_eq!(page.list.len(), 3);
+        assert_eq!(page.list[0].title, "每日歌曲");
+        assert!(matches!(
+            page.list[0].list[0].kind,
+            RecommendationType::Track
+        ));
+        assert!(matches!(
+            page.list[1].list[0].kind,
+            RecommendationType::Playlist
+        ));
+        assert!(matches!(
+            page.list[2].list[0].kind,
+            RecommendationType::Radio
+        ));
+        assert_eq!(page.list[2].list[0].subtitle, "Description");
     }
 }
