@@ -10,4 +10,7 @@ pub use cryptors::{
     to_hex_lower, to_hex_upper,
 };
 #[allow(unused_imports)]
-pub use podcast_analyzer::{PodcastDjAnalyzerParams, analyze_podcast_dj_beatmap};
+pub use podcast_analyzer::{
+    PodcastAudioFormat, PodcastDjAnalyzerParams, PodcastDjBeat, PodcastDjBeatMap,
+    PodcastDjPulseBeat, analyze_podcast_dj_beatmap,
+};

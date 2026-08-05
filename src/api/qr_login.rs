@@ -27,12 +27,12 @@ impl QrLoginApi {
     ) -> ApiResult<T> {
         match AssertUnwindSafe(future).catch_unwind().await {
             Ok(Ok(value)) => Ok(value),
-            Ok(Err(error)) if error.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => Err(
-                ApiError::new(
+            Ok(Err(error)) if error.to_string() == "KUGOU_QR_LOGIN_NOT_IMPLEMENTED" => {
+                Err(ApiError::new(
                     ApiErrorCode::NotImplemented,
                     "QR login is not implemented for this provider",
-                ),
-            ),
+                ))
+            }
             Ok(Err(error)) => {
                 tracing::warn!(operation, error = %error, "QR login operation failed");
                 Err(ApiError::new(failure, "QR login request failed"))
@@ -45,8 +45,12 @@ impl QrLoginApi {
     }
 
     pub async fn create_key(&self) -> ApiResult<ProviderLoginQrKey> {
-        self.call("create_key", ApiErrorCode::Internal, self.service.create_key())
-            .await
+        self.call(
+            "create_key",
+            ApiErrorCode::Internal,
+            self.service.create_key(),
+        )
+        .await
     }
 
     pub async fn create_image(&self, key: &str) -> ApiResult<ProviderLoginQrImage> {
