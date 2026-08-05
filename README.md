@@ -1,6 +1,6 @@
 # MineRadio API
 
-Mineradio-tauri 的 Rust sidecar HTTP API。它在本机启动一个 `axum` 服务，为桌面端提供音乐 provider、二维码登录、播放与图片代理、播客、天气电台和分享歌单导入能力。
+MineRadio-api 是一个 Rust 库（crate），为桌面音乐应用提供多平台音乐 provider、二维码登录、音频解密、播客节拍分析和分享歌单导入能力。宿主应用通过静态链接直接调用其公开 API。
 
 ---
 
@@ -21,139 +21,180 @@ Mineradio-tauri 的 Rust sidecar HTTP API。它在本机启动一个 `axum` 服�
 
 要求：Rust stable（项目使用 Rust 2024 edition）。
 
-```powershell
-git clone https://github.com/zzstar101/MineRadio-api.git
-cd .\MineRadio-api\
-.\run-dev.ps1
-```
-该脚本会将 Provider Cookie 会话保存到 `%APPDATA%\MineRadio-Tauri\provider-sessions.json`，将日志写入 `%APPDATA%\MineRadio-Tauri\mineradio-sidecar.jsonl`，并使用端口 `11451`。
-服务默认仅监听 `127.0.0.1`。未设置 `MINERADIO_SIDECAR_PORT` 时使用端口 `0`，由操作系统分配可用端口；启动日志会打印实际地址。
+在 `Cargo.toml` 中添加依赖：
 
-验证服务：
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:11451/health
+```toml
+[dependencies]
+mineradio_api = { git = "https://github.com/zzstar101/MineRadio-api.git" }
 ```
 
-示例响应：
+初始化库并调用：
 
-```json
-{
-  "ok": true,
-  "appVersion": "0.0.0-dev",
-  "apiVersion": "0.1.0",
-  "schemaVersion": "0.1.0",
-  "providers": ["netease", "qq", "soda"]
+```rust
+use mineradio_api::{Api, ApiError, ApiErrorCode, LibraryConfig, ProviderId, Track};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = LibraryConfig {
+        app_version: "1.0.0".into(),
+        log_path: Some("mineradio.log".into()),
+        cookie_file: Some("cookies.json".into()),
+        ..Default::default()
+    };
+
+    let api = Api::init(config).await?;
+
+    // 跨源搜索
+    let tracks = api.search_tracks("关键词", None, 20).await?;
+
+    // 使用指定 provider
+    let status = api.qq.login_status().await?;
+
+    // 优雅关闭
+    api.shutdown().await?;
+
+    Ok(())
 }
 ```
 
+## 核心架构
+
+```
+Api::init(LibraryConfig)
+├── api.qq          ProviderApi    ← QQ 音乐
+├── api.netease     ProviderApi    ← 网易云音乐
+├── api.soda        ProviderApi    ← 汽水音乐
+├── api.kugou       ProviderApi    ← 酷狗音乐
+├── api.spotify     ProviderApi    ← Spotify
+├── api.search_tracks()            ← 跨源搜索
+├── api.song_url()                 ← 跨源解析播放地址
+└── api.recommendation_pages()     ← 发现页聚合
+```
+
+`ProviderApi` 提供该平台的全部能力（搜索、播放、歌词、歌单、收藏、登录管理等），并内聚一个或多个 `QrLoginApi` 用于二维码登录。
+
 ## 主要能力
 
-- 网易云、QQ、Soda provider：搜索、播放地址、歌词、音质、歌单和登录状态。
-- QQ、网易云、Soda 二维码登录与本地 Cookie 会话管理。
-- 音频、图片及 Soda 音频代理。
-- 跨 provider 搜索与播放地址解析。
-- 播客、天气电台、发现页和分享歌单导入。
-- 酷狗核心请求与签名客户端；尚未作为 HTTP provider 注册。
+| 能力 | 说明 |
+| --- | --- |
+| 音乐搜索 | 跨源 / 单源搜索歌曲、专辑、歌单 |
+| 播放地址解析 | 解析各平台歌曲播放 URL 与音质可用性 |
+| 歌词 | 获取 LRC 歌词，含逐字时间轴 |
+| 歌单管理 | 创建 / 查看歌单，添加 / 移除歌曲 |
+| 专辑 | 查看已收藏专辑与专辑详情 |
+| 二维码登录 | QQ（QQ/微信/QQ音乐 App 三种协议）、网易云、汽水、酷狗 |
+| Cookie 会话管理 | 本地持久化与内存模式，支持登出 |
+| 发现页 / 推荐 | 单源与跨源聚合发现页 |
+| 音频解密 | QQ 音乐、汽水音乐加密音频解密 |
+| 播客 DJ 节拍图 | 基于音频数据分析生成节拍图 |
+| 天气电台 | 根据天气信息生成推荐歌单 |
+| 分享歌单导入 | 解析音乐平台分享链接并导入歌单 |
 
-## 鸣谢
+## API 概览
 
-- QQ 音乐 MQTT 扫码登录和 sign 计算实现参考于 [AstronW/netease-qq-music-api](https://github.com/AstronW/netease-qq-music-api), 相关移植代码遵循其 MIT 许可证。
+### 库级入口
 
-## API 文档
+- `Api::init(config: LibraryConfig)` — 初始化所有 provider、日志与会话持久化
+- `api.shutdown()` — 优雅关闭，写入退出日志
+- `api.search_tracks(keyword, provider, limit)` — 跨源搜索
+- `api.song_url(track, options)` — 跨源解析播放地址
+- `api.recommendation_pages()` — 跨源聚合发现页
 
-- [完整路由、参数与响应示例](docs/PROVIDERS_API.md)
-- [Provider 能力举证与人工测试 TODO](docs/PROVIDERS_TODO.md)
+### ProviderApi（每个 provider 独立提供）
 
-除 `/health` 与代理类路由外，成功 JSON 响应使用：
+- `provider.id()` — 返回 `ProviderId`（`Qq` / `Netease` / `Soda` / `Kugou` / `Spotify`）
+- `provider.search_track(keyword, offset, limit)` — 搜索歌曲
+- `provider.search_album(keyword, offset, limit)` — 搜索专辑
+- `provider.search_playlist(keyword, offset, limit)` — 搜索歌单
+- `provider.song_url(track, options)` — 解析播放地址
+- `provider.track_qualities(track)` — 查询音质可用性
+- `provider.lyric(track)` — 获取歌词
+- `provider.playlist_list()` — 已收藏歌单列表
+- `provider.playlist_detail(id, offset, limit)` — 歌单详情
+- `provider.album_list()` — 已收藏专辑列表
+- `provider.album_detail(id, offset, limit)` — 专辑详情
+- `provider.login_status()` — 登录状态
+- `provider.logout()` — 登出
+- `provider.like_song(id, liked)` — 收藏 / 取消收藏
+- `provider.check_song_likes(ids)` — 批量查询收藏状态
+- `provider.update_song_in_playlist(playlist_id, track_id, adding)` — 添加 / 移除歌单歌曲
+- `provider.recommendation_page()` — 发现页
+- `provider.qr_login` — `Vec<QrLoginApi>`，该 provider 可用的一种或多种登录协议
 
-```json
-{ "ok": true, "data": {} }
+### QrLoginApi
+
+- `qr.create_key()` — 获取二维码 key
+- `qr.create_image(key)` — 生成二维码图片
+- `qr.check(key)` — 轮询扫码状态
+
+### 导出工具函数
+
+库根路径直接导出以下函数，无需通过 `Api` 实例：
+
+```rust
+use mineradio_api::{
+    decrypt_qq_audio,        // 解密 QQ 音乐音频
+    decrypt_soda_audio,      // 解密汽水音乐音频
+    AudioDecryptResult,      // 解密结果类型
+    analyze_podcast_dj_beatmap, // 分析播客 DJ 节拍图
+    PodcastDjBeatMap,
+    PodcastDjBeat,
+    PodcastDjPulseBeat,
+    PodcastAudioFormat,
+    PodcastDjAnalyzerParams,
+    log_runtime,             // 写入结构化运行时日志
+    spawn_runtime_log,       // 启动后台日志提交任务
+};
 ```
 
-失败响应使用：
+## 配置
 
-```json
-{ "ok": false, "error": { "code": "BAD_REQUEST", "message": "..." } }
+`LibraryConfig` 结构体由宿主在初始化时传入：
+
+```rust
+pub struct LibraryConfig {
+    pub app_version: String,        // 应用版本号，写入日志
+    pub api_version: String,        // API 版本号
+    pub schema_version: String,     // schema 版本号
+    pub log_path: Option<PathBuf>,  // JSONL 日志路径；None 不写文件
+    pub cookie_file: Option<PathBuf>, // Cookie 持久化文件；None 仅内存
+}
 ```
 
-## 常用接口
+所有字段均可使用 `Default`：
 
-```text
-GET  /health
-GET  /providers/capabilities
-GET  /search?keyword=...
-POST /song-url
-
-GET  /providers/{pid}/login-qr-key
-GET  /providers/{pid}/login-qr-create?key=...
-GET  /providers/{pid}/login-qr-check?key=...
-POST /providers/{pid}/session-cookie
-DELETE /providers/{pid}/session-cookie
-POST /providers/{pid}/session-cookie/clear
-GET  /providers/{pid}/search?keyword=...
-POST /providers/{pid}/song-url
-POST /providers/{pid}/lyric
-GET  /providers/{pid}/playlists
+```rust
+let config = LibraryConfig {
+    cookie_file: Some("cookies.json".into()),
+    ..Default::default()
+};
 ```
 
-`{pid}` 使用 `netease`、`qq` 或 `soda`。完整接口清单及请求体示例请参阅 [API 文档](docs/PROVIDERS_API.md)。
+## 错误处理
 
-## 环境变量
+所有公开 API 返回 `ApiResult<T>`（即 `Result<T, ApiError>`）。`ApiError` 包含稳定错误码和人类可读信息：
 
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `MINERADIO_SIDECAR_PORT` | `0` | 监听端口。 |
-| `MINERADIO_APP_VERSION` | `0.0.0-dev` | `/health` 返回的应用版本。 |
-| `MINERADIO_API_VERSION` | `0.1.0` | `/health` 返回的 API 版本。 |
-| `MINERADIO_SCHEMA_VERSION` | `0.1.0` | `/health` 返回的 schema 版本。 |
-| `MINERADIO_SIDECAR_LOG_FILE` | 未设置 | JSONL 运行日志文件路径。 |
-| `MINERADIO_SESSION_FILE` | 未设置 | provider Cookie 持久化文件路径。 |
-| `MINERADIO_APP_DATA_DIR` | 未设置 | 未设置会话文件路径时，Cookie 保存目录。 |
-| `MINERADIO_NETEASE_COOKIE` | 未设置 | 网易云初始 Cookie。 |
-| `MINERADIO_QQ_COOKIE` | 未设置 | QQ 初始 Cookie。 |
-| `MINERADIO_SODA_COOKIE` | 未设置 | Soda 初始 Cookie。 |
-
-环境变量也可写入项目根目录的 `.env` 文件，程序启动时会加载它。
-
-## 登录与会话
-
-可通过二维码登录：
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:11451/providers/qq/login-qr-key
+```rust
+pub struct ApiError {
+    pub code: ApiErrorCode,  // BAD_REQUEST, NOT_FOUND, LOGIN_REQUIRED, ...
+    pub message: String,
+}
 ```
-
-或者直接写入已有 Cookie：
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:11451/providers/qq/session-cookie `
-  -ContentType 'application/json' `
-  -Body '{"cookie":"name=value; token=value"}'
-```
-
-清除本地 Cookie：
-
-```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:11451/providers/qq/session-cookie/clear
-```
-
-该接口只清除本地保存的登录态；如需请求上游平台登出，请调用 `POST /providers/{pid}/logout`。
 
 ## 项目结构
 
 ```text
 src/
-├── router.rs       HTTP 路由与参数解析
-├── server.rs       服务启动与依赖组装
-├── providers/      网易云、QQ、Soda、酷狗 client/adapter
-├── services/       登录、代理、播客、天气、导入等业务服务
-├── parsers/        歌词等文本解析
-└── utils/          加密、音频分析与通用工具
-assets/             内嵌 JS 等运行资源
-docs/               API、迁移与能力文档
+├── lib.rs              crate 根，公开导出 API、类型与工具函数
+├── config.rs           LibraryConfig 配置结构
+├── types.rs            共享数据类型（Track、Playlist、Lyric 等）
+├── api/                公开 API 门面（Api、ProviderApi、QrLoginApi、跨源）
+├── providers/          网易云、QQ、汽水、酷狗、Spotify 的 client/adapter/map
+├── services/            二维码登录、播客、天气电台、分享导入、日志等业务服务
+├── parsers/             LRC 歌词等文本解析
+├── utils/               加密、音频分析与通用工具
+└── vendor/              内嵌的 librespot 组件（audio/core/metadata/protocol）
+docs/                    文档
 ```
 
 ## 开发与验证
@@ -169,6 +210,10 @@ cargo check
 ```powershell
 cargo test <测试名称>
 ```
+
+## 鸣谢
+
+- QQ 音乐 MQTT 扫码登录和 sign 计算实现参考于 [AstronW/netease-qq-music-api](https://github.com/AstronW/netease-qq-music-api)，相关移植代码遵循其 MIT 许可证。
 
 ## 许可
 
