@@ -30,7 +30,7 @@ use crate::{
         },
         qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
         qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
-        sidecar_log::{self, SidecarLogger, SidecarLoggerOptions},
+        sidecar_log::{self, SidecarLogger},
         soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
         weather_radio::{WeatherRadioDeps, WeatherRadioService, create_weather_radio_service},
     },
@@ -51,7 +51,7 @@ pub use crate::types::{
 
 pub(crate) struct ApiInner {
     config: LibraryConfig,
-    logger: SidecarLogger,
+    logger: Arc<SidecarLogger>,
     cross_source: cross_source::CrossSourceApi,
     qq: Arc<dyn ProviderAdapter>,
     netease: Arc<dyn ProviderAdapter>,
@@ -69,7 +69,7 @@ pub(crate) struct ApiInner {
 }
 
 impl ApiInner {
-    fn new(config: LibraryConfig, logger: SidecarLogger) -> Self {
+    fn new(config: LibraryConfig, logger: Arc<SidecarLogger>) -> Self {
         let shared_http_client = Client::new();
         let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
         let qq_qr_client = Client::builder()
@@ -150,11 +150,8 @@ impl Api {
     pub async fn init(config: LibraryConfig) -> ApiResult<Self> {
         auth_session::configure(config.cookie_file.clone())
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
-        let logger = sidecar_log::create_sidecar_logger(SidecarLoggerOptions {
-            file_path: config.log_path.clone(),
-            max_bytes: None,
-        })
-        .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
+        let logger = sidecar_log::configure_runtime_logger(config.log_path.as_deref())
+            .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
         let inner = Arc::new(ApiInner::new(config, logger));
         let qq_qr_login = QrLoginApi::new(inner.qq_qr_login.clone());

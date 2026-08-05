@@ -1,14 +1,10 @@
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 use serde_json::{Map, Value};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-
-use crate::config::LibraryConfig;
 
 const DEFAULT_MAX_BYTES: u64 = 1024 * 1024;
 const REDACTED: &str = "[redacted]";
@@ -36,21 +32,7 @@ const SENSITIVE_VALUE_PATTERNS: [&str; 10] = [
     "access_token",
     "__csrf",
 ];
-static SIDECAR_LOGGER: OnceLock<SidecarLogger> = OnceLock::new();
-
-pub fn init(config: &LibraryConfig) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let fmt_layer = fmt::layer().with_target(true);
-
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer)
-        .init();
-    let _ = configure_library_logger(config.log_path.as_deref()).map_err(|error| {
-        tracing::warn!(%error, "failed to configure sidecar JSON logging");
-    });
-}
-
+static RUNTIME_LOGGER: OnceLock<Arc<SidecarLogger>> = OnceLock::new();
 #[derive(Clone, Debug)]
 pub struct SidecarLoggerOptions {
     pub file_path: Option<PathBuf>,
@@ -72,26 +54,6 @@ impl SidecarLogger {
     }
 }
 
-pub fn configure_library_logger(log_path: Option<&Path>) -> io::Result<()> {
-    let logger = create_sidecar_logger(SidecarLoggerOptions {
-        file_path: log_path.map(PathBuf::from),
-        max_bytes: None,
-    })?;
-
-    if let Some(existing) = SIDECAR_LOGGER.get() {
-        if existing.file_path == logger.file_path {
-            return Ok(());
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "MineRadio logging has already been initialized with a different path",
-        ));
-    }
-
-    let _ = SIDECAR_LOGGER.set(logger);
-    Ok(())
-}
-
 pub fn create_sidecar_logger(opts: SidecarLoggerOptions) -> io::Result<SidecarLogger> {
     let file_path = opts
         .file_path
@@ -103,10 +65,36 @@ pub fn create_sidecar_logger(opts: SidecarLoggerOptions) -> io::Result<SidecarLo
     })
 }
 
-pub fn sidecar_log_file() -> Option<String> {
-    global_logger()
-        .and_then(|logger| logger.file_path.as_ref())
-        .map(|path| path.to_string_lossy().into_owned())
+pub fn configure_runtime_logger(log_path: Option<&Path>) -> io::Result<Arc<SidecarLogger>> {
+    let logger = Arc::new(create_sidecar_logger(SidecarLoggerOptions {
+        file_path: log_path.map(PathBuf::from),
+        max_bytes: None,
+    })?);
+
+    if let Some(existing) = RUNTIME_LOGGER.get() {
+        if existing.file_path == logger.file_path {
+            return Ok(Arc::clone(existing));
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "MineRadio logging has already been initialized with a different path",
+        ));
+    }
+
+    let _ = RUNTIME_LOGGER.set(Arc::clone(&logger));
+    Ok(logger)
+}
+
+pub async fn log_runtime(entry: Value) {
+    if let Some(logger) = RUNTIME_LOGGER.get() {
+        logger.log(entry).await;
+    }
+}
+
+pub fn spawn_runtime_log(entry: Value) {
+    tokio::spawn(async move {
+        log_runtime(entry).await;
+    });
 }
 
 fn resolve_log_file_path(path: &Path) -> io::Result<PathBuf> {
@@ -119,29 +107,12 @@ fn resolve_log_file_path(path: &Path) -> io::Result<PathBuf> {
 }
 
 fn timestamp_for_file_name() -> String {
-    let format = time::format_description::parse_borrowed::<3>(
-        "[year][month][day]-[hour][minute][second]",
-    )
-    .expect("valid log timestamp format");
+    let format =
+        time::format_description::parse_borrowed::<3>("[year][month][day]-[hour][minute][second]")
+            .expect("valid log timestamp format");
     time::OffsetDateTime::now_utc()
         .format(&format)
         .expect("time format should be supported")
-}
-
-pub fn global_logger() -> Option<&'static SidecarLogger> {
-    SIDECAR_LOGGER.get()
-}
-
-pub async fn log_runtime(entry: Value) {
-    if let Some(logger) = global_logger() {
-        logger.log(entry).await;
-    }
-}
-
-pub fn spawn_runtime_log(entry: Value) {
-    tokio::spawn(async move {
-        log_runtime(entry).await;
-    });
 }
 
 pub async fn append_sidecar_log(
@@ -171,7 +142,6 @@ pub fn redact_log_value(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
-
 fn format_sidecar_log_line(entry: Value) -> String {
     let safe_entry = redact_log_value(&entry);
     let mut out = match safe_entry {
