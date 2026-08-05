@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{
-    providers::netease::client::NeteaseClient, services::auth_session, types::ProviderId, utils,
-};
+use crate::{providers::netease::client::NeteaseClient, services::auth_session, types::ProviderId};
 
 pub type NeteaseResponse = Value;
 
@@ -38,17 +36,11 @@ pub struct PodcastLoginInfo {
 #[derive(Clone, Default)]
 pub struct PodcastServiceDeps {
     pub requester: Option<Arc<dyn PodcastRequester>>,
-    pub beatmap_analyzer: Option<Arc<dyn PodcastBeatmapAnalyzer>>,
 }
 
 #[derive(Clone, Default)]
 pub struct PodcastService {
     deps: PodcastServiceDeps,
-}
-
-#[async_trait]
-pub trait PodcastBeatmapAnalyzer: Send + Sync {
-    async fn analyze(&self, url: &str, params: &PodcastBeatmapParams) -> anyhow::Result<Value>;
 }
 
 impl PodcastService {
@@ -254,29 +246,6 @@ impl PodcastService {
         Ok(out)
     }
 
-    pub async fn dj_beatmap(&self, params: PodcastBeatmapParams) -> anyhow::Result<Value> {
-        if !params.url.starts_with("http://") && !params.url.starts_with("https://") {
-            anyhow::bail!("Invalid audio url");
-        }
-        let map = if let Some(analyzer) = self.deps.beatmap_analyzer.as_ref() {
-            analyzer.analyze(&params.url, &params).await?
-        } else {
-            utils::analyze_podcast_dj_beatmap(
-                &params.url,
-                &utils::PodcastDjAnalyzerParams {
-                    duration_sec: params.duration_sec,
-                    intro_sec: params.intro_sec,
-                    user_agent: None,
-                },
-            )
-            .await?
-        };
-        Ok(json!({
-            "ok": true,
-            "map": map
-        }))
-    }
-
     fn requester(&self) -> anyhow::Result<&Arc<dyn PodcastRequester>> {
         self.deps
             .requester
@@ -436,12 +405,6 @@ pub struct PodcastMyItemsParams {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PodcastBeatmapParams {
-    pub url: String,
-    pub duration_sec: u32,
-    pub intro_sec: Option<u32>,
-}
-
 struct MyPodcastItems {
     item_type: &'static str,
     items: Vec<Value>,
@@ -915,246 +878,4 @@ fn first_non_empty(values: &[Option<String>]) -> String {
 
 fn has_non_empty_key(value: &Value, key: &str) -> bool {
     !string_value(record(value).get(key)).is_empty()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    #[derive(Clone, Default)]
-    struct MockRequester {
-        cloudsearch: Option<Value>,
-        dj_program: Option<Value>,
-        login_status: Option<PodcastLoginInfo>,
-    }
-
-    #[derive(Default)]
-    struct MockBeatmapAnalyzer {
-        response: Value,
-        calls: Mutex<Vec<(String, PodcastBeatmapParams)>>,
-    }
-
-    #[async_trait]
-    impl PodcastBeatmapAnalyzer for MockBeatmapAnalyzer {
-        async fn analyze(&self, url: &str, params: &PodcastBeatmapParams) -> anyhow::Result<Value> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((url.to_owned(), params.clone()));
-            Ok(self.response.clone())
-        }
-    }
-
-    #[async_trait]
-    impl PodcastRequester for MockRequester {
-        async fn cloudsearch(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(self.cloudsearch.clone().unwrap_or(Value::Null))
-        }
-        async fn dj_hot(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn dj_detail(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn dj_program(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(self.dj_program.clone().unwrap_or(Value::Null))
-        }
-        async fn dj_sublist(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn user_audio(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn dj_paygift(&self, _params: HashMap<String, Value>) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn record_recent_voice(
-            &self,
-            _params: HashMap<String, Value>,
-        ) -> anyhow::Result<Value> {
-            Ok(Value::Null)
-        }
-        async fn login_status(&self) -> anyhow::Result<PodcastLoginInfo> {
-            Ok(self.login_status.clone().unwrap_or_default())
-        }
-    }
-
-    #[test]
-    fn map_podcast_radio_preserves_metadata_fallbacks() {
-        let radio = map_podcast_radio(&json!({
-            "rid": 42,
-            "radioName": "夜听",
-            "picUrl": "cover",
-            "dj": { "nickname": "DJ" },
-            "categoryName": "情感",
-            "programNum": 7,
-            "subedCount": 9
-        }));
-
-        assert_eq!(radio["id"], "42");
-        assert_eq!(radio["name"], "夜听");
-        assert_eq!(radio["coverUrl"], "cover");
-        assert_eq!(radio["djName"], "DJ");
-        assert_eq!(radio["programCount"], 7);
-    }
-
-    #[test]
-    fn map_podcast_program_maps_main_song_to_playable_track() {
-        let program = map_podcast_program(
-            &json!({
-                "id": "p1",
-                "name": "第 1 期",
-                "radio": { "id": "r1", "name": "电台", "picUrl": "r-cover" },
-                "mainSong": {
-                    "id": 100,
-                    "name": "音频",
-                    "ar": [{ "name": "主播" }],
-                    "al": { "name": "专辑", "picUrl": "song-cover" },
-                    "dt": 120000
-                }
-            }),
-            None,
-        );
-
-        assert_eq!(program["type"], "podcast");
-        assert_eq!(program["id"], "100");
-        assert_eq!(program["programId"], "p1");
-        assert_eq!(program["title"], "第 1 期");
-        assert_eq!(program["radioName"], "电台");
-    }
-
-    #[tokio::test]
-    async fn podcast_service_search_maps_radios() {
-        let service = create_podcast_service(PodcastServiceDeps {
-            requester: Some(Arc::new(MockRequester {
-                cloudsearch: Some(json!({
-                    "body": {
-                        "result": {
-                            "djRadios": [{ "id": 1, "name": "播客" }],
-                            "djRadiosCount": 1
-                        }
-                    }
-                })),
-                ..Default::default()
-            })),
-            ..Default::default()
-        });
-
-        let result = service
-            .search(PodcastSearchParams {
-                keywords: "故事".to_owned(),
-                limit: 18,
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(result["podcasts"][0]["name"], "播客");
-        assert_eq!(result["total"], 1);
-    }
-
-    #[tokio::test]
-    async fn podcast_service_programs_maps_radio_and_programs() {
-        let service = create_podcast_service(PodcastServiceDeps {
-            requester: Some(Arc::new(MockRequester {
-                dj_program: Some(json!({
-                    "body": {
-                        "programs": [{
-                            "id": "p1",
-                            "name": "节目",
-                            "radio": { "id": "r1", "name": "电台" },
-                            "mainSong": { "id": "s1", "name": "音频", "ar": [], "al": {}, "dt": 1000 }
-                        }],
-                        "more": true,
-                        "count": 1
-                    }
-                })),
-                ..Default::default()
-            })),
-            ..Default::default()
-        });
-
-        let result = service
-            .programs(PodcastProgramsParams {
-                rid: "r1".to_owned(),
-                limit: 30,
-                offset: 0,
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(result["radio"]["id"], "r1");
-        assert_eq!(result["programs"][0]["id"], "s1");
-        assert_eq!(result["more"], true);
-    }
-
-    #[tokio::test]
-    async fn podcast_service_returns_logged_out_baseline_collections() {
-        let service = create_podcast_service(PodcastServiceDeps {
-            requester: Some(Arc::new(MockRequester {
-                login_status: Some(PodcastLoginInfo {
-                    logged_in: false,
-                    user_id: None,
-                }),
-                ..Default::default()
-            })),
-            ..Default::default()
-        });
-
-        let result = service.my().await.unwrap();
-
-        assert_eq!(result["loggedIn"], false);
-        assert_eq!(result["collections"][0]["key"], "collect");
-        assert_eq!(result["collections"][1]["key"], "created");
-        assert_eq!(result["collections"][2]["key"], "liked");
-    }
-
-    #[tokio::test]
-    async fn podcast_service_dj_beatmap_validates_url() {
-        let service = create_podcast_service(PodcastServiceDeps::default());
-
-        let err = service
-            .dj_beatmap(PodcastBeatmapParams {
-                url: "file:///bad".to_owned(),
-                duration_sec: 30,
-                intro_sec: Some(5),
-            })
-            .await
-            .unwrap_err();
-
-        assert_eq!(err.to_string(), "Invalid audio url");
-    }
-
-    #[tokio::test]
-    async fn podcast_service_dj_beatmap_delegates_to_analyzer() {
-        let analyzer = Arc::new(MockBeatmapAnalyzer {
-            response: json!({
-                "visualBeatCount": 3,
-                "beats": [1, 2, 3]
-            }),
-            ..Default::default()
-        });
-        let service = create_podcast_service(PodcastServiceDeps {
-            requester: None,
-            beatmap_analyzer: Some(analyzer.clone()),
-        });
-
-        let result = service
-            .dj_beatmap(PodcastBeatmapParams {
-                url: "https://example.com/a.mp3".to_owned(),
-                duration_sec: 30,
-                intro_sec: Some(5),
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(result["ok"], true);
-        assert_eq!(result["map"]["visualBeatCount"], 3);
-
-        let calls = analyzer.calls.lock().unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "https://example.com/a.mp3");
-        assert_eq!(calls[0].1.duration_sec, 30);
-        assert_eq!(calls[0].1.intro_sec, Some(5));
-    }
 }
