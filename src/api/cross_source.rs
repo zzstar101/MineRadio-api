@@ -3,10 +3,10 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 use futures_util::FutureExt;
 
 use crate::{
-    api::{error::from_provider_error, ApiError, ApiErrorCode, ApiResult},
+    api::{ApiError, ApiErrorCode, ApiResult, error::from_provider_error},
     providers::error::ProviderError,
     services::cross_source_resolver::{CrossSourceResolver, ResolveSearchQuery},
-    types::{ProviderId, SongUrlOptions, SongUrlResult, Track},
+    types::{ProviderId, RecommendationPage, SongUrlOptions, SongUrlResult, Track},
 };
 
 pub(crate) struct CrossSourceApi {
@@ -71,5 +71,13 @@ impl CrossSourceApi {
     ) -> ApiResult<SongUrlResult> {
         self.call("song_url", self.resolver.resolve_song_url(track, options))
             .await
+    }
+
+    pub(crate) async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
+        self.call(
+            "recommendation_pages",
+            self.resolver.resolve_recommendation_page(),
+        )
+        .await
     }
 }
