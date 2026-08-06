@@ -10,17 +10,17 @@ use crate::types::{
     VipLevel,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct QqSearchResp {
     data: QqSearchData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqSearchData {
     song: QqSearchSongData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqSearchSongData {
     //curnum: i32,
     //curpage: i32,
@@ -28,7 +28,7 @@ struct QqSearchSongData {
     //totalnum: i32
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqSearchSong {
     albummid: String,
     albumname: String,
@@ -65,7 +65,7 @@ impl QqSearchResp {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct QqTrackDetailResp {
     req_0: QqTrackDetailReq,
 }
@@ -82,23 +82,23 @@ impl QqTrackDetailResp {
         })
     }
 }
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqTrackDetailReq {
     data: QqTrackDetailData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqTrackDetailData {
     track_info: QqTrackDetailInfo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqTrackDetailInfo {
     mid: String,
     file: File,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct QqLyricResp {
     req_0: QqLyricReq,
 }
@@ -110,12 +110,12 @@ impl QqLyricResp {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqLyricReq {
     data: QqLyricData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqLyricData {
     //crypt: i64,
@@ -283,23 +283,7 @@ impl QqPlaylistDetailResp {
             .into_iter()
             .map(|t| {
                 track_ids.push(t.mid.clone());
-                Track {
-                    id: t.mid.clone(),
-                    provider: ProviderId::Qq,
-                    source_id: t.mid.clone(),
-                    media_mid: Some(t.mid),
-                    title: t.title,
-                    artists: t.singer.into_iter().map(|s| s.name).collect(),
-                    album: t.album.name,
-                    cover_url: format!(
-                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                        t.album.mid
-                    ),
-                    quality_hints: vec!["standard".to_owned()],
-                    playable_state: PlayableState::Unknown,
-                    duration_ms: Some(t.interval as u64 * 1000),
-                    artwork_url: None,
-                }
+                t.standardize(None, None)
             })
             .collect();
         PlaylistDetail {
@@ -325,7 +309,7 @@ struct QqPlaylistDetailRespReq {
 struct QqPlaylistDetailData {
     dirinfo: Dirinfo,
 
-    songlist: Vec<Songlist>,
+    songlist: Vec<QqTrack>,
 }
 
 #[derive(Deserialize)]
@@ -340,19 +324,6 @@ struct Dirinfo {
 }
 
 #[derive(Deserialize)]
-struct Songlist {
-    mid: String,
-    //name: String,
-    title: String,
-    //subtitle: String,
-    interval: i64,
-
-    singer: Vec<Identified>,
-
-    album: Identified,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct QqAlbumListResp {
     #[serde(rename = "req_0")]
     list: QqAlbumListResponse,
@@ -381,12 +352,12 @@ impl QqAlbumListResp {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqAlbumListResponse {
     data: QqAlbumListData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqAlbumListData {
     //number: i64,
     //hasmore: i64,
@@ -395,7 +366,7 @@ struct QqAlbumListData {
     //total: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct QqAlbumDetailResp {
     #[serde(rename = "req_0")]
     song_list: QqAlbumDetailSongListResponse,
@@ -407,14 +378,12 @@ pub(super) struct QqAlbumDetailResp {
 impl QqAlbumDetailResp {
     pub(super) fn standardize(self) -> AlbumDetail {
         let song_list = self.song_list.data;
-        let cover_url = format!(
-            "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-            song_list.album_mid
-        );
         let mut track_ids = Vec::new();
 
         let info = self.info.data;
         let (album, artists) = (info.basic_info, info.singer);
+        let default_album_mid = Some(song_list.album_mid.clone());
+        let default_album_name = Some(album.album_name.clone());
 
         let tracks: Vec<Track> = song_list
             .song_list
@@ -422,24 +391,7 @@ impl QqAlbumDetailResp {
             .map(|s| {
                 let l = s.song_info;
                 track_ids.push(l.mid.clone());
-                Track {
-                    id: l.mid.clone(),
-                    provider: ProviderId::Qq,
-                    source_id: l.mid.clone(),
-                    media_mid: Some(l.mid),
-                    title: l.title,
-                    artists: l.singer.into_iter().map(|s| s.name).collect(),
-                    album: album.album_name.clone(),
-                    cover_url: cover_url.clone(),
-                    quality_hints: vec!["standard".to_owned()],
-                    playable_state: if l.pay.pay_play == 1 {
-                        PlayableState::PaidRequired
-                    } else {
-                        PlayableState::Playable
-                    },
-                    duration_ms: Some(l.interval as u64 * 1000),
-                    artwork_url: None,
-                }
+                l.standardize(default_album_mid.clone(), default_album_name.clone())
             })
             .collect();
 
@@ -461,12 +413,12 @@ impl QqAlbumDetailResp {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqAlbumDetailSongListResponse {
     data: QqAlbumDetailSongListData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailSongListData {
     album_mid: String,
@@ -476,44 +428,25 @@ struct QqAlbumDetailSongListData {
     song_list: Vec<QqAlbumDetailSongListEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailSongListEntry {
-    song_info: QqAlbumDetailTrack,
+    song_info: QqTrack,
 }
 
-#[derive(Debug, Deserialize)]
-struct QqAlbumDetailTrack {
-    //id: i64,
-    mid: String,
-
-    title: String,
-
-    singer: Vec<Identified>,
-
-    interval: i64,
-
-    pay: QqAlbumDetailTrackPay,
-}
-
-#[derive(Debug, Deserialize)]
-struct QqAlbumDetailTrackPay {
-    pay_play: i64,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqAlbumDetailInfoResponse {
     data: QqAlbumDetailInfoData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailInfoData {
     basic_info: QqAlbumDetailInfo,
     singer: QqAlbumDetailArtists,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailInfo {
     album_mid: String,
@@ -521,77 +454,52 @@ struct QqAlbumDetailInfo {
     album_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqAlbumDetailArtists {
     singer_list: Vec<Identified>,
 }
 
-// ── DoSearchForQQMusicDesktop 多类型搜索响应（参考 netease-qq-music-api）──
-
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct QqMultiSearchResp {
     result: QqMultiSearchResult,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchResult {
     data: QqMultiSearchData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchData {
     body: QqMultiSearchBody,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchBody {
     song: Option<QqMultiSearchSongSection>,
     album: Option<QqMultiSearchAlbumSection>,
     songlist: Option<QqMultiSearchSonglistSection>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchSongSection {
-    #[serde(default)]
-    list: Vec<QqMultiSearchSong>,
+    list: Vec<QqTrack>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchAlbumSection {
     #[serde(default)]
     list: Vec<QqMultiSearchAlbum>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchSonglistSection {
     #[serde(default)]
     list: Vec<QqMultiSearchSonglist>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct QqMultiSearchSong {
-    mid: String,
-    name: String,
-    #[serde(default)]
-    singer: Vec<QqMultiSearchSinger>,
-    album: Option<QqMultiSearchSongAlbum>,
-}
-
-#[derive(Debug, Deserialize)]
-struct QqMultiSearchSinger {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct QqMultiSearchSongAlbum {
-    mid: String,
-    name: String,
-    pmid: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QqMultiSearchAlbum {
     #[serde(rename = "albumMID")]
@@ -601,7 +509,7 @@ struct QqMultiSearchAlbum {
     singer_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct QqMultiSearchSonglist {
     dissid: String,
     dissname: String,
@@ -653,33 +561,7 @@ impl QqMultiSearchResp {
         let list = self.result.data.body.song?.list;
         let v: Vec<Track> = list
             .into_iter()
-            .map(|s| {
-                let album_name = s.album.as_ref().map_or(String::new(), |a| a.name.clone());
-                let cover_url = match &s.album {
-                    Some(album) => format!(
-                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                        album.pmid.as_deref().unwrap_or(&album.mid)
-                    ),
-                    None => format!(
-                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                        ""
-                    ),
-                };
-                Track {
-                    id: s.mid.clone(),
-                    provider: ProviderId::Qq,
-                    source_id: s.mid.clone(),
-                    media_mid: Some(s.mid),
-                    title: s.name,
-                    artists: s.singer.into_iter().map(|si| si.name).collect(),
-                    album: album_name,
-                    cover_url,
-                    quality_hints: vec!["standard".to_owned()],
-                    playable_state: PlayableState::Unknown,
-                    duration_ms: None,
-                    artwork_url: None,
-                }
-            })
+            .map(|track| track.standardize(None, None))
             .collect();
         (!v.is_empty()).then_some(v)
     }
@@ -1109,7 +991,71 @@ struct QqTrackIdMid {
 }
 
 //Reusable Struct
-#[derive(Debug, Deserialize)]
+
+#[derive(Deserialize)]
+struct QqTrack {
+    mid: String,
+    //name: String,
+    title: String,
+    //subtitle: String,
+    interval: Option<u16>, //这里是s为单位
+
+    singer: Vec<Identified>,
+
+    album: Option<Identified>,
+
+    pay: QqAlbumDetailTrackPay,
+}
+
+#[derive(Deserialize)]
+struct QqAlbumDetailTrackPay {
+    pay_play: i64,
+}
+
+impl QqTrack {
+    fn standardize(
+        self,
+        default_album_mid: Option<String>,
+        default_album_name: Option<String>,
+    ) -> Track {
+        let album_mid = self
+            .album
+            .as_ref()
+            .map(|album| album.mid.clone())
+            .or(default_album_mid)
+            .unwrap_or_default();
+        let album_name = self
+            .album
+            .as_ref()
+            .map(|album| album.name.clone())
+            .or(default_album_name)
+            .unwrap_or_default();
+
+        Track {
+            id: self.mid.clone(),
+            provider: ProviderId::Qq,
+            source_id: self.mid.clone(),
+            media_mid: Some(self.mid),
+            title: self.title,
+            artists: self.singer.into_iter().map(|s| s.name).collect(),
+            album: album_name,
+            cover_url: format!(
+                "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
+                album_mid
+            ),
+            quality_hints: vec!["128k".to_owned()],
+            playable_state: if self.pay.pay_play == 1 {
+                PlayableState::PaidRequired
+            } else {
+                PlayableState::Playable
+            },
+            duration_ms: self.interval.map(|s| s as u64 * 1000),
+            artwork_url: None,
+        }
+    }
+}
+
+#[derive(Deserialize)]
 struct File {
     #[serde(default)]
     size_320mp3: i64,
@@ -1176,7 +1122,7 @@ fn qq_quality_label(quality: &str) -> &'static str {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct Album {
     //id: i64,
     mid: String,
@@ -1186,7 +1132,7 @@ struct Album {
     singer: Vec<Identified>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct Identified {
     mid: String,
     name: String,
@@ -1199,10 +1145,51 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        QqLoginProfile, QqLoginStatusData, QqLoginStatusResp, QqPlaylistList1Resp,
-        QqPlaylistSongWriteResp, QqRecommendationResp, QqTrackInfo,
+        Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData, QqLoginStatusResp,
+        QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp, QqTrack, QqTrackInfo,
     };
     use crate::types::RecommendationType;
+
+    #[test]
+    fn track_uses_default_album_when_album_is_missing() {
+        let track = QqTrack {
+            mid: "track-mid".to_owned(),
+            title: "Track".to_owned(),
+            interval: None,
+            singer: vec![],
+            album: None,
+            pay: QqAlbumDetailTrackPay { pay_play: 0 },
+        }
+        .standardize(
+            Some("default-mid".to_owned()),
+            Some("Default Album".to_owned()),
+        );
+
+        assert_eq!(track.album, "Default Album");
+        assert_eq!(
+            track.cover_url,
+            "https://y.gtimg.cn/music/photo_new/T002R300x300M000default-mid.jpg"
+        );
+
+        let track = QqTrack {
+            mid: "track-mid".to_owned(),
+            title: "Track".to_owned(),
+            interval: None,
+            singer: vec![],
+            album: Some(Identified {
+                mid: "track-album-mid".to_owned(),
+                name: "Track Album".to_owned(),
+            }),
+            pay: QqAlbumDetailTrackPay { pay_play: 0 },
+        }
+        .standardize(
+            Some("default-mid".to_owned()),
+            Some("Default Album".to_owned()),
+        );
+
+        assert_eq!(track.album, "Track Album");
+        assert!(track.cover_url.ends_with("track-album-mid.jpg"));
+    }
 
     #[test]
     fn login_status_survives_missing_vip_response() {
