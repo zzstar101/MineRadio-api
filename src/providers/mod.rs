@@ -186,6 +186,18 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
+    async fn radio_detail(
+        &self,
+        _id: &str,
+        _offset: u32,
+        _limit: u32,
+    ) -> ProviderResult<PlaylistDetail> {
+        Err(error::ProviderError::not_implemented(
+            self.id(),
+            "radio_detail",
+        ))
+    }
+
     async fn recommendation_page(&self) -> ProviderResult<RecommendationPage> {
         Err(error::ProviderError::not_implemented(
             self.id(),
