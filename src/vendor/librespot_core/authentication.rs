@@ -42,14 +42,6 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    /// Intialize these credentials from a username and a password.
-    ///
-    /// ### Example
-    /// ```rust
-    /// use crate::librespot_core::authentication::Credentials;
-    ///
-    /// let creds = Credentials::with_password("my account", "my password");
-    /// ```
     pub fn with_password(username: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             username: Some(username.into()),
