@@ -1138,6 +1138,52 @@ struct Identified {
     name: String,
 }
 
+#[derive(Deserialize)]
+pub(super) struct QqRadioDetailResp {
+    req_0: QqRadioDetailReq,
+}
+
+impl QqRadioDetailResp {
+    pub(super) fn standardize(self) -> PlaylistDetail {
+        let r = self.req_0.data;
+        let mut track_ids = Vec::new();
+        let tracks: Vec<Track> = r
+            .tracks
+            .into_iter()
+            .map(|t| {
+                track_ids.push(t.mid.clone());
+                t.standardize(None, None)
+            })
+            .collect();
+        PlaylistDetail {
+            provider: ProviderId::Qq,
+            id: r.id.to_string(),
+            name: r.name,
+            cover_url: tracks
+                .get(0)
+                .map(|t| t.cover_url.clone())
+                .unwrap_or_default(),
+            track_count: Some(tracks.len() as u32),
+            track_ids,
+            collected: None,
+            has_more: Some(true),
+            tracks,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct QqRadioDetailReq {
+    data: QqRadioDetailData,
+}
+
+#[derive(Deserialize)]
+struct QqRadioDetailData {
+    id: u16,
+    name: String,
+    tracks: Vec<QqTrack>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
