@@ -29,7 +29,7 @@ const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
 const ME_URL: &str = "https://api.qishui.com/luna/pc/me?aid=386088&version_code=30050100";
 const COLLECTION_MEDIA_APPEND_URL: &str =
-    "https://api.qishui.com/luna/pc/me/collection/media/append?aid=386088";
+    "https://api.qishui.com/luna/pc/me/collection/media?aid=386088";
 const COLLECTION_MEDIA_DELETE_URL: &str =
     "https://api.qishui.com/luna/pc/me/collection/media/delete?aid=386088";
 const PLAYLIST_MEDIA_URL: &str = "https://api.qishui.com/luna/pc/me/playlist/media/append?aid=386088&iid=357778617272924&version_name=3.6.0";
