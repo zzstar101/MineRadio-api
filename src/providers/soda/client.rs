@@ -11,7 +11,7 @@ use crate::providers::{
     error::{ProviderError, ProviderErrorCode},
     soda::model::{
         SodaCollectionResp, SodaLoginStatusResp, SodaPlaylistDetailResp, SodaPlaylistListResp,
-        SodaTrackV2Resp,
+        SodaSearch2Resp, SodaTrackV2Resp,
     },
 };
 use crate::services::auth_session;
@@ -21,6 +21,7 @@ use super::model::{
 };
 
 const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
+const SEARCH_FALLBACK_URL: &str = "https://api-vehicle.volcengine.com/v2/search/type";
 const SEARCH_ALBUM_URL: &str = "https://api.qishui.com/luna/pc/search/album?aid=386088";
 const SEARCH_PLAYLIST_URL: &str = "https://api.qishui.com/luna/pc/search/playlist?aid=386088";
 const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=track&queue_type=&aid=386088&iid=27960026095955";
@@ -87,6 +88,27 @@ impl SodaClient {
             url.to_string(),
             self.current_cookie().await.as_deref(),
             "search",
+        )
+        .await
+    }
+
+    pub(super) async fn search_track_fallback(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> ProviderResult<SodaSearch2Resp> {
+        let mut url = reqwest::Url::parse(SEARCH_FALLBACK_URL).map_err(internal_error)?;
+        url.query_pairs_mut()
+            .append_pair("keyword", keyword)
+            .append_pair("search_source", "qishui")
+            .append_pair("search_type", "music")
+            .append_pair("real_offset", &offset.to_string())
+            .append_pair("limit", &limit.to_string());
+        self.get_model(
+            url.to_string(),
+            self.current_cookie().await.as_deref(),
+            "search_fallback",
         )
         .await
     }

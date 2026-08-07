@@ -54,12 +54,22 @@ impl ProviderAdapter for SodaAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<Vec<Track>> {
-        let mut t = self
+        let primary = self
             .client
             .search_track(keyword, offset)
-            .await?
-            .standardize_tracks()
-            .ok_or_else(|| no_result("search_track"))?;
+            .await
+            .ok()
+            .and_then(|response| response.standardize_tracks())
+            .filter(|tracks| !tracks.is_empty());
+        let mut t = match primary {
+            Some(tracks) => tracks,
+            None => self
+                .client
+                .search_track_fallback(keyword, offset, limit)
+                .await?
+                .standardize()
+                .ok_or_else(|| no_result("search_track"))?,
+        };
         t.truncate(limit as usize);
         Ok(t)
     }

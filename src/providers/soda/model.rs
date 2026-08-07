@@ -627,3 +627,90 @@ struct Artist {
     //抖音创作原声是没有作者的哈基汽水
     name: Option<String>,
 }
+
+#[derive(Deserialize)]
+pub(super) struct SodaSearch2Resp {
+    data: SodaSearch2Data,
+}
+
+impl SodaSearch2Resp {
+    pub(super) fn standardize(self) -> Option<Vec<Track>> {
+        let v: Vec<Track> = self
+            .data
+            .list
+            .into_iter()
+            .map(|t| Track {
+                source_id: t.item_id.clone(),
+                id: t.item_id,
+                provider: ProviderId::Soda,
+                media_mid: None,
+                title: t.title,
+                artists: vec![t.author_info.name],
+                album: String::new(),
+                cover_url: t.cover_url,
+                quality_hints: vec!["standard".to_owned()],
+                playable_state: if t.qishui_label_info.only_vip_playable.unwrap_or(false) {
+                    PlayableState::VipRequired
+                } else {
+                    PlayableState::Playable
+                },
+                duration_ms: Some(t.duration as u64 * 1000),
+                artwork_url: None,
+            })
+            .collect();
+        (!v.is_empty()).then_some(v)
+    }
+}
+
+#[derive(Deserialize)]
+struct SodaSearch2Data {
+    list: Vec<SodaSearch2List>,
+}
+
+#[derive(Deserialize)]
+struct SodaSearch2List {
+    item_id: String,
+    title: String,
+    author_info: AuthorInfo,
+    cover_url: String,
+    duration: i64,
+    qishui_label_info: QishuiLabelInfo,
+}
+
+#[derive(Deserialize)]
+struct AuthorInfo {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct QishuiLabelInfo {
+    only_vip_playable: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standardizes_vehicle_search_tracks() {
+        let response: SodaSearch2Resp = serde_json::from_value(serde_json::json!({
+            "data": {
+                "list": [{
+                    "item_id": "7652641584070264848",
+                    "title": "Amore",
+                    "author_info": { "name": "ReoNa" },
+                    "cover_url": "https://example.com/cover.jpg",
+                    "duration": 275,
+                    "qishui_label_info": { "only_vip_playable": false }
+                }]
+            }
+        }))
+        .unwrap();
+
+        let tracks = response.standardize().unwrap();
+        assert_eq!(tracks[0].id, "7652641584070264848");
+        assert_eq!(tracks[0].artists, ["ReoNa"]);
+        assert_eq!(tracks[0].duration_ms, Some(275_000));
+        assert_eq!(tracks[0].playable_state, PlayableState::Playable);
+    }
+}
