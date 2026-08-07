@@ -1,4 +1,5 @@
 mod cross_source;
+mod cross_source_resolver;
 mod error;
 mod provider;
 mod qr_login;
@@ -19,7 +20,7 @@ use crate::{
         spotify::{adapter::SpotifyAdapter, client::SpotifyClient},
     },
     services::{
-        auth_session, cross_source_resolver,
+        auth_session,
         kugou_qr_login::{
             KugouQrHttpApi, KugouQrLoginDeps, KugouQrLoginService, create_kugou_qr_login_service,
         },
@@ -97,8 +98,7 @@ impl ApiInner {
             cross_source: cross_source::CrossSourceApi::new(
                 cross_source_resolver::create_cross_source_resolver(
                     cross_source_resolver::CrossSourceResolverDeps {
-                        providers: Some(provider_map),
-                        provider_order: None,
+                        providers: provider_map,
                     },
                 ),
             ),

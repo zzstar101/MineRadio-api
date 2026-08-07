@@ -3,9 +3,9 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 use futures_util::FutureExt;
 
 use crate::{
+    api::cross_source_resolver::CrossSourceResolver,
     api::{ApiError, ApiErrorCode, ApiResult, error::from_provider_error},
     providers::error::ProviderError,
-    services::cross_source_resolver::{CrossSourceResolver, ResolveSearchQuery},
     types::{ProviderId, RecommendationPage, SongUrlOptions, SongUrlResult, Track},
 };
 
@@ -55,11 +55,8 @@ impl CrossSourceApi {
 
         self.call(
             "search_tracks",
-            self.resolver.resolve_search(ResolveSearchQuery {
-                keyword: keyword.to_owned(),
-                provider,
-                limit: limit.max(1),
-            }),
+            self.resolver
+                .resolve_search(keyword, provider, limit.max(1)),
         )
         .await
     }

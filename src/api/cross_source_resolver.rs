@@ -50,26 +50,17 @@ static DERIVATIVE_RESULT_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid derivative result regex")
 });
 
-#[derive(Default)]
 pub struct CrossSourceResolverDeps {
-    pub providers: Option<ProviderMap>,
-    pub provider_order: Option<Vec<ProviderId>>,
+    pub providers: ProviderMap,
 }
 
-pub struct ResolveSearchQuery {
-    pub keyword: String,
-    pub provider: Option<ProviderId>,
-    pub limit: u32,
-}
-
-#[derive(Default)]
 pub struct CrossSourceResolver {
     deps: CrossSourceResolverDeps,
 }
 
 impl CrossSourceResolver {
     pub async fn resolve_recommendation_page(&self) -> anyhow::Result<Vec<RecommendationPage>> {
-        let requests = self.provider_order().into_iter().filter_map(|provider_id| {
+        let requests = PROVIDER_IDS.into_iter().filter_map(|provider_id| {
             let provider = self.provider(&provider_id)?;
             Some(async move { provider.recommendation_page().await })
         });
@@ -81,42 +72,24 @@ impl CrossSourceResolver {
             .collect())
     }
 
-    pub async fn resolve_search(&self, query: ResolveSearchQuery) -> anyhow::Result<Vec<Track>> {
-        if query.provider.is_none() {
-            return self.resolve_merged_search(query).await;
-        }
+    pub async fn resolve_search(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<Track>> {
+        let Some(provider_id) = provider else {
+            return self.resolve_merged_search(keyword, limit).await;
+        };
+        let provider = self
+            .provider(&provider_id)
+            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+        let tracks = provider.search_track(keyword, 0, limit).await?;
 
-        let attempts = self.ordered_providers(query.provider);
-        let mut first_error: Option<anyhow::Error> = None;
-        let first_provider = attempts
-            .first()
-            .cloned()
-            .unwrap_or_else(|| ProviderId::Netease);
-
-        for provider_id in attempts {
-            let Some(adapter) = self.provider(&provider_id) else {
-                continue;
-            };
-            match adapter.search_track(&query.keyword, 0, query.limit).await {
-                Ok(tracks) if !tracks.is_empty() => return Ok(tracks),
-                Ok(_) => {
-                    if first_error.is_none() {
-                        first_error =
-                            Some(no_result_error(provider_id, "no matching tracks found"));
-                    }
-                }
-                Err(err) => {
-                    if first_error.is_none() {
-                        first_error = Some(err.into());
-                    }
-                }
-            }
+        if tracks.is_empty() {
+            return Err(no_result_error(provider_id, "no matching tracks found"));
         }
-
-        if let Some(err) = first_error {
-            return Err(err);
-        }
-        Err(no_result_error(first_provider, "no matching tracks found"))
+        Ok(tracks)
     }
 
     pub async fn resolve_song_url(
@@ -178,23 +151,28 @@ impl CrossSourceResolver {
         Err(no_url_error(track.provider, "no playable song URL found"))
     }
 
-    async fn resolve_merged_search(&self, query: ResolveSearchQuery) -> anyhow::Result<Vec<Track>> {
-        let provider_order = self.provider_order();
+    async fn resolve_merged_search(&self, keyword: &str, limit: u32) -> anyhow::Result<Vec<Track>> {
+        let provider_count = self.deps.providers.len() as u32;
+        if provider_count == 0 {
+            return Err(no_result_error(
+                ProviderId::Netease,
+                "no providers registered",
+            ));
+        }
+        let provider_limit = limit.div_ceil(provider_count).max(1);
         let mut ranked = Vec::new();
-        let mut first_error: Option<anyhow::Error> = None;
 
         let searches =
-            provider_order
+            self.deps
+                .providers
                 .iter()
                 .enumerate()
-                .filter_map(|(provider_index, provider_id)| {
-                    let adapter = self.provider(provider_id)?;
-                    let keyword = query.keyword.clone();
-                    let limit = merged_provider_limit(provider_id, query.limit);
-                    Some(async move {
-                        let result = adapter.search_track(&keyword, 0, limit).await;
+                .map(|(provider_index, (_, adapter))| {
+                    let keyword = keyword.to_owned();
+                    async move {
+                        let result = adapter.search_track(&keyword, 0, provider_limit).await;
                         (provider_index, result)
-                    })
+                    }
                 });
 
         let search_results = join_all(searches).await;
@@ -204,18 +182,14 @@ impl CrossSourceResolver {
                 Ok(tracks) => {
                     ranked.extend(tracks.into_iter().enumerate().map(|(source_index, track)| {
                         RankedTrack {
-                            score: score_search_track(&track, &query.keyword, source_index),
+                            score: score_search_track(&track, keyword, source_index),
                             track,
                             provider_index,
                             source_index,
                         }
                     }));
                 }
-                Err(err) => {
-                    if first_error.is_none() {
-                        first_error = Some(err.into());
-                    }
-                }
+                Err(_) => continue,
             }
         }
 
@@ -236,39 +210,30 @@ impl CrossSourceResolver {
 
         let merged = ranked
             .into_iter()
-            .take(merged_result_limit(query.limit) as usize)
+            .take(limit as usize)
             .map(|entry| entry.track)
             .collect::<Vec<_>>();
         if !merged.is_empty() {
             return Ok(merged);
         }
-        if let Some(err) = first_error {
-            return Err(err);
-        }
         Err(no_result_error(
-            provider_order
-                .first()
+            self.deps
+                .providers
+                .keys()
+                .next()
                 .cloned()
                 .unwrap_or_else(|| ProviderId::Netease),
             "no matching tracks found",
         ))
     }
 
-    fn provider_order(&self) -> Vec<ProviderId> {
-        self.deps
-            .provider_order
-            .clone()
-            .unwrap_or_else(|| PROVIDER_IDS.to_vec())
-    }
-
     fn ordered_providers(&self, preferred: Option<ProviderId>) -> Vec<ProviderId> {
-        let provider_order = self.provider_order();
         let Some(preferred) = preferred else {
-            return provider_order;
+            return PROVIDER_IDS.to_vec();
         };
         std::iter::once(preferred)
             .chain(
-                provider_order
+                PROVIDER_IDS
                     .into_iter()
                     .filter(|provider_id| *provider_id != preferred),
             )
@@ -276,10 +241,7 @@ impl CrossSourceResolver {
     }
 
     fn provider(&self, provider_id: &ProviderId) -> Option<Arc<dyn ProviderAdapter>> {
-        self.deps
-            .providers
-            .as_ref()
-            .and_then(|providers| providers.get(provider_id).cloned())
+        self.deps.providers.get(provider_id).cloned()
     }
 }
 
@@ -428,24 +390,6 @@ fn score_search_track(track: &Track, keyword: &str, source_index: usize) -> f64 
         }
     }
     score - source_index as f64 * 0.75
-}
-
-fn merged_provider_limit(provider_id: &ProviderId, requested_limit: u32) -> u32 {
-    if requested_limit >= 18 {
-        if *provider_id == ProviderId::Qq {
-            return 12;
-        }
-        return 14;
-    }
-    requested_limit
-}
-
-fn merged_result_limit(requested_limit: u32) -> u32 {
-    if requested_limit >= 18 {
-        18
-    } else {
-        requested_limit
-    }
 }
 
 fn search_intent_prefers_qq(keyword: &str) -> bool {
@@ -777,10 +721,7 @@ mod tests {
         }
     }
 
-    fn resolver(
-        providers: Vec<MockProvider>,
-        provider_order: Vec<ProviderId>,
-    ) -> CrossSourceResolver {
+    fn resolver(providers: Vec<MockProvider>) -> CrossSourceResolver {
         let providers = providers
             .into_iter()
             .map(|provider| {
@@ -790,35 +731,21 @@ mod tests {
                 )
             })
             .collect();
-        create_cross_source_resolver(CrossSourceResolverDeps {
-            providers: Some(providers),
-            provider_order: Some(
-                provider_order
-                    .into_iter()
-                    .map(|provider| provider.to_owned())
-                    .collect(),
-            ),
-        })
+        create_cross_source_resolver(CrossSourceResolverDeps { providers })
     }
 
     #[tokio::test]
-    async fn resolve_search_with_explicit_provider_keeps_provider_specific_fallback_behavior() {
+    async fn resolve_search_with_explicit_provider_uses_only_that_provider() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
+        let resolver =
+            resolver(vec![
                 MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
                     .with_search(vec![track(ProviderId::Netease, "n-1", "夜航", &["星野"])]),
                 MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+            ]);
 
         let result = resolver
-            .resolve_search(ResolveSearchQuery {
-                keyword: "夜航".to_owned(),
-                provider: Some(ProviderId::Netease),
-                limit: 5,
-            })
+            .resolve_search("夜航", Some(ProviderId::Netease), 5)
             .await
             .unwrap();
 
@@ -829,18 +756,15 @@ mod tests {
     #[tokio::test]
     async fn resolve_recommendation_page_collects_successful_provider_pages() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_recommendation_page(
-                    RecommendationPage {
-                        provider: ProviderId::Qq,
-                        list: Vec::new(),
-                    },
-                ),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls)),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_recommendation_page(
+                RecommendationPage {
+                    provider: ProviderId::Qq,
+                    list: Vec::new(),
+                },
+            ),
+        ]);
 
         let pages = resolver.resolve_recommendation_page().await.unwrap();
 
@@ -855,59 +779,70 @@ mod tests {
     #[tokio::test]
     async fn resolve_search_without_provider_merges_results_with_stable_dedupe() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(vec![
-                    track(ProviderId::Netease, "n-1", "夜航", &["星野"]),
-                    track(ProviderId::Netease, "same", "同名", &["Ada"]),
-                ]),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![
-                    track(ProviderId::Qq, "q-1", "夜航", &["星野"]),
-                    track(ProviderId::Qq, "same", "同名", &["Ada"]),
-                ]),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(vec![
+                track(ProviderId::Netease, "n-1", "夜航", &["星野"]),
+                track(ProviderId::Netease, "same", "同名", &["Ada"]),
+            ]),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![
+                track(ProviderId::Qq, "q-1", "夜航", &["星野"]),
+                track(ProviderId::Qq, "same", "同名", &["Ada"]),
+            ]),
+        ]);
 
-        let result = resolver
-            .resolve_search(ResolveSearchQuery {
-                keyword: "夜航".to_owned(),
-                provider: None,
-                limit: 3,
-            })
-            .await
-            .unwrap();
+        let result = resolver.resolve_search("夜航", None, 3).await.unwrap();
 
-        let ids = result
+        let mut ids = result
             .iter()
             .map(|track| format!("{}:{}", track.provider, track.id))
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["qq:q-1", "netease:n-1", "qq:same"]);
+        ids.sort();
+        assert_eq!(ids, vec!["netease:n-1", "qq:q-1", "qq:same"]);
+        assert!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|call| call.ends_with(":2"))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_search_without_provider_keeps_successful_results_when_a_provider_fails() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_search_error(ProviderErrorCode::Unavailable, "offline"),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![track(
+                ProviderId::Qq,
+                "q-1",
+                "夜航",
+                &["星野"],
+            )]),
+        ]);
+
+        let result = resolver.resolve_search("夜航", None, 2).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].provider, ProviderId::Qq);
     }
 
     #[tokio::test]
     async fn resolve_search_without_provider_starts_all_provider_searches_concurrently() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let search_barrier = Arc::new(Barrier::new(2));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
-                    .with_search(vec![track(ProviderId::Netease, "n-1", "夜航", &["星野"])])
-                    .with_search_barrier(Arc::clone(&search_barrier)),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
-                    .with_search(vec![track(ProviderId::Qq, "q-1", "夜航", &["星野"])])
-                    .with_search_barrier(search_barrier),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_search(vec![track(ProviderId::Netease, "n-1", "夜航", &["星野"])])
+                .with_search_barrier(Arc::clone(&search_barrier)),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                .with_search(vec![track(ProviderId::Qq, "q-1", "夜航", &["星野"])])
+                .with_search_barrier(search_barrier),
+        ]);
 
         let result = timeout(
             Duration::from_secs(1),
-            resolver.resolve_search(ResolveSearchQuery {
-                keyword: "夜航".to_owned(),
-                provider: None,
-                limit: 2,
-            }),
+            resolver.resolve_search("夜航", None, 2),
         )
         .await
         .expect("concurrent searches should reach the barrier")
@@ -917,48 +852,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_search_falls_back_when_preferred_provider_fails_or_returns_empty() {
+    async fn resolve_search_with_explicit_provider_does_not_fall_back() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(Vec::new()),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![track(
-                    ProviderId::Qq,
-                    "q-1",
-                    "夜航",
-                    &["星野"],
-                )]),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls)).with_search(Vec::new()),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls)).with_search(vec![track(
+                ProviderId::Qq,
+                "q-1",
+                "夜航",
+                &["星野"],
+            )]),
+        ]);
 
-        let result = resolver
-            .resolve_search(ResolveSearchQuery {
-                keyword: "夜航".to_owned(),
-                provider: Some(ProviderId::Netease),
-                limit: 3,
-            })
+        let error = resolver
+            .resolve_search("夜航", Some(ProviderId::Netease), 3)
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(result[0].provider, ProviderId::Qq);
-        assert_eq!(
-            calls.lock().unwrap().as_slice(),
-            &["netease:search:夜航:3", "qq:search:夜航:3"]
-        );
+        assert!(error.downcast_ref::<ProviderError>().is_some_and(|error| {
+            matches!(&error.code, ProviderErrorCode::NoResult)
+                && error.provider == ProviderId::Netease
+        }));
+        assert_eq!(calls.lock().unwrap().as_slice(), &["netease:search:夜航:3"]);
     }
 
     #[tokio::test]
     async fn resolve_song_url_tries_direct_provider_first_and_returns_its_url() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
-                    .with_song_url("https://n.example/song.m4a"),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_song_url("https://n.example/song.m4a"),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls)),
+        ]);
 
         let result = resolver
             .resolve_song_url(track(ProviderId::Netease, "n-1", "夜航", &["星野"]), None)
@@ -972,16 +897,13 @@ mod tests {
     #[tokio::test]
     async fn resolve_song_url_searches_fallback_provider_by_title_and_artists() {
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
-                    .with_search_error(ProviderErrorCode::Unavailable, "netease down"),
-                MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
-                    .with_search(vec![track(ProviderId::Qq, "q-9", "夜航", &["星野"])])
-                    .with_song_url("https://q.example/song.m4a"),
-            ],
-            vec![ProviderId::Netease, ProviderId::Qq],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_search_error(ProviderErrorCode::Unavailable, "netease down"),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                .with_search(vec![track(ProviderId::Qq, "q-9", "夜航", &["星野"])])
+                .with_song_url("https://q.example/song.m4a"),
+        ]);
 
         let result = resolver
             .resolve_song_url(track(ProviderId::Netease, "n-1", "夜航", &["星野"]), None)
@@ -1009,19 +931,16 @@ mod tests {
             &["星野"],
         );
         import_track.source_id = "import:apple-music:1".to_owned();
-        let resolver = resolver(
-            vec![
-                MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
-                    .with_search(vec![track(
-                        ProviderId::Netease,
-                        "n-match",
-                        "夜航",
-                        &["星野"],
-                    )])
-                    .with_song_url("https://n.example/match.m4a"),
-            ],
-            vec![ProviderId::Netease],
-        );
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_search(vec![track(
+                    ProviderId::Netease,
+                    "n-match",
+                    "夜航",
+                    &["星野"],
+                )])
+                .with_song_url("https://n.example/match.m4a"),
+        ]);
 
         let result = resolver.resolve_song_url(import_track, None).await.unwrap();
 

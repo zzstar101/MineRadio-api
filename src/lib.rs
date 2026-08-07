@@ -15,10 +15,10 @@ mod librespot_protocol;
 pub(crate) mod parsers;
 pub(crate) mod providers;
 pub(crate) mod services;
-mod types;
+pub mod types;
 pub(crate) mod utils;
 
-pub use api::{Api, ApiError, ApiErrorCode, ApiResult};
+pub use api::{Api, ApiError, ApiErrorCode, ApiResult, ProviderApi};
 pub use config::LibraryConfig;
 /// 将结构化事件写入已配置的运行时日志，并可通过后台任务异步提交。
 pub use services::sidecar_log::{log_runtime, spawn_runtime_log};
