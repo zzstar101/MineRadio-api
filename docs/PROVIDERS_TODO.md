@@ -4,12 +4,54 @@
 
 - “人工测试并校验”列由人工填写，不根据单元测试自动勾选。
 
+## 目录重构计划
+
+目标目录：
+
+```text
+src/
+├── api.rs
+├── config.rs
+├── types.rs
+├── error.rs
+├── provider.rs
+├── qr_login_api.rs
+├── cross_source.rs
+├── podcast.rs
+├── weather_radio.rs
+├── auth_session.rs
+├── sidecar_log.rs
+├── qr_login/
+│   ├── mod.rs
+│   ├── common.rs
+│   ├── qq.rs
+│   ├── qq_music.rs
+│   ├── wechat.rs
+│   ├── netease.rs
+│   ├── kugou.rs
+│   ├── soda.rs
+│   └── mqtt.rs
+└── providers/
+    ├── lyric/
+    │   ├── mod.rs
+    │   └── lrc.rs
+    ├── qq/lyric.rs
+    ├── netease/lyric.rs
+    ├── kugou/lyric.rs
+    └── soda/lyric.rs
+```
+
+- [x] 合并 `api/cross_source_resolver.rs` 与 `api/cross_source.rs`，使跨源逻辑保持单文件。
+- [x] 让跨源链路直接使用 `ProviderError`，移除该链路中的 `anyhow`。
+- [x] 移除 `api/`、`services/` 与 `parsers/` 目录，按上述目标移动模块并更新引用。
+- [x] 将二维码登录以 `QrLoginKind` 注册表公开，不再挂在 `ProviderApi` 的无语义 `Vec` 上。
+
 ## 网易云（netease）
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
-| 二维码登录 | [x] | [x] | [netease_qr_login.rs](../src/services/netease_qr_login.rs) 的 `create_key`、`create_image`、`check` |
+| 二维码登录 | [x] | [x] | [netease.rs](../src/qr_login/netease.rs) 的 `create_key`、`create_image`、`check` |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `song_url` |
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `track_qualities` |
@@ -30,7 +72,7 @@
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
-| 二维码登录 | [x] | [x] | [qq_qr_login.rs](../src/services/qq_qr_login.rs) 的 `create_key`、`create_image`、`check` |
+| 二维码登录 | [x] | [x] | [qq.rs](../src/qr_login/qq.rs)、[qq_music.rs](../src/qr_login/qq_music.rs)、[wechat.rs](../src/qr_login/wechat.rs) |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `song_url` |
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `track_qualities` |
@@ -51,7 +93,7 @@
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
-| 二维码登录 | [x] | [x] | [soda_qr_login.rs](../src/services/soda_qr_login.rs) 的 `create_image`、`check` |
+| 二维码登录 | [x] | [x] | [soda.rs](../src/qr_login/soda.rs) 的 `create_image`、`check` |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `song_url` |
 | 音质列表 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `track_qualities` |
@@ -72,7 +114,7 @@
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
 | 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `KugouAdapter::shared` |
-| 二维码登录 | [x] | [x] | [kugou_qr_login.rs](../src/services/kugou_qr_login.rs) |
+| 二维码登录 | [x] | [x] | [kugou.rs](../src/qr_login/kugou.rs) |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `song_url`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `song_url` |
 | 音质列表 | [x] | [ ] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `track_qualities` |
