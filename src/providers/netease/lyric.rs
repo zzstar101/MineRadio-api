@@ -1,4 +1,4 @@
-use crate::parsers::{MemchrParsers, lrc::*};
+use crate::providers::lyric::{MemchrParsers, lrc::*};
 use memchr::{memchr, memchr2};
 
 ///网易LRC歌词解析器

@@ -5,4 +5,5 @@
 //! 2. QQ每一个项目都有两个标识符(`id: u32`, `mid: String`)，此API项目只使用`mid`
 pub mod adapter;
 pub mod client;
+mod lyric;
 mod model;

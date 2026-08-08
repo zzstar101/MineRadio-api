@@ -1,4 +1,4 @@
-use crate::parsers::MemchrParsers;
+use crate::providers::lyric::MemchrParsers;
 use crate::types::LyricLine;
 use crate::types::LyricWord;
 use crate::utils::cryptors::decrypt_qrc;

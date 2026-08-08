@@ -13,8 +13,8 @@ use std::{
 };
 
 use crate::{
-    services::auth_session::set_runtime_provider_cookie,
-    services::qr_login::{QrLogin, QrSessionStore},
+    auth_session::set_runtime_provider_cookie,
+    qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::{
         decrypt_kugou_register_payload, encrypt_kugou_register_payload, encrypt_kugou_register_rsa,

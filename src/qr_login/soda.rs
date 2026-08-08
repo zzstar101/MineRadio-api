@@ -2,8 +2,8 @@ use reqwest::{Client, header::HeaderMap};
 use serde_json::Value;
 
 use crate::{
-    services::auth_session::set_runtime_provider_cookie,
-    services::qr_login::{QrLogin, QrSessionStore},
+    auth_session::set_runtime_provider_cookie,
+    qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
 };
 

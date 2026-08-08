@@ -1,4 +1,4 @@
-use crate::parsers::MemchrParsers;
+use crate::providers::lyric::MemchrParsers;
 ///汽水音乐逐字歌词解析器
 pub struct SodaParser;
 impl MemchrParsers for SodaParser {

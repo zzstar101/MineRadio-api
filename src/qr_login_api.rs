@@ -3,20 +3,25 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 use futures_util::FutureExt;
 
 use crate::{
-    api::{ApiError, ApiErrorCode, ApiResult},
-    services::qr_login::QrLogin,
+    error::{ApiError, ApiErrorCode, ApiResult},
+    qr_login::{QrLogin, QrLoginKind},
     types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
 };
 
 /// Public QR login facade for a provider login protocol.
 #[derive(Clone)]
 pub struct QrLoginApi {
+    kind: QrLoginKind,
     service: Arc<dyn QrLogin>,
 }
 
 impl QrLoginApi {
-    pub(crate) fn new(service: Arc<dyn QrLogin>) -> Self {
-        Self { service }
+    pub(crate) fn new(kind: QrLoginKind, service: Arc<dyn QrLogin>) -> Self {
+        Self { kind, service }
+    }
+
+    pub const fn kind(&self) -> QrLoginKind {
+        self.kind
     }
 
     async fn call<T>(

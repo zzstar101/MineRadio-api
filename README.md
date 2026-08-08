@@ -68,10 +68,11 @@ Api::init(LibraryConfig)
 ├── api.spotify     ProviderApi    ← Spotify
 ├── api.search_tracks()            ← 跨源搜索
 ├── api.song_url()                 ← 跨源解析播放地址
-└── api.recommendation_pages()     ← 发现页聚合
+├── api.recommendation_pages()     ← 发现页聚合
+└── api.qr_login(kind)             ← 按协议获取二维码登录入口
 ```
 
-`ProviderApi` 提供该平台的全部能力（搜索、播放、歌词、歌单、收藏、登录管理等），并内聚一个或多个 `QrLoginApi` 用于二维码登录。
+`ProviderApi` 提供该平台的音乐能力（搜索、播放、歌词、歌单、收藏与登录状态管理）。二维码登录通过 `Api` 的全局协议注册表获取。
 
 ## 主要能力
 
@@ -119,10 +120,11 @@ Api::init(LibraryConfig)
 - `provider.check_song_likes(ids)` — 批量查询收藏状态
 - `provider.update_song_in_playlist(playlist_id, track_id, adding)` — 添加 / 移除歌单歌曲
 - `provider.recommendation_page()` — 发现页
-- `provider.qr_login` — `Vec<QrLoginApi>`，该 provider 可用的一种或多种登录协议
 
 ### QrLoginApi
 
+- `api.qr_login(kind)` — 按 `QrLoginKind` 获取协议；可用值为 `Qq`、`QqMusic`、`Wechat`、`Netease`、`Kugou`、`Soda`
+- `api.qr_login_kinds()` — 枚举当前已注册的二维码登录协议
 - `qr.create_key()` — 获取二维码 key
 - `qr.create_image(key)` — 生成二维码图片
 - `qr.check(key)` — 轮询扫码状态
@@ -186,12 +188,14 @@ pub struct ApiError {
 ```text
 src/
 ├── lib.rs              crate 根，公开导出 API、类型与工具函数
+├── api.rs              Api 生命周期与 facade
 ├── config.rs           LibraryConfig 配置结构
 ├── types.rs            共享数据类型（Track、Playlist、Lyric 等）
-├── api/                公开 API 门面（Api、ProviderApi、QrLoginApi、跨源）
-├── providers/          网易云、QQ、汽水、酷狗、Spotify 的 client/adapter/map
-├── services/            二维码登录、播客、天气电台、分享导入、日志等业务服务
-├── parsers/             LRC 歌词等文本解析
+├── qr_login/           按 QrLoginKind 平铺的二维码登录协议
+├── providers/          音源 adapter/client/model 与内部歌词解析
+├── cross_source.rs     跨源检索、排序与切源策略
+├── auth_session.rs     Cookie 会话存储
+├── sidecar_log.rs      运行时日志
 ├── utils/               加密、音频分析与通用工具
 └── vendor/              内嵌的 librespot 组件（audio/core/metadata/protocol）
 docs/                    文档

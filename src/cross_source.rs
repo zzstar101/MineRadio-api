@@ -1,15 +1,19 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    future::Future,
+    panic::AssertUnwindSafe,
     sync::{Arc, LazyLock},
 };
 
 use futures::future::join_all;
+use futures_util::FutureExt;
 use regex::Regex;
 
 use crate::{
+    error::{ApiError, ApiErrorCode, ApiResult, from_provider_error},
     providers::{
-        ProviderAdapter,
+        ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
     types::{PlayableState, ProviderId, RecommendationPage, SongUrlOptions, SongUrlResult, Track},
@@ -50,6 +54,69 @@ static DERIVATIVE_RESULT_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid derivative result regex")
 });
 
+pub(crate) struct CrossSourceApi {
+    resolver: Arc<CrossSourceResolver>,
+}
+
+impl CrossSourceApi {
+    pub(crate) fn new(resolver: CrossSourceResolver) -> Self {
+        Self {
+            resolver: Arc::new(resolver),
+        }
+    }
+
+    async fn call<T>(
+        &self,
+        operation: &'static str,
+        future: impl Future<Output = ProviderResult<T>>,
+    ) -> ApiResult<T> {
+        match AssertUnwindSafe(future).catch_unwind().await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(from_provider_error(error)),
+            Err(_) => {
+                tracing::error!(operation, "cross-source operation panicked");
+                Err(ApiError::new(ApiErrorCode::Internal, "internal error"))
+            }
+        }
+    }
+
+    pub(crate) async fn search_tracks(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ApiResult<Vec<Track>> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Err(ApiError::new(ApiErrorCode::BadRequest, "keyword required"));
+        }
+
+        self.call(
+            "search_tracks",
+            self.resolver
+                .resolve_search(keyword, provider, limit.max(1)),
+        )
+        .await
+    }
+
+    pub(crate) async fn song_url(
+        &self,
+        track: Track,
+        options: Option<SongUrlOptions>,
+    ) -> ApiResult<SongUrlResult> {
+        self.call("song_url", self.resolver.resolve_song_url(track, options))
+            .await
+    }
+
+    pub(crate) async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
+        self.call(
+            "recommendation_pages",
+            self.resolver.resolve_recommendation_page(),
+        )
+        .await
+    }
+}
+
 pub struct CrossSourceResolverDeps {
     pub providers: ProviderMap,
 }
@@ -59,7 +126,7 @@ pub struct CrossSourceResolver {
 }
 
 impl CrossSourceResolver {
-    pub async fn resolve_recommendation_page(&self) -> anyhow::Result<Vec<RecommendationPage>> {
+    pub async fn resolve_recommendation_page(&self) -> ProviderResult<Vec<RecommendationPage>> {
         let requests = PROVIDER_IDS.into_iter().filter_map(|provider_id| {
             let provider = self.provider(&provider_id)?;
             Some(async move { provider.recommendation_page().await })
@@ -77,7 +144,7 @@ impl CrossSourceResolver {
         keyword: &str,
         provider: Option<ProviderId>,
         limit: u32,
-    ) -> anyhow::Result<Vec<Track>> {
+    ) -> ProviderResult<Vec<Track>> {
         let Some(provider_id) = provider else {
             return self.resolve_merged_search(keyword, limit).await;
         };
@@ -96,7 +163,7 @@ impl CrossSourceResolver {
         &self,
         track: Track,
         opts: Option<SongUrlOptions>,
-    ) -> anyhow::Result<SongUrlResult> {
+    ) -> ProviderResult<SongUrlResult> {
         let opts = opts.unwrap_or_default();
         let import_only = is_import_only_track(&track);
         let attempts = self.ordered_providers(if import_only {
@@ -104,7 +171,7 @@ impl CrossSourceResolver {
         } else {
             Some(track.provider)
         });
-        let mut first_error: Option<anyhow::Error> = None;
+        let mut first_error: Option<ProviderError> = None;
 
         for provider_id in attempts {
             let Some(adapter) = self.provider(&provider_id) else {
@@ -116,7 +183,7 @@ impl CrossSourceResolver {
                     Ok(result) => return Ok(result),
                     Err(err) => {
                         if first_error.is_none() {
-                            first_error = Some(err.into());
+                            first_error = Some(err);
                         }
                     }
                 }
@@ -131,7 +198,7 @@ impl CrossSourceResolver {
                             Ok(result) => return Ok(result),
                             Err(err) => {
                                 if first_error.is_none() {
-                                    first_error = Some(err.into());
+                                    first_error = Some(err);
                                 }
                             }
                         }
@@ -139,7 +206,7 @@ impl CrossSourceResolver {
                 }
                 Err(err) => {
                     if first_error.is_none() {
-                        first_error = Some(err.into());
+                        first_error = Some(err);
                     }
                 }
             }
@@ -151,7 +218,7 @@ impl CrossSourceResolver {
         Err(no_url_error(track.provider, "no playable song URL found"))
     }
 
-    async fn resolve_merged_search(&self, keyword: &str, limit: u32) -> anyhow::Result<Vec<Track>> {
+    async fn resolve_merged_search(&self, keyword: &str, limit: u32) -> ProviderResult<Vec<Track>> {
         let provider_count = self.deps.providers.len() as u32;
         if provider_count == 0 {
             return Err(no_result_error(
@@ -481,7 +548,7 @@ fn search_looks_like_same_title_cover(
         || track.playable_state == PlayableState::Unavailable
 }
 
-fn no_result_error(provider: ProviderId, message: &str) -> anyhow::Error {
+fn no_result_error(provider: ProviderId, message: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoResult,
         provider,
@@ -490,10 +557,9 @@ fn no_result_error(provider: ProviderId, message: &str) -> anyhow::Error {
         action: None,
         raw_message: None,
     }
-    .into()
 }
 
-fn no_url_error(provider: ProviderId, message: &str) -> anyhow::Error {
+fn no_url_error(provider: ProviderId, message: &str) -> ProviderError {
     ProviderError {
         code: ProviderErrorCode::NoUrl,
         provider,
@@ -502,7 +568,6 @@ fn no_url_error(provider: ProviderId, message: &str) -> anyhow::Error {
         action: None,
         raw_message: None,
     }
-    .into()
 }
 
 #[cfg(test)]
@@ -869,10 +934,8 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(error.downcast_ref::<ProviderError>().is_some_and(|error| {
-            matches!(&error.code, ProviderErrorCode::NoResult)
-                && error.provider == ProviderId::Netease
-        }));
+        assert!(matches!(error.code, ProviderErrorCode::NoResult));
+        assert_eq!(error.provider, ProviderId::Netease);
         assert_eq!(calls.lock().unwrap().as_slice(), &["netease:search:夜航:3"]);
     }
 

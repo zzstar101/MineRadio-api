@@ -1,8 +1,4 @@
-pub mod kugou;
 pub mod lrc;
-pub mod netease;
-pub mod qqmusic;
-pub mod soda_music;
 
 use crate::types::LyricLine;
 use crate::types::LyricWord;

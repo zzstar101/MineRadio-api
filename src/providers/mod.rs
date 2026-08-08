@@ -49,6 +49,7 @@
 
 pub mod error;
 pub mod kugou;
+pub(crate) mod lyric;
 pub mod netease;
 pub mod qq;
 pub mod soda;

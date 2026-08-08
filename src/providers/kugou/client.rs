@@ -10,11 +10,11 @@ use reqwest::{Client, Method, Response};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
+use crate::auth_session;
 use crate::providers::{
     ProviderId, ProviderResult,
     error::{ProviderError, ProviderErrorCode},
 };
-use crate::services::auth_session;
 
 use super::model::{
     KugouAddSongRequest, KugouAuth, KugouCollectionResp, KugouDeleteSongRequest, KugouLyricResp,

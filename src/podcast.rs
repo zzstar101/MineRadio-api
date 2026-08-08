@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{providers::netease::client::NeteaseClient, services::auth_session, types::ProviderId};
+use crate::{auth_session, providers::netease::client::NeteaseClient, types::ProviderId};
 
 pub type NeteaseResponse = Value;
 

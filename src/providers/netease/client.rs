@@ -12,12 +12,12 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
+    auth_session,
     providers::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         netease::model::{NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseVipInfoResp},
     },
-    services::auth_session,
     utils::{encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
 

@@ -1,16 +1,13 @@
-mod cross_source;
-mod cross_source_resolver;
-mod error;
-mod provider;
-mod qr_login;
-
 use std::{collections::HashMap, sync::Arc};
 
 use reqwest::Client;
 use serde_json::json;
 
 use crate::{
+    auth_session,
     config::LibraryConfig,
+    cross_source,
+    podcast::{PodcastService, create_podcast_service_with_client},
     providers::{
         ProviderAdapter,
         kugou::adapter::KugouAdapter,
@@ -19,27 +16,22 @@ use crate::{
         soda::adapter::SodaAdapter,
         spotify::{adapter::SpotifyAdapter, client::SpotifyClient},
     },
-    services::{
-        auth_session,
-        kugou_qr_login::{
-            KugouQrHttpApi, KugouQrLoginDeps, KugouQrLoginService, create_kugou_qr_login_service,
-        },
-        netease_qr_login::{NeteaseQrLoginService, create_netease_qr_login_service_with_client},
-        podcast::{PodcastService, create_podcast_service_with_client},
-        qq_qr_login_mqtt::{
-            QqMusicQrLoginDeps, QqMusicQrLoginService, create_qqmusic_qr_login_service,
-        },
-        qq_qr_login_qq::{QqQrLoginDeps, QqQrLoginService, create_qq_qr_login_service},
-        qq_qr_login_wx::{WechatQrLoginDeps, WechatQrLoginService, create_wechat_qr_login_service},
-        sidecar_log::{self, SidecarLogger},
-        soda_qr_login::{SodaQrLoginDeps, SodaQrLoginService, create_soda_qr_login_service},
-        weather_radio::{WeatherRadioDeps, WeatherRadioService, create_weather_radio_service},
+    qr_login::{
+        QrLoginKind,
+        kugou::{KugouQrHttpApi, KugouQrLoginDeps, create_kugou_qr_login_service},
+        netease::create_netease_qr_login_service_with_client,
+        qq::{QqQrLoginDeps, create_qq_qr_login_service},
+        qq_music::{QqMusicQrLoginDeps, create_qqmusic_qr_login_service},
+        soda::{SodaQrLoginDeps, create_soda_qr_login_service},
+        wechat::{WechatQrLoginDeps, create_wechat_qr_login_service},
     },
+    sidecar_log::{self, SidecarLogger},
+    weather_radio::{WeatherRadioDeps, WeatherRadioService, create_weather_radio_service},
 };
 
-pub use error::{ApiError, ApiErrorCode, ApiResult};
-pub use provider::ProviderApi;
-pub use qr_login::QrLoginApi;
+pub use crate::error::{ApiError, ApiErrorCode, ApiResult};
+pub use crate::provider::ProviderApi;
+pub use crate::qr_login_api::QrLoginApi;
 
 pub use crate::types::{
     AlbumDetail, AlbumSummary, LyricLine, LyricPayload, LyricWord, PlayableState,
@@ -61,12 +53,7 @@ pub(crate) struct ApiInner {
     spotify: Arc<dyn ProviderAdapter>,
     podcast: PodcastService,
     weather_radio: WeatherRadioService,
-    qq_qr_login: Arc<QqQrLoginService>,
-    qqmusic_qr_login: Arc<QqMusicQrLoginService>,
-    wechat_qr_login: Arc<WechatQrLoginService>,
-    netease_qr_login: Arc<NeteaseQrLoginService>,
-    soda_qr_login: Arc<SodaQrLoginService>,
-    kugou_qr_login: Arc<KugouQrLoginService>,
+    qr_logins: HashMap<QrLoginKind, QrLoginApi>,
 }
 
 impl ApiInner {
@@ -96,11 +83,9 @@ impl ApiInner {
             config,
             logger,
             cross_source: cross_source::CrossSourceApi::new(
-                cross_source_resolver::create_cross_source_resolver(
-                    cross_source_resolver::CrossSourceResolverDeps {
-                        providers: provider_map,
-                    },
-                ),
+                cross_source::create_cross_source_resolver(cross_source::CrossSourceResolverDeps {
+                    providers: provider_map,
+                }),
             ),
             podcast: create_podcast_service_with_client(netease_client),
             weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),
@@ -109,28 +94,66 @@ impl ApiInner {
             soda,
             kugou,
             spotify,
-            qq_qr_login: Arc::new(create_qq_qr_login_service(QqQrLoginDeps {
-                client: qq_qr_client.clone(),
-                timeout_ms: 15_000,
-            })),
-            qqmusic_qr_login: Arc::new(create_qqmusic_qr_login_service(QqMusicQrLoginDeps {
-                client: qq_qr_client.clone(),
-                timeout_ms: 10_000,
-            })),
-            wechat_qr_login: Arc::new(create_wechat_qr_login_service(WechatQrLoginDeps {
-                client: qq_qr_client,
-                timeout_ms: 10_000,
-            })),
-            netease_qr_login: Arc::new(create_netease_qr_login_service_with_client(
-                shared_http_client.clone(),
-            )),
-            soda_qr_login: Arc::new(create_soda_qr_login_service(SodaQrLoginDeps {
-                client: shared_http_client.clone(),
-                ..SodaQrLoginDeps::default()
-            })),
-            kugou_qr_login: Arc::new(create_kugou_qr_login_service(KugouQrLoginDeps {
-                api: Box::new(KugouQrHttpApi::with_client(shared_http_client.clone())),
-            })),
+            qr_logins: HashMap::from([
+                (
+                    QrLoginKind::Qq,
+                    QrLoginApi::new(
+                        QrLoginKind::Qq,
+                        Arc::new(create_qq_qr_login_service(QqQrLoginDeps {
+                            client: qq_qr_client.clone(),
+                            timeout_ms: 15_000,
+                        })),
+                    ),
+                ),
+                (
+                    QrLoginKind::QqMusic,
+                    QrLoginApi::new(
+                        QrLoginKind::QqMusic,
+                        Arc::new(create_qqmusic_qr_login_service(QqMusicQrLoginDeps {
+                            client: qq_qr_client.clone(),
+                            timeout_ms: 10_000,
+                        })),
+                    ),
+                ),
+                (
+                    QrLoginKind::Wechat,
+                    QrLoginApi::new(
+                        QrLoginKind::Wechat,
+                        Arc::new(create_wechat_qr_login_service(WechatQrLoginDeps {
+                            client: qq_qr_client,
+                            timeout_ms: 10_000,
+                        })),
+                    ),
+                ),
+                (
+                    QrLoginKind::Netease,
+                    QrLoginApi::new(
+                        QrLoginKind::Netease,
+                        Arc::new(create_netease_qr_login_service_with_client(
+                            shared_http_client.clone(),
+                        )),
+                    ),
+                ),
+                (
+                    QrLoginKind::Soda,
+                    QrLoginApi::new(
+                        QrLoginKind::Soda,
+                        Arc::new(create_soda_qr_login_service(SodaQrLoginDeps {
+                            client: shared_http_client.clone(),
+                            ..SodaQrLoginDeps::default()
+                        })),
+                    ),
+                ),
+                (
+                    QrLoginKind::Kugou,
+                    QrLoginApi::new(
+                        QrLoginKind::Kugou,
+                        Arc::new(create_kugou_qr_login_service(KugouQrLoginDeps {
+                            api: Box::new(KugouQrHttpApi::with_client(shared_http_client.clone())),
+                        })),
+                    ),
+                ),
+            ]),
         }
     }
 }
@@ -154,13 +177,6 @@ impl Api {
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
         let inner = Arc::new(ApiInner::new(config, logger));
-        let qq_qr_login = QrLoginApi::new(inner.qq_qr_login.clone());
-        let netease_qr_login = QrLoginApi::new(inner.netease_qr_login.clone());
-        let soda_qr_login = QrLoginApi::new(inner.soda_qr_login.clone());
-        let kugou_qr_login = QrLoginApi::new(inner.kugou_qr_login.clone());
-        let qqmusic_qr_login = QrLoginApi::new(inner.qqmusic_qr_login.clone());
-        let wechat_qr_login = QrLoginApi::new(inner.wechat_qr_login.clone());
-
         inner
             .logger
             .log(json!({
@@ -172,14 +188,11 @@ impl Api {
             .await;
 
         Ok(Self {
-            qq: ProviderApi::new(
-                inner.qq.clone(),
-                vec![qq_qr_login, qqmusic_qr_login, wechat_qr_login],
-            ),
-            netease: ProviderApi::new(inner.netease.clone(), vec![netease_qr_login]),
-            soda: ProviderApi::new(inner.soda.clone(), vec![soda_qr_login]),
-            kugou: ProviderApi::new(inner.kugou.clone(), vec![kugou_qr_login]),
-            spotify: ProviderApi::new(inner.spotify.clone(), Vec::new()),
+            qq: ProviderApi::new(inner.qq.clone()),
+            netease: ProviderApi::new(inner.netease.clone()),
+            soda: ProviderApi::new(inner.soda.clone()),
+            kugou: ProviderApi::new(inner.kugou.clone()),
+            spotify: ProviderApi::new(inner.spotify.clone()),
             inner,
         })
     }
@@ -219,6 +232,14 @@ impl Api {
 
     pub async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
         self.inner.cross_source.recommendation_pages().await
+    }
+
+    pub fn qr_login(&self, kind: QrLoginKind) -> Option<&QrLoginApi> {
+        self.inner.qr_logins.get(&kind)
+    }
+
+    pub fn qr_login_kinds(&self) -> impl Iterator<Item = QrLoginKind> + '_ {
+        self.inner.qr_logins.keys().copied()
     }
 
     pub fn app_version(&self) -> &str {

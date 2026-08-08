@@ -8,11 +8,9 @@ use reqwest::{
 };
 
 use crate::{
-    services::auth_session::set_runtime_provider_cookie,
-    services::qq_qr_login_common::{
-        check_qq_login_error, normalize_login_cookie, qq_music_device_name,
-    },
-    services::qr_login::{QrLogin, QrSessionStore},
+    auth_session::set_runtime_provider_cookie,
+    qr_login::common::{check_qq_login_error, normalize_login_cookie, qq_music_device_name},
+    qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{x4, x5, x7, xj},
 };

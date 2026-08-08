@@ -9,8 +9,8 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    services::auth_session::set_runtime_provider_cookie,
-    services::qr_login::QrLogin,
+    auth_session::set_runtime_provider_cookie,
+    qr_login::QrLogin,
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::{encrypt_weapi, generate_weapi_secret_key},
 };

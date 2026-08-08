@@ -8,7 +8,46 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::types::{ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey};
+use crate::types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey};
+
+pub(crate) mod common;
+pub(crate) mod kugou;
+pub(crate) mod mqtt;
+pub(crate) mod netease;
+pub(crate) mod qq;
+pub(crate) mod qq_music;
+pub(crate) mod soda;
+pub(crate) mod wechat;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum QrLoginKind {
+    Qq,
+    QqMusic,
+    Wechat,
+    Netease,
+    Kugou,
+    Soda,
+}
+
+impl QrLoginKind {
+    pub const ALL: [Self; 6] = [
+        Self::Qq,
+        Self::QqMusic,
+        Self::Wechat,
+        Self::Netease,
+        Self::Kugou,
+        Self::Soda,
+    ];
+
+    pub const fn provider(self) -> ProviderId {
+        match self {
+            Self::Qq | Self::QqMusic | Self::Wechat => ProviderId::Qq,
+            Self::Netease => ProviderId::Netease,
+            Self::Kugou => ProviderId::Kugou,
+            Self::Soda => ProviderId::Soda,
+        }
+    }
+}
 
 pub const QR_LOGIN_SESSION_TTL: Duration = Duration::from_secs(30);
 

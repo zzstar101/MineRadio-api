@@ -4,18 +4,17 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
-use super::client::SodaClient;
-use crate::parsers::{
+use super::{client::SodaClient, lyric::SodaParser};
+use crate::providers::lyric::{
     MemchrParsers,
     lrc::{LrcParser, UniversalLrcParser},
-    soda_music::SodaParser,
 };
 use crate::{
+    auth_session,
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,

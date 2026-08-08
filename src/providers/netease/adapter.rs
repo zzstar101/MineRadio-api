@@ -8,16 +8,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
-    parsers::{
-        MemchrParsers,
-        lrc::LrcParser,
-        netease::{NeteaseLrcParser, NeteaseParser},
-    },
+    auth_session,
+    providers::lyric::{MemchrParsers, lrc::LrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
@@ -25,7 +21,12 @@ use crate::{
     },
 };
 
-use super::{client::NeteaseClient, map::map_playable, model};
+use super::{
+    client::NeteaseClient,
+    lyric::{NeteaseLrcParser, NeteaseParser},
+    map::map_playable,
+    model,
+};
 
 #[derive(Clone, Copy)]
 struct QualityCandidate {

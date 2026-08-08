@@ -25,19 +25,18 @@ domain types are visible to library consumers.
 src/
   lib.rs                    public crate entry and re-exports
   config.rs                 public LibraryConfig
-  api.rs or api/            public Api facade
+  api.rs                    public Api facade
 
-  types.rs                  private module; selected types are re-exported
+  types.rs                  public domain types
   providers/                pub(crate)
-  parsers/                  pub(crate)
-  services/                 pub(crate)
+  qr_login/                 pub(crate)
   utils/                    pub(crate)
   router.rs                 retained during phase 1
   server.rs                 retained during phase 1
   http/                     retained during phase 1
 ```
 
-`providers`, `parsers`, `services`, and `utils` must not be public. Consumers
+`providers`, `qr_login`, and `utils` must not be public. Consumers
 must not call adapters, clients, parsers, or service implementations directly.
 
 The intended `lib.rs` shape is:
@@ -46,10 +45,9 @@ The intended `lib.rs` shape is:
 pub mod api;
 pub mod config;
 
-mod types;
-pub(crate) mod parsers;
+pub mod types;
 pub(crate) mod providers;
-pub(crate) mod services;
+pub(crate) mod qr_login;
 pub(crate) mod utils;
 
 pub use api::{Api, ApiError, ApiErrorCode, ApiResult};
@@ -57,8 +55,8 @@ pub use config::LibraryConfig;
 pub use types::{ProviderId, Track};
 ```
 
-The final list of re-exported domain types is maintained by `api` and `lib`.
-`types` does not need to become a public module.
+The public domain types are defined in `types` and re-exported from `api` and
+the crate root.
 
 ## Existing Internal Layout
 
@@ -80,40 +78,32 @@ for upstream transport. `model.rs` and `map.rs` remain provider-specific
 response mapping. Public `Api` methods call the registered adapters; they do
 not duplicate provider code or flatten these files.
 
-The lyric parser layout also remains intact:
+Lyrics parsing is internal to providers:
 
 ```text
-parsers/
-  lrc.rs
-  netease.rs
-  qqmusic.rs
-  kugou.rs
-  soda_music.rs
+providers/
+  lyric/      shared LRC and timed-word parsers
+  netease/lyric.rs
+  qq/lyric.rs
+  kugou/lyric.rs
+  soda/lyric.rs
 ```
 
 Provider adapters continue to select and invoke their own lyric parser. Parser
 implementations are not public API methods.
 
-QR login belongs to the corresponding provider implementation. During later
-migration, the current QR login services move under the appropriate provider
-module without changing their protocol logic. QQ web, QQ Music MQTT, and
-WeChat remain distinct QR login kinds even though they ultimately authenticate
-the QQ provider.
-
-During phase 1, `QrLoginApi` relays the existing QR login services without
-moving their implementation. Every `ProviderApi` contains a QR-login array.
-Use `get` to select a protocol safely. QQ reserves index `0` for web QR login,
-`1` for QQ Music MQTT, and `2` for WeChat. Netease, Soda, and Kugou expose
-their sole protocol at index `0`; Spotify has no entries.
+QR login is a standalone protocol registry. `QrLoginKind` explicitly names
+QQ, QQ Music, WeChat, Netease, Kugou, and Soda; it is not indexed by provider
+or by vector position.
 
 ```rust
-if let Some(qq_web) = api.qq.qr_login.get(0) {
+if let Some(qq_web) = api.qr_login(QrLoginKind::Qq) {
     qq_web.create_key().await?;
 }
-if let Some(qq_music) = api.qq.qr_login.get(1) {
+if let Some(qq_music) = api.qr_login(QrLoginKind::QqMusic) {
     qq_music.create_image(key).await?;
 }
-if let Some(qq_wechat) = api.qq.qr_login.get(2) {
+if let Some(qq_wechat) = api.qr_login(QrLoginKind::Wechat) {
     qq_wechat.check(key).await?;
 }
 ```
@@ -245,7 +235,7 @@ Zero-argument and simple operations are direct methods, for example:
 ```rust
 api.qq.login_status().await?;
 api.qq.logout().await?;
-if let Some(qr_login) = api.qq.qr_login.get(0) {
+if let Some(qr_login) = api.qr_login(QrLoginKind::Qq) {
     qr_login.create_key().await?;
 }
 ```

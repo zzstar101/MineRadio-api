@@ -10,12 +10,12 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::{
-    services::auth_session::set_runtime_provider_cookie,
-    services::qq_qr_login_common::{
+    auth_session::set_runtime_provider_cookie,
+    qr_login::common::{
         check_qq_login_error, check_response as check, normalize_login_cookie,
         qq_music_device_name, required_key,
     },
-    services::qr_login::{QrLogin, QrSession, QrSessionStore},
+    qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::qq::{x5, x9},
 };
@@ -368,7 +368,7 @@ fn parse_wechat_poll_response(text: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::qq_qr_login_common::{
+    use crate::qr_login::common::{
         cookie_from_data_map, flatten_data_to_map, remap_qq_login_data_map,
     };
 

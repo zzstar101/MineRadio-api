@@ -1,15 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    parsers::{
-        lrc::{LrcParser, UniversalLrcParser},
-        qqmusic::QQMusicParser,
-    },
+    auth_session,
+    providers::lyric::lrc::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
@@ -20,7 +17,7 @@ use crate::{
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use super::client::QqClient;
+use super::{client::QqClient, lyric::QQMusicParser};
 
 const QQ_PLAIN_QUALITY_CANDIDATES: [QqQualityCandidate; 9] = [
     QqQualityCandidate::new("Q000", ".flac", "atmos"),

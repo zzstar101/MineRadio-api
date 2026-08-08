@@ -8,15 +8,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::Value;
 
 use crate::{
-    parsers::{
-        kugou::KugouParser,
-        lrc::{LrcParser, UniversalLrcParser},
-    },
+    auth_session,
+    providers::lyric::lrc::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    services::auth_session,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
@@ -26,6 +23,7 @@ use crate::{
 
 use super::{
     client::KugouClient,
+    lyric::KugouParser,
     map::{KugouTrackMeta, map_kugou_song},
     model::{
         KugouAddSongRequest, KugouDeleteSongRequest, KugouDeleteSongResource, KugouSongResource,

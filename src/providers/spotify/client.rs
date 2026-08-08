@@ -6,6 +6,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::{
+    auth_session,
     librespot_audio::{AudioDecrypt, AudioFile},
     librespot_core::{
         FileId, Session, SpotifyId, SpotifyUri, authentication::Credentials, cdn_url::CdnUrl,
@@ -16,7 +17,6 @@ use crate::{
         ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    services::auth_session,
     types::{ProviderId, TrackQualityOption},
 };
 

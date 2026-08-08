@@ -17,6 +17,7 @@ use crate::providers::qq::model::{
 };
 use crate::utils::cryptors::qq::{x4, x5, x7, x9, xj};
 use crate::{
+    auth_session,
     providers::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
@@ -26,7 +27,7 @@ use crate::{
             QqPlaylistSongWriteResp, QqSearchResp, QqTrackDetailResp,
         },
     },
-    services::{auth_session, qq_qr_login_common::normalize_login_cookie},
+    qr_login::common::normalize_login_cookie,
 };
 
 const UA: &str = "Mozilla/5.0";

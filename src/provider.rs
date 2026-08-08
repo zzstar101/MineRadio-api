@@ -3,7 +3,7 @@ use std::{future::Future, panic::AssertUnwindSafe, sync::Arc};
 use futures_util::FutureExt;
 
 use crate::{
-    api::{ApiResult, QrLoginApi, error::from_provider_error},
+    error::{ApiResult, from_provider_error},
     providers::{ProviderAdapter, ProviderResult},
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
@@ -16,12 +16,11 @@ use crate::{
 #[derive(Clone)]
 pub struct ProviderApi {
     adapter: Arc<dyn ProviderAdapter>,
-    pub qr_login: Vec<QrLoginApi>,
 }
 
 impl ProviderApi {
-    pub(crate) fn new(adapter: Arc<dyn ProviderAdapter>, qr_login: Vec<QrLoginApi>) -> Self {
-        Self { adapter, qr_login }
+    pub(crate) fn new(adapter: Arc<dyn ProviderAdapter>) -> Self {
+        Self { adapter }
     }
 
     pub fn id(&self) -> ProviderId {
@@ -37,8 +36,8 @@ impl ProviderApi {
             Ok(result) => result.map_err(from_provider_error),
             Err(_) => {
                 tracing::error!(provider = %self.id(), operation, "provider operation panicked");
-                Err(crate::api::ApiError::new(
-                    crate::api::ApiErrorCode::Internal,
+                Err(crate::error::ApiError::new(
+                    crate::error::ApiErrorCode::Internal,
                     "internal error",
                 ))
             }
