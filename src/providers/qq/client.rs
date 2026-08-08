@@ -846,7 +846,6 @@ impl QqClient {
         } else {
             vec![("sign", &sign), ("_", &t)]
         };
-        println!("{}", req.to_string());
         let response = self
             .http
             .post("https://u.y.qq.com/cgi-bin/musics.fcg")
@@ -862,7 +861,6 @@ impl QqClient {
             .await
             .context("read qq upstream response")
             .map_err(unavailable_error)?;
-        //println!("{}", String::from_utf8_lossy(&raw).into_owned());
         serde_json::from_slice(&raw).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Qq,
