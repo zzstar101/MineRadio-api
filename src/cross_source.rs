@@ -16,7 +16,10 @@ use crate::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
-    types::{PlayableState, ProviderId, RecommendationPage, SongUrlOptions, SongUrlResult, Track},
+    types::{
+        AlbumSummary, PlayableState, PlaylistSummary, ProviderId, RecommendationPage,
+        SongUrlOptions, SongUrlResult, Track,
+    },
 };
 
 pub type ProviderMap = HashMap<ProviderId, Arc<dyn ProviderAdapter>>;
@@ -99,6 +102,44 @@ impl CrossSourceApi {
         .await
     }
 
+    pub(crate) async fn search_albums(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ApiResult<Vec<AlbumSummary>> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Err(ApiError::new(ApiErrorCode::BadRequest, "keyword required"));
+        }
+
+        self.call(
+            "search_albums",
+            self.resolver
+                .resolve_albums(keyword, provider, limit.max(1)),
+        )
+        .await
+    }
+
+    pub(crate) async fn search_playlists(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ApiResult<Vec<PlaylistSummary>> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Err(ApiError::new(ApiErrorCode::BadRequest, "keyword required"));
+        }
+
+        self.call(
+            "search_playlists",
+            self.resolver
+                .resolve_playlists(keyword, provider, limit.max(1)),
+        )
+        .await
+    }
+
     pub(crate) async fn song_url(
         &self,
         track: Track,
@@ -157,6 +198,46 @@ impl CrossSourceResolver {
             return Err(no_result_error(provider_id, "no matching tracks found"));
         }
         Ok(tracks)
+    }
+
+    pub async fn resolve_albums(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        let Some(provider_id) = provider else {
+            return self.resolve_merged_albums(keyword, limit).await;
+        };
+        let provider = self
+            .provider(&provider_id)
+            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+        let albums = provider.search_album(keyword, 0, limit).await?;
+
+        if albums.is_empty() {
+            return Err(no_result_error(provider_id, "no matching albums found"));
+        }
+        Ok(albums)
+    }
+
+    pub async fn resolve_playlists(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        let Some(provider_id) = provider else {
+            return self.resolve_merged_playlists(keyword, limit).await;
+        };
+        let provider = self
+            .provider(&provider_id)
+            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+        let playlists = provider.search_playlist(keyword, 0, limit).await?;
+
+        if playlists.is_empty() {
+            return Err(no_result_error(provider_id, "no matching playlists found"));
+        }
+        Ok(playlists)
     }
 
     pub async fn resolve_song_url(
@@ -291,6 +372,103 @@ impl CrossSourceResolver {
                 .cloned()
                 .unwrap_or_else(|| ProviderId::Netease),
             "no matching tracks found",
+        ))
+    }
+
+    async fn resolve_merged_albums(
+        &self,
+        keyword: &str,
+        limit: u32,
+    ) -> ProviderResult<Vec<AlbumSummary>> {
+        let provider_count = self.deps.providers.len() as u32;
+        if provider_count == 0 {
+            return Err(no_result_error(
+                ProviderId::Netease,
+                "no providers registered",
+            ));
+        }
+        let provider_limit = limit.div_ceil(provider_count).max(1);
+        let searches = self.deps.providers.iter().map(|(_, adapter)| {
+            let keyword = keyword.to_owned();
+            async move { adapter.search_album(&keyword, 0, provider_limit).await }
+        });
+        let mut albums = Vec::new();
+        for result in join_all(searches).await {
+            if let Ok(items) = result {
+                albums.extend(items);
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        albums.retain(|album| {
+            let fallback = format!("{}|{}", album.name, album.artists.join("/"));
+            let id = if !album.id.is_empty() {
+                album.id.as_str()
+            } else {
+                fallback.as_str()
+            };
+            seen.insert(format!("{}:{id}", album.provider))
+        });
+        albums.truncate(limit as usize);
+        if !albums.is_empty() {
+            return Ok(albums);
+        }
+        Err(no_result_error(
+            self.deps
+                .providers
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or(ProviderId::Netease),
+            "no matching albums found",
+        ))
+    }
+
+    async fn resolve_merged_playlists(
+        &self,
+        keyword: &str,
+        limit: u32,
+    ) -> ProviderResult<Vec<PlaylistSummary>> {
+        let provider_count = self.deps.providers.len() as u32;
+        if provider_count == 0 {
+            return Err(no_result_error(
+                ProviderId::Netease,
+                "no providers registered",
+            ));
+        }
+        let provider_limit = limit.div_ceil(provider_count).max(1);
+        let searches = self.deps.providers.iter().map(|(_, adapter)| {
+            let keyword = keyword.to_owned();
+            async move { adapter.search_playlist(&keyword, 0, provider_limit).await }
+        });
+        let mut playlists = Vec::new();
+        for result in join_all(searches).await {
+            if let Ok(items) = result {
+                playlists.extend(items);
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        playlists.retain(|playlist| {
+            let id = if !playlist.id.is_empty() {
+                playlist.id.as_str()
+            } else {
+                playlist.name.as_str()
+            };
+            seen.insert(format!("{}:{id}", playlist.provider))
+        });
+        playlists.truncate(limit as usize);
+        if !playlists.is_empty() {
+            return Ok(playlists);
+        }
+        Err(no_result_error(
+            self.deps
+                .providers
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or(ProviderId::Netease),
+            "no matching playlists found",
         ))
     }
 
@@ -576,8 +754,8 @@ mod tests {
     use crate::{
         providers,
         types::{
-            LyricPayload, PlaylistDetail, PlaylistSummary, ProviderLoginStatus, RecommendationPage,
-            SongUrlResult, TrackQualityAvailability,
+            AlbumSummary, LyricPayload, PlaylistDetail, PlaylistSummary, ProviderLoginStatus,
+            RecommendationPage, SongUrlResult, TrackQualityAvailability,
         },
     };
     use async_trait::async_trait;
@@ -595,6 +773,10 @@ mod tests {
         calls: Calls,
         search_result: Vec<Track>,
         search_error: Option<ProviderError>,
+        album_result: Vec<AlbumSummary>,
+        album_error: Option<ProviderError>,
+        playlist_result: Vec<PlaylistSummary>,
+        playlist_error: Option<ProviderError>,
         search_barrier: Option<Arc<Barrier>>,
         song_url_result: Option<SongUrlResult>,
         song_url_error: Option<ProviderError>,
@@ -608,6 +790,10 @@ mod tests {
                 calls,
                 search_result: Vec::new(),
                 search_error: None,
+                album_result: Vec::new(),
+                album_error: None,
+                playlist_result: Vec::new(),
+                playlist_error: None,
                 search_barrier: None,
                 song_url_result: None,
                 song_url_error: None,
@@ -622,6 +808,26 @@ mod tests {
 
         fn with_search_error(mut self, code: ProviderErrorCode, message: &str) -> Self {
             self.search_error = Some(provider_error(self.id, code, message, false));
+            self
+        }
+
+        fn with_albums(mut self, albums: Vec<AlbumSummary>) -> Self {
+            self.album_result = albums;
+            self
+        }
+
+        fn with_album_error(mut self, code: ProviderErrorCode, message: &str) -> Self {
+            self.album_error = Some(provider_error(self.id, code, message, false));
+            self
+        }
+
+        fn with_playlists(mut self, playlists: Vec<PlaylistSummary>) -> Self {
+            self.playlist_result = playlists;
+            self
+        }
+
+        fn with_playlist_error(mut self, code: ProviderErrorCode, message: &str) -> Self {
+            self.playlist_error = Some(provider_error(self.id, code, message, false));
             self
         }
 
@@ -671,6 +877,38 @@ mod tests {
                 return Err(err.clone());
             }
             Ok(self.search_result.clone())
+        }
+
+        async fn search_album(
+            &self,
+            keyword: &str,
+            _offset: u32,
+            limit: u32,
+        ) -> providers::ProviderResult<Vec<AlbumSummary>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("{}:searchAlbum:{keyword}:{limit}", self.id));
+            if let Some(err) = &self.album_error {
+                return Err(err.clone());
+            }
+            Ok(self.album_result.clone())
+        }
+
+        async fn search_playlist(
+            &self,
+            keyword: &str,
+            _offset: u32,
+            limit: u32,
+        ) -> providers::ProviderResult<Vec<PlaylistSummary>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("{}:searchPlaylist:{keyword}:{limit}", self.id));
+            if let Some(err) = &self.playlist_error {
+                return Err(err.clone());
+            }
+            Ok(self.playlist_result.clone())
         }
 
         async fn song_url(
@@ -786,6 +1024,25 @@ mod tests {
         }
     }
 
+    fn album(provider: ProviderId, id: &str, name: &str, artists: &[&str]) -> AlbumSummary {
+        AlbumSummary {
+            provider,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            artists: artists.iter().map(|artist| (*artist).to_owned()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn playlist(provider: ProviderId, id: &str, name: &str) -> PlaylistSummary {
+        PlaylistSummary {
+            provider,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            ..Default::default()
+        }
+    }
+
     fn resolver(providers: Vec<MockProvider>) -> CrossSourceResolver {
         let providers = providers
             .into_iter()
@@ -816,6 +1073,118 @@ mod tests {
 
         assert_eq!(result[0].title, "夜航");
         assert_eq!(calls.lock().unwrap().as_slice(), &["netease:search:夜航:5"]);
+    }
+
+    #[tokio::test]
+    async fn resolve_collection_search_with_explicit_provider_uses_only_that_provider() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_albums(vec![album(ProviderId::Netease, "a-1", "夜航", &["星野"])])
+                .with_playlists(vec![playlist(ProviderId::Netease, "p-1", "夜航精选")]),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                .with_albums(vec![album(ProviderId::Qq, "a-2", "不应调用", &[])])
+                .with_playlists(vec![playlist(ProviderId::Qq, "p-2", "不应调用")]),
+        ]);
+
+        let albums = resolver
+            .resolve_albums("夜航", Some(ProviderId::Netease), 5)
+            .await
+            .unwrap();
+        let playlists = resolver
+            .resolve_playlists("夜航", Some(ProviderId::Netease), 5)
+            .await
+            .unwrap();
+
+        assert_eq!(albums[0].id, "a-1");
+        assert_eq!(playlists[0].id, "p-1");
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[
+                "netease:searchAlbum:夜航:5",
+                "netease:searchPlaylist:夜航:5"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_collection_search_without_provider_merges_and_divides_limit() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let resolver = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_albums(vec![
+                    album(ProviderId::Netease, "a-1", "夜航", &["星野"]),
+                    album(ProviderId::Netease, "a-2", "夜航 2", &["星野"]),
+                ])
+                .with_playlists(vec![playlist(ProviderId::Netease, "p-1", "夜航精选")]),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                .with_albums(vec![album(ProviderId::Qq, "a-3", "夜航 3", &["星野"])])
+                .with_playlists(vec![playlist(ProviderId::Qq, "p-2", "夜航 2")]),
+        ]);
+
+        let albums = resolver.resolve_albums("夜航", None, 3).await.unwrap();
+        let playlists = resolver.resolve_playlists("夜航", None, 3).await.unwrap();
+
+        assert_eq!(albums.len(), 3);
+        assert_eq!(playlists.len(), 2);
+        let calls = calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .filter(|call| call.contains("searchAlbum"))
+                .all(|call| call.ends_with(":2"))
+        );
+        assert!(
+            calls
+                .iter()
+                .filter(|call| call.contains("searchPlaylist"))
+                .all(|call| call.ends_with(":2"))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_collection_search_ignores_provider_failures_and_reports_empty_results() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let cross_source = resolver(vec![
+            MockProvider::new(ProviderId::Netease, Arc::clone(&calls))
+                .with_album_error(ProviderErrorCode::Unavailable, "offline")
+                .with_playlist_error(ProviderErrorCode::Unavailable, "offline"),
+            MockProvider::new(ProviderId::Qq, Arc::clone(&calls))
+                .with_albums(vec![album(ProviderId::Qq, "a-1", "夜航", &[])])
+                .with_playlists(vec![playlist(ProviderId::Qq, "p-1", "夜航")]),
+        ]);
+
+        assert_eq!(
+            cross_source
+                .resolve_albums("夜航", None, 2)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            cross_source
+                .resolve_playlists("夜航", None, 2)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let empty_resolver = resolver(vec![MockProvider::new(
+            ProviderId::Netease,
+            Arc::clone(&calls),
+        )]);
+        let album_error = empty_resolver
+            .resolve_albums("空", None, 2)
+            .await
+            .unwrap_err();
+        let playlist_error = empty_resolver
+            .resolve_playlists("空", None, 2)
+            .await
+            .unwrap_err();
+        assert!(matches!(album_error.code, ProviderErrorCode::NoResult));
+        assert!(matches!(playlist_error.code, ProviderErrorCode::NoResult));
     }
 
     #[tokio::test]

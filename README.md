@@ -46,6 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 跨源搜索
     let tracks = api.search_tracks("关键词", None, 20).await?;
+    let albums = api.search_albums("关键词", None, 20).await?;
+    let playlists = api.search_playlists("关键词", None, 20).await?;
 
     // 使用指定 provider
     let status = api.qq.login_status().await?;
@@ -67,6 +69,8 @@ Api::init(LibraryConfig)
 ├── api.kugou       ProviderApi    ← 酷狗音乐
 ├── api.spotify     ProviderApi    ← Spotify
 ├── api.search_tracks()            ← 跨源搜索
+├── api.search_albums()            ← 跨源专辑搜索
+├── api.search_playlists()         ← 跨源歌单搜索
 ├── api.song_url()                 ← 跨源解析播放地址
 ├── api.recommendation_pages()     ← 发现页聚合
 └── api.qr_login(kind)             ← 按协议获取二维码登录入口
@@ -98,6 +102,8 @@ Api::init(LibraryConfig)
 - `Api::init(config: LibraryConfig)` — 初始化所有 provider、日志与会话持久化
 - `api.shutdown()` — 优雅关闭，写入退出日志
 - `api.search_tracks(keyword, provider, limit)` — 跨源搜索
+- `api.search_albums(keyword, provider, limit)` — 跨源搜索专辑
+- `api.search_playlists(keyword, provider, limit)` — 跨源搜索歌单
 - `api.song_url(track, options)` — 跨源解析播放地址
 - `api.recommendation_pages()` — 跨源聚合发现页
 

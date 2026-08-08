@@ -222,6 +222,30 @@ impl Api {
             .await
     }
 
+    pub async fn search_albums(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ApiResult<Vec<AlbumSummary>> {
+        self.inner
+            .cross_source
+            .search_albums(keyword, provider, limit)
+            .await
+    }
+
+    pub async fn search_playlists(
+        &self,
+        keyword: &str,
+        provider: Option<ProviderId>,
+        limit: u32,
+    ) -> ApiResult<Vec<PlaylistSummary>> {
+        self.inner
+            .cross_source
+            .search_playlists(keyword, provider, limit)
+            .await
+    }
+
     pub async fn song_url(
         &self,
         track: Track,
