@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     auth_session,
-    providers::lyric::lrc::{LrcParser, UniversalLrcParser},
+    providers::lyric::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},

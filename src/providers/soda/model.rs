@@ -645,7 +645,12 @@ impl SodaSearch2Resp {
                 provider: ProviderId::Soda,
                 media_mid: None,
                 title: t.title,
-                artists: t.author_info.name.split("/").map(|s| s.to_owned()).collect(),
+                artists: t
+                    .author_info
+                    .name
+                    .split("/")
+                    .map(|s| s.to_owned())
+                    .collect(),
                 album: String::new(),
                 cover_url: t.cover_url,
                 quality_hints: vec!["standard".to_owned()],

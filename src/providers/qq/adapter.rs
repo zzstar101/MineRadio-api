@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     auth_session,
-    providers::lyric::lrc::{LrcParser, UniversalLrcParser},
+    providers::lyric::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},

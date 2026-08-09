@@ -5,10 +5,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 
 use super::{client::SodaClient, lyric::SodaParser};
-use crate::providers::lyric::{
-    MemchrParsers,
-    lrc::{LrcParser, UniversalLrcParser},
-};
+use crate::providers::lyric::{LrcParser, MemchrParsers, UniversalLrcParser};
 use crate::{
     auth_session,
     providers::{
