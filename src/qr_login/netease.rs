@@ -111,7 +111,7 @@ impl QrLogin for NeteaseQrLoginService {
 
         let stored = code == 803 && cookie.is_some();
         if let Some(cookie) = cookie.filter(|_| stored) {
-            set_runtime_provider_cookie(ProviderId::Netease, cookie)
+            set_runtime_provider_cookie(ProviderId::Netease, cookie + " os=pc;")
                 .await
                 .map_err(|err| anyhow::anyhow!(err))?;
         }
