@@ -451,7 +451,6 @@ impl PodcastRequester for NeteasePodcastRequester {
                 &string_value(params.get("rid")),
                 number_u32(params.get("limit")).unwrap_or(30),
                 number_u32(params.get("offset")).unwrap_or(0),
-                params.get("asc").and_then(Value::as_bool).unwrap_or(false),
             )
             .await?)
     }

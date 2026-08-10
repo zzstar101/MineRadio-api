@@ -16,9 +16,13 @@ use crate::{
     providers::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
-        netease::model::{NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseVipInfoResp},
+        netease::model::{
+            NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp,
+            NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp,
+            NeteaseVipInfoResp,
+        },
     },
-    utils::{encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
+    utils::{decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
 
 use super::model::{
@@ -325,20 +329,14 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn dj_program(
-        &self,
-        rid: &str,
-        limit: u32,
-        offset: u32,
-        asc: bool,
-    ) -> ProviderResult<Value> {
+    pub async fn dj_program(&self, rid: &str, limit: u32, offset: u32) -> ProviderResult<Value> {
         self.request_weapi(
             "/api/dj/program/byradio",
             json!({
                 "radioId": rid,
                 "limit": limit,
                 "offset": offset,
-                "asc": asc
+                "asc": false
             }),
             self.current_cookie().await.as_deref(),
         )
@@ -537,6 +535,95 @@ impl NeteaseClient {
         .await
     }
 
+    pub(super) async fn recommendation_page(&self) -> ProviderResult<NeteaseRcmdPageResp> {
+        let now = chrono::Local::now();
+        let time = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        println!("{}", time);
+        self.eapi_model(
+            "/api/pc/page/rcmd/resource/show",
+            json!({
+                "pageCode": "PC_RECOMMEND_HOME",
+                "isFirstScreen": "true",
+                "cursor": "0",
+                "extJson": "",
+                "blockCodeOrderList": "",
+                "blockRequestParam": "{\"PC_HOMEPAGE_DAILY_MIX\":{\"clientTime\":\"".to_owned() + &time + "\"},\"HOMEPAGE_BLOCK_PLAYLIST_RCMD\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMEPAGE_BLOCK_PLAYLIST_RCMD\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"PC_HOMEPAGE_BANNER_BLOCK\":{\"clientType\":\"pc\"},\"PC_HOMEPAGE_TOPLIST\":{},\"HOMEPAGE_BLOCK_ALL_LISTEN\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMEPAGE_BLOCK_ALL_LISTEN\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"PC_HOMEPAGE_RECENT_LISTEN_BLOCK\":{},\"HOMEPAGE_BLOCK_RED_SIMILAR_SONG\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMEPAGE_BLOCK_RED_SIMILAR_SONG\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"CUSTOMIZE_PLAYLIST_MGC\":{\"newStyle\":true},\"HOMPAGE_BLOCK_VIP_RCMD\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMPAGE_BLOCK_VIP_RCMD\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"HOMEPAGE_BLOCK_STYLE_RCMD\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMEPAGE_BLOCK_STYLE_RCMD\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"HOMEPAGE_MUSIC_PODCAST_RCMD_BLOCK\":{\"cursor\":\"{\\\"offset\\\":0,\\\"blockCodeOrderList\\\":[\\\"HOMEPAGE_MUSIC_PODCAST_RCMD_BLOCK\\\"]}\",\"extInfo\":\"{\\\"abInfo\\\":{\\\"hp-new-homepageV3.1\\\":\\\"t3\\\"}}\",\"newStyle\":true},\"PC_HOME_PAGE_PERSONAL_RCMD_VOICE\":{\"limit\":9},\"PC_HOMEPAGE_VOICEBOOK_RCMD\":{\"pageCode\":\"PC_HOMEPAGE_PODCAST\",\"blockCode\":\"PC_HOMEPAGE_VOICEBOOK_RCMD\",\"extInfo\":\"{\\\"position\\\":\\\"homePage\\\"}\"}}",
+                "e_r": true
+            }),
+            self.current_cookie().await.as_deref(),
+            "daily_songs",
+        )
+        .await
+    }
+    ///"每日推荐"接口
+    pub(super) async fn daily_songs(&self) -> ProviderResult<NeteaseDailySongsResp> {
+        self.eapi_model(
+            "/api/v3/discovery/recommend/songs",
+            json!({
+                "limit": "30",
+                "e_r": true
+            }),
+            self.current_cookie().await.as_deref(),
+            "daily_songs",
+        )
+        .await
+    }
+    ///除了"每日推荐"其他的每日推荐接口
+    pub(super) async fn daily_songs2(&self, list: &str) -> ProviderResult<NeteaseDailySongsResp> {
+        let mut map: serde_json::Map<String, Value> = list
+            .split('&')
+            .filter_map(|item| {
+                let (key, value) = item.split_once('=')?;
+                Some((key.to_owned(), Value::String(value.to_owned())))
+            })
+            .collect();
+
+        map.insert("e_r".to_string(), Value::Bool(true));
+
+        self.eapi_model(
+            "/api/homepage/category/daily/song/list",
+            Value::Object(map),
+            self.current_cookie().await.as_deref(),
+            "daily_songs",
+        )
+        .await
+    }
+    ///"私人漫游"
+    pub(super) async fn personal_fm(&self) -> ProviderResult<NeteaseFMResp> {
+        self.eapi_model(
+            "/api/v1/radio/get",
+            json!({
+                "imageFm": "0",
+                "e_r": true
+            }),
+            self.current_cookie().await.as_deref(),
+            "personal_fm",
+        )
+        .await
+    }
+    ///"心动模式", 使用预提供的pid和tid
+    pub(super) async fn intelligence(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+    ) -> ProviderResult<NeteaseIntelligenceResp> {
+        self.eapi_model(
+            "/api/playmode/intelligence/list",
+            json!({
+              "playlistId": playlist_id,
+              "songId": track_id,
+              "type": "fromPlayOne",
+              "startMusicId": track_id,
+              "count": "1",
+              "e_r": true
+            }),
+            self.current_cookie().await.as_deref(),
+            "intelligence",
+        )
+        .await
+    }
+
     async fn request_weapi(
         &self,
         uri: &str,
@@ -577,6 +664,7 @@ impl NeteaseClient {
     ) -> ProviderResult<T> {
         let body = self.request_weapi(uri, payload, cookie).await?;
         let raw_message = body.to_string();
+        println!("{}", raw_message);
         serde_json::from_value(body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Netease,
@@ -618,6 +706,7 @@ impl NeteaseClient {
                 ("params".to_owned(), encrypted.params),
                 ("encSecKey".to_owned(), encrypted.enc_sec_key),
             ]),
+            false,
         )
         .await
     }
@@ -628,6 +717,7 @@ impl NeteaseClient {
         payload: Value,
         cookie: Option<&str>,
     ) -> ProviderResult<Value> {
+        let response_encrypted = payload.get("e_r").and_then(Value::as_bool).unwrap_or(false);
         let cookie_map = parse_cookie_header(cookie.unwrap_or_default());
         let header = create_eapi_header(&cookie_map);
         let mut body = payload.as_object().cloned().unwrap_or_default();
@@ -656,6 +746,7 @@ impl NeteaseClient {
                 format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
                 headers,
                 HashMap::from([("params".to_owned(), encrypted.params)]),
+                response_encrypted,
             )
             .await?
             .body)
@@ -666,6 +757,7 @@ impl NeteaseClient {
         url: String,
         headers: HeaderMap,
         form: HashMap<String, String>,
+        response_encrypted: bool,
     ) -> ProviderResult<NeteaseClientResponse> {
         let response = self
             .http
@@ -677,17 +769,27 @@ impl NeteaseClient {
             .context("send netease upstream request")
             .map_err(|err| unavailable_error(err.to_string()))?;
         let status = response.status();
-        let text = response
-            .text()
+        let bytes = response
+            .bytes()
             .await
             .context("read netease upstream response")
             .map_err(|err| unavailable_error(err.to_string()))?;
-        let body = serde_json::from_str::<Value>(&text).map_err(|err| {
-            unavailable_error(format!(
-                "parse netease upstream response: {err}; body: {text}"
-            ))
-        })?;
-
+        let body = if response_encrypted {
+            let encrypted = hex::encode_upper(&bytes);
+            Value::Object(decrypt_eapi_response(&encrypted, false).map_err(|err| {
+                unavailable_error(format!("decrypt netease eapi response: {err}"))
+            })?)
+        } else {
+            let text = String::from_utf8(bytes.to_vec()).map_err(|err| {
+                unavailable_error(format!("decode netease upstream response: {err}"))
+            })?;
+            serde_json::from_str::<Value>(&text).map_err(|err| {
+                unavailable_error(format!(
+                    "parse netease upstream response: {err}; body: {text}"
+                ))
+            })?
+        };
+        println!("{}", body.to_string());
         let code = body
             .get("code")
             .and_then(Value::as_i64)

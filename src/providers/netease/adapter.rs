@@ -9,10 +9,10 @@ use serde_json::Value;
 
 use crate::{
     auth_session,
-    providers::lyric::{LrcParser, MemchrParsers},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
+        lyric::{LrcParser, MemchrParsers},
     },
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
@@ -25,7 +25,6 @@ use super::{
     client::NeteaseClient,
     lyric::{NeteaseLrcParser, NeteaseParser},
     map::map_playable,
-    model,
 };
 
 #[derive(Clone, Copy)]
@@ -466,11 +465,25 @@ impl ProviderAdapter for NeteaseAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
-        Ok(self
-            .client
-            .playlist_detail(id, offset, limit)
-            .await?
-            .standardize())
+        Ok(if let Some(raw) = id.strip_prefix("daily") {
+            let (args, title) = raw.split_once('|').unzip();
+            if !id.contains("categoryId") {
+                self.client
+                    .daily_songs()
+                    .await?
+                    .standardize(title.unwrap_or_default().to_string(), id.to_string())
+            } else {
+                self.client
+                    .daily_songs2(args.unwrap_or(raw))
+                    .await?
+                    .standardize(title.unwrap_or_default().to_string(), id.to_string())
+            }
+        } else {
+            self.client
+                .playlist_detail(id, offset, limit)
+                .await?
+                .standardize()
+        })
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -668,33 +681,28 @@ impl ProviderAdapter for NeteaseAdapter {
 
     async fn recommendation_page(&self) -> ProviderResult<crate::types::RecommendationPage> {
         self.client.ensure_login().await?;
+        Ok(self.client.recommendation_page().await?.standardize())
+    }
 
-        let (daily_songs, recommended_playlists, personalized_playlists, hot_radios) = tokio::join!(
-            self.client.recommend_songs(),
-            self.client.recommend_resource(),
-            self.client.personalized(8),
-            self.client.dj_hot(6, 0),
-        );
-        let all_failed = daily_songs.is_err()
-            && recommended_playlists.is_err()
-            && personalized_playlists.is_err()
-            && hot_radios.is_err();
-        if all_failed {
-            return Err(unavailable(
-                "netease recommendation requests failed".to_owned(),
-            ));
+    async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
+        if id == "personal_fm" {
+            self.client
+                .personal_fm()
+                .await?
+                .standardize()
+                .ok_or_else(|| unavailable("personal_fm".to_owned()))
+        } else if let Some(ids) = id.strip_prefix("star") {
+            let (pid, tid) = ids
+                .split_once('|')
+                .ok_or_else(|| unavailable("intelligence: get id".to_owned()))?;
+            self.client
+                .intelligence(pid, tid)
+                .await?
+                .standardize()
+                .ok_or_else(|| unavailable("intelligence".to_owned()))
+        } else {
+            Err(unavailable("stream_next: unknown id".to_owned()))
         }
-
-        let page = model::recommendation_page(
-            daily_songs.ok(),
-            recommended_playlists.ok(),
-            personalized_playlists.ok(),
-            hot_radios.ok(),
-        );
-        if page.list.is_empty() {
-            return Err(no_result("recommend_page"));
-        }
-        Ok(page)
     }
 }
 
