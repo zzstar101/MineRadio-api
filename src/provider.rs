@@ -119,14 +119,8 @@ impl ProviderApi {
         .await
     }
 
-    pub async fn radio_detail(
-        &self,
-        id: &str,
-        offset: u32,
-        limit: u32,
-    ) -> ApiResult<PlaylistDetail> {
-        self.call("radio_detail", self.adapter.radio_detail(id, offset, limit))
-            .await
+    pub async fn stream_next(&self, id: &str) -> ApiResult<Track> {
+        self.call("stream_next", self.adapter.stream_next(id)).await
     }
 
     pub async fn login_status(&self) -> ApiResult<ProviderLoginStatus> {

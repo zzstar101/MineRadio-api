@@ -187,15 +187,10 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn radio_detail(
-        &self,
-        _id: &str,
-        _offset: u32,
-        _limit: u32,
-    ) -> ProviderResult<PlaylistDetail> {
+    async fn stream_next(&self, _id: &str) -> ProviderResult<Track> {
         Err(error::ProviderError::not_implemented(
             self.id(),
-            "radio_detail",
+            "stream_next",
         ))
     }
 
