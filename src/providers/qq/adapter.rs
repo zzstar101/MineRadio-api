@@ -305,13 +305,12 @@ impl ProviderAdapter for QqAdapter {
             .standardize())
     }
 
-    async fn radio_detail(
-        &self,
-        id: &str,
-        _offset: u32,
-        limit: u32,
-    ) -> ProviderResult<PlaylistDetail> {
-        Ok(self.client.radio_detail(id, limit).await?.standardize())
+    async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
+        self.client
+            .stream_next(id)
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("stream_next"))
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {

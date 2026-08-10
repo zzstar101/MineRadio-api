@@ -570,11 +570,7 @@ impl QqClient {
         )
         .await
     }
-    pub(super) async fn radio_detail(
-        &self,
-        playlist_id: &str,
-        limit: u32,
-    ) -> ProviderResult<QqRadioDetailResp> {
+    pub(super) async fn stream_next(&self, playlist_id: &str) -> ProviderResult<QqRadioDetailResp> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
         self.post_json_with_sign(
             json!({
@@ -583,7 +579,7 @@ impl QqClient {
                     "module": "music.radioProxy.MbTrackRadioSvr",
                     "param": {
                         "id": disstid,
-                        "num": limit
+                        "num": 1
                     }
                 }
             }),
