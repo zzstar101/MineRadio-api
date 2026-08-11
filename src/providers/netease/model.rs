@@ -49,7 +49,7 @@ fn hot_radios_module(body: Value) -> Option<RecommendationModule> {
                     radio.name,
                     non_empty_text(&[radio.description, radio.dj.nickname, radio.category]),
                     radio.pic_url,
-                    RecommendationType::Radio,
+                    RecommendationType::Stream,
                 )
             })
             .take(6)
@@ -485,11 +485,11 @@ impl RcmdM1 {
                                 + &e.playlist?.id.to_string()
                                 + "|"
                                 + &e.song_id?.to_string(),
-                            RecommendationType::Radio,
+                            RecommendationType::Stream,
                         )
                     }
                     //目前客户端只要求该fm
-                    "fm" => ("personal_fm".to_owned(), RecommendationType::Radio),
+                    "fm" => ("personal_fm".to_owned(), RecommendationType::Stream),
                     //由于由两个每日推荐接口并且无法获取接口名, 解析需要名字就封装进id
                     "dailySongs" => (
                         "daily".to_owned()

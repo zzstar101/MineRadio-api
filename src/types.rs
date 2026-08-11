@@ -425,7 +425,7 @@ pub struct PlaylistAddSongAck {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub enum RecommendationType {
     Track,
-    Radio,
+    Stream,
     Playlist,
     #[default]
     Unknown,

@@ -916,14 +916,14 @@ impl VCard {
         let (id, kind) = match self.t {
             200 => (mid_by_id.get(&self.id)?.clone(), RecommendationType::Track),
             500 => (self.id, RecommendationType::Playlist),
-            700 => (self.id, RecommendationType::Radio),
+            700 => (self.id, RecommendationType::Stream),
             900 => (
                 if self.title.contains("杜比") {
                     return None;
                 } else {
                     22000.to_string()
                 },
-                RecommendationType::Radio,
+                RecommendationType::Stream,
             ),
             _ => return None,
         };
@@ -1331,11 +1331,11 @@ mod tests {
         ));
         assert!(matches!(
             page.list[3].list[0].kind,
-            RecommendationType::Radio
+            RecommendationType::Stream
         ));
         assert!(matches!(
             page.list[4].list[0].kind,
-            RecommendationType::Radio
+            RecommendationType::Stream
         ));
     }
 
