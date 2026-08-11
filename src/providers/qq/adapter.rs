@@ -306,11 +306,19 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
-        self.client
-            .stream_next(id)
-            .await?
-            .standardize()
-            .ok_or_else(|| no_result("stream_next"))
+        if id == "22000" {
+            self.client
+                .radar_next()
+                .await?
+                .standardize()
+                .ok_or_else(|| no_result("stream_next: radar"))
+        } else {
+            self.client
+                .radio_next(id)
+                .await?
+                .standardize()
+                .ok_or_else(|| no_result("stream_next: radio"))
+        }
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -455,12 +463,12 @@ impl ProviderAdapter for QqAdapter {
         track_ids.dedup();
 
         let mid_by_id = if track_ids.is_empty() {
-            HashMap::new()
+            None
         } else {
-            self.client.get_mids_by_ids(track_ids).await?
+            self.client.get_mids_by_ids(track_ids).await.ok()
         };
 
-        Ok(response.standardize(&mid_by_id))
+        Ok(response.standardize(mid_by_id.as_ref()))
     }
 }
 

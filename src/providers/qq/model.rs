@@ -836,7 +836,10 @@ impl QqRecommendationResp {
             .collect()
     }
 
-    pub(super) fn standardize(self, mid_by_id: &HashMap<String, String>) -> RecommendationPage {
+    pub(super) fn standardize(
+        self,
+        mid_by_id: Option<&HashMap<String, String>>,
+    ) -> RecommendationPage {
         RecommendationPage {
             provider: ProviderId::Qq,
             list: self
@@ -869,52 +872,25 @@ pub(super) struct VShelf {
 }
 
 impl VShelf {
-    fn standardize(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationModule> {
+    fn standardize(
+        self,
+        mid_by_id: Option<&HashMap<String, String>>,
+    ) -> Option<RecommendationModule> {
         match self.id {
-            205 => Some(self.standardize_song_menu()),
-            207 => Some(self.standardize_recommend_songs(mid_by_id)),
-            271 => Some(self.standardize_double_row_song_menu()),
-            272 => Some(self.standardize_recommend_radio()),
-            301 => Some(self.standardize_personal_radio()),
+            207 => Some(self.standardize_cards(mid_by_id?)),
+            271 | 205 | 272 | 301 => Some(self.standardize_cards(&HashMap::new())),
             _ => None,
         }
     }
 
-    fn standardize_song_menu(self) -> RecommendationModule {
-        self.standardize_cards(RecommendationType::Playlist, &HashMap::new())
-    }
-
-    fn standardize_recommend_songs(
-        self,
-        mid_by_id: &HashMap<String, String>,
-    ) -> RecommendationModule {
-        self.standardize_cards(RecommendationType::Track, mid_by_id)
-    }
-
-    fn standardize_double_row_song_menu(self) -> RecommendationModule {
-        self.standardize_cards(RecommendationType::Playlist, &HashMap::new())
-    }
-
-    fn standardize_recommend_radio(self) -> RecommendationModule {
-        self.standardize_cards(RecommendationType::Radio, &HashMap::new())
-    }
-
-    fn standardize_personal_radio(self) -> RecommendationModule {
-        self.standardize_cards(RecommendationType::Radio, &HashMap::new())
-    }
-
-    fn standardize_cards(
-        self,
-        kind: RecommendationType,
-        mid_by_id: &HashMap<String, String>,
-    ) -> RecommendationModule {
+    fn standardize_cards(self, mid_by_id: &HashMap<String, String>) -> RecommendationModule {
         RecommendationModule {
             title: self.title_template.replace("{String}", &self.title_content),
             list: self
                 .v_niche
                 .into_iter()
                 .flat_map(|niche| niche.v_card.into_iter())
-                .filter_map(|card| card.standardize(kind.clone(), mid_by_id))
+                .filter_map(|card| card.standardize(mid_by_id))
                 .collect(),
         }
     }
@@ -931,17 +907,25 @@ pub(super) struct VCard {
     pub(super) id: String,
     pub(super) subtitle: String,
     pub(super) title: String,
+    #[serde(alias = "type")]
+    t: u16,
 }
 
 impl VCard {
-    fn standardize(
-        self,
-        kind: RecommendationType,
-        mid_by_id: &HashMap<String, String>,
-    ) -> Option<RecommendationCard> {
-        let id = match kind {
-            RecommendationType::Track => mid_by_id.get(&self.id)?.clone(),
-            _ => self.id,
+    fn standardize(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationCard> {
+        let (id, kind) = match self.t {
+            200 => (mid_by_id.get(&self.id)?.clone(), RecommendationType::Track),
+            500 => (self.id, RecommendationType::Playlist),
+            700 => (self.id, RecommendationType::Radio),
+            900 => (
+                if self.title.contains("杜比") {
+                    return None;
+                } else {
+                    22000.to_string()
+                },
+                RecommendationType::Radio,
+            ),
+            _ => return None,
         };
 
         Some(RecommendationCard {
@@ -1013,6 +997,39 @@ struct QqRadioDetailReq {
 #[derive(Deserialize)]
 struct QqRadioDetailData {
     tracks: Vec<QqTrack>,
+}
+
+#[derive(Deserialize)]
+pub struct QqRadarResp {
+    req_0: QqRadarReq,
+}
+
+impl QqRadarResp {
+    pub(super) fn standardize(self) -> Option<Track> {
+        self.req_0
+            .data
+            .vec_songs
+            .into_iter()
+            .next()
+            .map(|t| t.track.standardize(None, None))
+    }
+}
+
+#[derive(Deserialize)]
+pub struct QqRadarReq {
+    data: QqRadarData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct QqRadarData {
+    vec_songs: Vec<QqRadarSong>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct QqRadarSong {
+    track: QqTrack,
 }
 
 //Reusable Struct
@@ -1300,10 +1317,10 @@ mod tests {
 
         assert_eq!(response.track_ids(), vec!["123", "456"]);
 
-        let page = response.standardize(&HashMap::from([(
+        let page = response.standardize(Some(&HashMap::from([(
             "123".to_owned(),
             "0039MnYb0qxYhV".to_owned(),
-        )]));
+        )])));
 
         assert_eq!(page.list.len(), 5);
         assert_eq!(page.list[1].list.len(), 1);

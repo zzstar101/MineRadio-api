@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
 use crate::providers::qq::model::{
-    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqRadioDetailResp, QqRecommendationResp,
-    QqSongUrlResp, QqTrackInfo, QqVipIconResp,
+    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqRadarResp, QqRadioDetailResp,
+    QqRecommendationResp, QqSongUrlResp, QqTrackInfo, QqVipIconResp,
 };
 use crate::utils::cryptors::qq::{x4, x5, x7, x9, xj};
 use crate::{
@@ -570,7 +570,8 @@ impl QqClient {
         )
         .await
     }
-    pub(super) async fn stream_next(&self, playlist_id: &str) -> ProviderResult<QqRadioDetailResp> {
+
+    pub(super) async fn radio_next(&self, playlist_id: &str) -> ProviderResult<QqRadioDetailResp> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
         self.post_json_with_sign(
             json!({
@@ -591,6 +592,31 @@ impl QqClient {
         .await
     }
 
+    pub(super) async fn radar_next(&self) -> ProviderResult<QqRadarResp> {
+        let now = SystemTime::now();
+        let since_epoch = now
+            .duration_since(UNIX_EPOCH)
+            .expect("系统时间早于 UNIX 纪元");
+        self.post_json_with_sign(
+            json!({
+                "req_0": {
+                    "method": "GetRadarSong",
+                    "module": "music.recommend.TrackRelationServer",
+                    "param": {
+                        "LastToastTime": &since_epoch.as_secs(),
+                        "NeedNum": 1,
+                        "Page": 1,
+                        "ReqType": 0
+                    }
+                }
+            }),
+            Some("https://y.qq.com/"),
+            self.current_cookie().await.as_deref(),
+            "radio_detail",
+            true,
+        )
+        .await
+    }
     pub(super) async fn album_list(&self) -> ProviderResult<QqAlbumListResp> {
         self.post_json_with_sign(
             json!({
