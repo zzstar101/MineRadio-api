@@ -432,13 +432,8 @@ impl NeteaseRcmdPageResp {
             .blocks
             .into_iter()
             .filter_map(|m| {
-                println!("{}", m.block_code);
                 Some(match m.block_code.as_str() {
                     "PC_HOMEPAGE_DAILY_MIX" => serde_json::from_str::<RcmdM1>(m.block_data.get())
-                        .map_err(|e| {
-                            println!("{}", e.to_string());
-                            e
-                        })
                         .ok()?
                         .standardize(),
                     _ => return None,

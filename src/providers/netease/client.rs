@@ -539,7 +539,6 @@ impl NeteaseClient {
         let now = chrono::Local::now();
         let time = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
-        println!("{}", time);
         self.eapi_model(
             "/api/pc/page/rcmd/resource/show",
             json!({
@@ -789,7 +788,6 @@ impl NeteaseClient {
                 ))
             })?
         };
-        println!("{}", body.to_string());
         let code = body
             .get("code")
             .and_then(Value::as_i64)
