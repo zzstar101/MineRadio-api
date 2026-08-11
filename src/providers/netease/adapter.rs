@@ -96,6 +96,7 @@ const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
 pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
     album_cache: Arc<Mutex<HashMap<String, (Vec<Track>, Instant)>>>,
+    star_cache: Arc<Mutex<HashMap<String, Vec<Track>>>>,
 }
 
 impl NeteaseAdapter {
@@ -103,6 +104,7 @@ impl NeteaseAdapter {
         Self {
             client,
             album_cache: Arc::new(Mutex::new(HashMap::new())),
+            star_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -699,12 +701,52 @@ impl ProviderAdapter for NeteaseAdapter {
                     .and_then(|id| id.split_once('|'))
                     .ok_or_else(|| unavailable("intelligence: get id".to_owned()))?;
 
-                self.client
+                // 先尝试从缓存拿
+                let cached = {
+                    let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+
+                    h.get_mut(pid).and_then(|v| {
+                        let t = v.pop()?;
+                        Some((t, v.len() <= 1))
+                    })
+                };
+
+                if let Some((t, refill)) = cached {
+                    // 补货
+                    if refill {
+                        if let Some(nv) =
+                            self.client.intelligence(pid, &t.id).await?.standardize()
+                        {
+                            let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+
+                            h.entry(pid.to_owned()).or_default().extend(nv);
+                        }
+                    }
+
+                    return Ok(t);
+                }
+
+                // 没缓存
+                let mut nv = self
+                    .client
                     .intelligence(pid, tid)
                     .await?
                     .standardize()
-                    .ok_or_else(|| unavailable("intelligence".to_owned()))
+                    .ok_or_else(|| unavailable("intelligence".to_owned()))?;
+
+                let t = nv
+                    .pop()
+                    .ok_or_else(|| unavailable("intelligence: empty".to_owned()))?;
+
+                {
+                    let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+
+                    h.insert(pid.to_owned(), nv);
+                }
+
+                Ok(t)
             }
+
             _ => Err(unavailable("stream_next: invalid id".to_owned())),
         }
     }

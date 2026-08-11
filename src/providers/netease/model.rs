@@ -364,11 +364,13 @@ pub struct NeteaseIntelligenceResp {
 }
 
 impl NeteaseIntelligenceResp {
-    pub(super) fn standardize(self) -> Option<Track> {
-        self.data
+    pub(super) fn standardize(self) -> Option<Vec<Track>> {
+        let v: Vec<Track> = self
+            .data
             .into_iter()
-            .next()
             .map(|t| t.song_info.standardize())
+            .collect();
+        (!v.is_empty()).then_some(v)
     }
 }
 
