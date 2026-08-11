@@ -683,7 +683,7 @@ impl ProviderAdapter for NeteaseAdapter {
 
     async fn recommendation_page(&self) -> ProviderResult<crate::types::RecommendationPage> {
         self.client.ensure_login().await?;
-        Ok(self.client.recommendation_page().await?.standardize())
+        self.client.recommendation_page().await?.standardize().ok_or_else(|| no_result("recommendation_page"))
     }
 
     async fn stream_next(&self, id: &str) -> ProviderResult<Track> {

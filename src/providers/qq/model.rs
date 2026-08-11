@@ -839,17 +839,21 @@ impl QqRecommendationResp {
     pub(super) fn standardize(
         self,
         mid_by_id: Option<&HashMap<String, String>>,
-    ) -> RecommendationPage {
-        RecommendationPage {
-            provider: ProviderId::Qq,
-            list: self
+    ) -> Option<RecommendationPage> {
+        let list: Vec<RecommendationModule> = self
                 .req_0
                 .data
                 .v_shelf
                 .into_iter()
                 .filter_map(|shelf| shelf.standardize(mid_by_id))
-                .collect(),
+                .collect();
+        if list.is_empty() {
+            return None;
         }
+        Some(RecommendationPage {
+            provider: ProviderId::Qq,
+            list
+        })
     }
 }
 
@@ -877,22 +881,26 @@ impl VShelf {
         mid_by_id: Option<&HashMap<String, String>>,
     ) -> Option<RecommendationModule> {
         match self.id {
-            207 => Some(self.standardize_cards(mid_by_id?)),
-            271 | 205 | 272 | 301 => Some(self.standardize_cards(&HashMap::new())),
+            207 => self.standardize_cards(mid_by_id?),
+            271 | 205 | 272 | 301 => self.standardize_cards(&HashMap::new()),
             _ => None,
         }
     }
 
-    fn standardize_cards(self, mid_by_id: &HashMap<String, String>) -> RecommendationModule {
-        RecommendationModule {
-            title: self.title_template.replace("{String}", &self.title_content),
-            list: self
+    fn standardize_cards(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationModule> {
+        let list: Vec<RecommendationCard> = self
                 .v_niche
                 .into_iter()
                 .flat_map(|niche| niche.v_card.into_iter())
                 .filter_map(|card| card.standardize(mid_by_id))
-                .collect(),
+                .collect();
+        if list.is_empty() {
+            return None;
         }
+        Some(RecommendationModule {
+            title: self.title_template.replace("{String}", &self.title_content),
+            list,
+        })
     }
 }
 
@@ -1321,20 +1329,18 @@ mod tests {
             "123".to_owned(),
             "0039MnYb0qxYhV".to_owned(),
         )])));
-
-        assert_eq!(page.list.len(), 5);
+        assert_eq!(page.is_some(), true);
+        let page = page.unwrap();
+        assert_eq!(page.list.len(), 4);
         assert_eq!(page.list[1].list.len(), 1);
         assert_eq!(page.list[1].list[0].id, "0039MnYb0qxYhV");
         assert!(matches!(
             page.list[1].list[0].kind,
             RecommendationType::Track
         ));
+        // 电台 shelf (id=272, type=400) 卡片全部被滤掉，整个模块被移除
         assert!(matches!(
             page.list[3].list[0].kind,
-            RecommendationType::Stream
-        ));
-        assert!(matches!(
-            page.list[4].list[0].kind,
             RecommendationType::Stream
         ));
     }

@@ -426,7 +426,7 @@ pub(super) struct NeteaseRcmdPageResp {
 }
 
 impl NeteaseRcmdPageResp {
-    pub(super) fn standardize(self) -> RecommendationPage {
+    pub(super) fn standardize(self) -> Option<RecommendationPage> {
         let list: Vec<RecommendationModule> = self
             .data
             .blocks
@@ -435,16 +435,18 @@ impl NeteaseRcmdPageResp {
                 Some(match m.block_code.as_str() {
                     "PC_HOMEPAGE_DAILY_MIX" => serde_json::from_str::<RcmdM1>(m.block_data.get())
                         .ok()?
-                        .standardize(),
+                        .standardize()?,
                     _ => return None,
                 })
             })
             .collect();
-
-        RecommendationPage {
+        if list.is_empty() {
+            return None;
+        }
+        Some(RecommendationPage {
             provider: ProviderId::Netease,
             list,
-        }
+        })
     }
 }
 
@@ -466,8 +468,8 @@ struct RcmdM1 {
 }
 
 impl RcmdM1 {
-    fn standardize(self) -> RecommendationModule {
-        let list = self
+    fn standardize(self) -> Option<RecommendationModule> {
+        let list: Vec<RecommendationCard> = self
             .items
             .into_iter()
             .filter_map(|c| {
@@ -507,10 +509,13 @@ impl RcmdM1 {
                 })
             })
             .collect();
-        RecommendationModule {
+        if list.is_empty() {
+            return None;
+        }
+        Some(RecommendationModule {
             title: "".to_owned(),
             list,
-        }
+        })
     }
 }
 #[derive(Deserialize)]
