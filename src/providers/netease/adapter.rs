@@ -465,7 +465,7 @@ impl ProviderAdapter for NeteaseAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
-        Ok(if let Some(raw) = id.strip_prefix("daily") {
+        Ok(if let Some(raw) = id.strip_prefix("D") {
             let (args, title) = raw.split_once('|').unzip();
             if !id.contains("categoryId") {
                 self.client
@@ -685,23 +685,27 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
-        if id == "personal_fm" {
-            self.client
+        match id.chars().next() {
+            Some('P') => self
+                .client
                 .personal_fm()
                 .await?
                 .standardize()
-                .ok_or_else(|| unavailable("personal_fm".to_owned()))
-        } else if let Some(ids) = id.strip_prefix("star") {
-            let (pid, tid) = ids
-                .split_once('|')
-                .ok_or_else(|| unavailable("intelligence: get id".to_owned()))?;
-            self.client
-                .intelligence(pid, tid)
-                .await?
-                .standardize()
-                .ok_or_else(|| unavailable("intelligence".to_owned()))
-        } else {
-            Err(unavailable("stream_next: unknown id".to_owned()))
+                .ok_or_else(|| unavailable("personal_fm".to_owned())),
+
+            Some('S') => {
+                let (pid, tid) = id
+                    .strip_prefix('S')
+                    .and_then(|id| id.split_once('|'))
+                    .ok_or_else(|| unavailable("intelligence: get id".to_owned()))?;
+
+                self.client
+                    .intelligence(pid, tid)
+                    .await?
+                    .standardize()
+                    .ok_or_else(|| unavailable("intelligence".to_owned()))
+            }
+            _ => Err(unavailable("stream_next: invalid id".to_owned())),
         }
     }
 }

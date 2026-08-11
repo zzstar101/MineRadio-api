@@ -481,7 +481,7 @@ impl RcmdM1 {
                     "star" => {
                         let e = c.ext_data?;
                         (
-                            "star".to_owned()
+                            "S".to_owned()
                                 + &e.playlist?.id.to_string()
                                 + "|"
                                 + &e.song_id?.to_string(),
@@ -489,10 +489,10 @@ impl RcmdM1 {
                         )
                     }
                     //目前客户端只要求该fm
-                    "fm" => ("personal_fm".to_owned(), RecommendationType::Stream),
+                    "fm" => ("P".to_owned(), RecommendationType::Stream),
                     //由于由两个每日推荐接口并且无法获取接口名, 解析需要名字就封装进id
                     "dailySongs" => (
-                        "daily".to_owned()
+                        "D".to_owned()
                             + &c.target_url?.split_once('?').map(|(_, after)| after)?
                             + "|"
                             + &c.cover_text,
