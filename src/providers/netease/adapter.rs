@@ -699,7 +699,7 @@ impl ProviderAdapter for NeteaseAdapter {
                 let (pid, tid) = id
                     .strip_prefix('S')
                     .and_then(|id| id.split_once('|'))
-                    .ok_or_else(|| unavailable("intelligence: get id".to_owned()))?;
+                    .ok_or_else(|| unavailable("star_mode: get id".to_owned()))?;
 
                 // 先尝试从缓存拿
                 let cached = {
@@ -715,10 +715,10 @@ impl ProviderAdapter for NeteaseAdapter {
                     // 补货
                     if refill {
                         if let Some(nv) =
-                            self.client.intelligence(pid, &t.id).await?.standardize()
+                            // 一直失败导致缓存清空还有tid兜底
+                            self.client.star_mode(pid, &t.id).await?.standardize()
                         {
                             let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
-
                             h.entry(pid.to_owned()).or_default().extend(nv);
                         }
                     }
@@ -729,18 +729,17 @@ impl ProviderAdapter for NeteaseAdapter {
                 // 没缓存
                 let mut nv = self
                     .client
-                    .intelligence(pid, tid)
+                    .star_mode(pid, tid)
                     .await?
                     .standardize()
-                    .ok_or_else(|| unavailable("intelligence".to_owned()))?;
+                    .ok_or_else(|| unavailable("star_mode".to_owned()))?;
 
                 let t = nv
                     .pop()
-                    .ok_or_else(|| unavailable("intelligence: empty".to_owned()))?;
+                    .ok_or_else(|| unavailable("star_mode: empty".to_owned()))?;
 
                 {
                     let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
-
                     h.insert(pid.to_owned(), nv);
                 }
 

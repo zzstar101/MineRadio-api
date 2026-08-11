@@ -603,7 +603,7 @@ impl NeteaseClient {
         .await
     }
     ///"心动模式", 使用预提供的pid和tid
-    pub(super) async fn intelligence(
+    pub(super) async fn star_mode(
         &self,
         playlist_id: &str,
         track_id: &str,
