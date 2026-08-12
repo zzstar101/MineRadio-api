@@ -472,7 +472,10 @@ struct NeteaseRcmdPageBlock {
     block_data: Box<RawValue>,
 }
 
-//模块模型命名缩写rcmd为Recommend, M代表Module, C代表Card
+// 模块模型命名缩写
+// rcmd为Recommend, M代表Module, C代表Card, U代表Ui, R代表Resource
+// T代表Title, I代表Image
+
 #[derive(Deserialize)]
 struct RcmdM1 {
     items: Vec<RcmdM1C>,
@@ -555,18 +558,6 @@ struct IdOnly {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UiElement {
-    sub_title: SubTitle,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubTitle {
-    title: String,
-}
-
-#[derive(Deserialize)]
 struct RcmdM2 {
     creatives: Vec<Option<RcmdM2C>>,
 }
@@ -634,26 +625,14 @@ impl RcmdM2CF {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM2CU {
-    main_title: RcmdM2CUT,
-    image: RcmdM2CUI,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RcmdM2CUT {
-    title: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RcmdM2CUI {
-    image_url: String,
+    main_title: RcmdMCUT,
+    image: RcmdMCUI,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM3 {
-    ui_element: UiElement,
+    ui_element: RcmdMU,
     creatives: Vec<RcmdM3C>,
 }
 
@@ -701,8 +680,33 @@ struct RcmdM3CR {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM3CRU {
-    sub_title: RcmdM2CUT,
-    image: RcmdM2CUI,
+    sub_title: RcmdMCUT,
+    image: RcmdMCUI,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 模块UI结构体
+struct RcmdMU {
+    sub_title: RcmdMUT,
+}
+
+#[derive(Deserialize)]
+struct RcmdMUT {
+    title: String,
+}
+
+#[derive(Deserialize)]
+/// 卡片标题结构体
+struct RcmdMCUT {
+    title: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+/// 卡片标题结构体
+struct RcmdMCUI {
+    image_url: String,
 }
 
 #[derive(Deserialize)]
