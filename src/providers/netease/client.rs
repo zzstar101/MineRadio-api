@@ -12,8 +12,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
-    auth_session,
-    providers::{
+    auth_session, providers::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         netease::model::{
@@ -21,8 +20,7 @@ use crate::{
             NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp,
             NeteaseVipInfoResp,
         },
-    },
-    utils::{decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
+    }, sidecar_log, utils::{decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
 };
 
 use super::model::{
@@ -788,6 +786,7 @@ impl NeteaseClient {
                 ))
             })?
         };
+        sidecar_log::spawn_runtime_log(body.clone());
         let code = body
             .get("code")
             .and_then(Value::as_i64)

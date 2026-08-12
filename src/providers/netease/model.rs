@@ -436,6 +436,9 @@ impl NeteaseRcmdPageResp {
                     "PC_HOMEPAGE_DAILY_MIX" => serde_json::from_str::<RcmdM1>(m.block_data.get())
                         .ok()?
                         .standardize()?,
+                    "HOMEPAGE_BLOCK_PLAYLIST_RCMD" => serde_json::from_str::<RcmdM2>(m.block_data.get())
+                        .ok()?
+                        .standardize()?,
                     _ => return None,
                 })
             })
@@ -518,6 +521,7 @@ impl RcmdM1 {
         })
     }
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM1C {
@@ -540,6 +544,66 @@ struct RcmdM1CE {
 #[derive(Deserialize)]
 struct IdOnly {
     id: i64,
+}
+
+#[derive(Deserialize)]
+struct RcmdM2 {
+    creatives: Vec<Option<RcmdM2C>>,
+}
+
+impl RcmdM2 {
+    fn standardize(self) -> Option<RecommendationModule> {
+        let list: Vec<RecommendationCard> = self
+            .creatives
+            .into_iter()
+            .filter_map(|c| {
+                let c = c?;
+                if c.creative_type.as_str() != "list" { return None; }
+                Some(RecommendationCard {
+                    id: c.creative_id,
+                    title: "".to_owned(),
+                    subtitle: c.ui_element.main_title.title,
+                    kind: RecommendationType::Playlist,
+                    cover_url: c.ui_element.image.image_url,
+                    collected: Some(false),
+                })
+            })
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        Some(RecommendationModule {
+            title: "".to_owned(),
+            list,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM2C {
+    creative_id: String,
+    creative_type: String,
+    ui_element: RcmdM2CE,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM2CE {
+    main_title: RcmdM2CET,
+    image: RcmdM2CEI,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM2CET {
+    title: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM2CEI {
+    image_url: String,
 }
 
 #[derive(Deserialize)]
