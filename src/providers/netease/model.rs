@@ -446,6 +446,9 @@ impl NeteaseRcmdPageResp {
                             .ok()?
                             .standardize()?
                     }
+                    "CUSTOMIZE_PLAYLIST_MGC" => serde_json::from_str::<RcmdM4>(m.block_data.get())
+                        .ok()?
+                        .standardize()?,
                     _ => return None,
                 })
             })
@@ -659,7 +662,7 @@ impl RcmdM3 {
             return None;
         }
         Some(RecommendationModule {
-            title: self.ui_element.sub_title.title,
+            title: self.ui_element.title.title,
             list,
         })
     }
@@ -685,10 +688,66 @@ struct RcmdM3CRU {
 }
 
 #[derive(Deserialize)]
+struct RcmdM4 {
+    blocks: Vec<RcmdM4R>,
+}
+
+impl RcmdM4 {
+    fn standardize(self) -> Option<RecommendationModule> {
+        let m = self
+            .blocks
+            .into_iter()
+            .find(|r| r.code == "CUSTOMIZE_PLAYLIST_MGC")?;
+        let list: Vec<RecommendationCard> = m
+            .creatives
+            .into_iter()
+            .map(|c| RecommendationCard {
+                id: c.creative_id,
+                title: "".to_owned(),
+                subtitle: c.ui_element.main_title.title,
+                kind: RecommendationType::Playlist,
+                cover_url: c.ui_element.images.into_iter().next().map(|v| v.image_url).unwrap_or_default(),
+                collected: Some(false),
+            })
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        Some(RecommendationModule {
+            title: m.ui_element.title.title,
+            list,
+        })
+    }
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RcmdM4R {
+    ui_element: RcmdMU,
+    code: String,
+    creatives: Vec<RcmdM4C>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM4C {
+    creative_id: String,
+    ui_element: RcmdM4CU,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM4CU {
+    main_title: RcmdMCUT,
+    // 气笑了
+    images: Vec<RcmdMCUI>,
+}
+
+#[derive(Deserialize)]
 /// 模块UI结构体
 struct RcmdMU {
-    sub_title: RcmdMUT,
+    #[serde(rename = "mainTitle", alias = "subTitle")]
+    title: RcmdMUT,
 }
 
 #[derive(Deserialize)]
