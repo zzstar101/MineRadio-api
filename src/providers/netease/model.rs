@@ -561,7 +561,9 @@ struct IdOnly {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RcmdM2 {
+    ui_element: RcmdMU,
     creatives: Vec<Option<RcmdM2C>>,
 }
 
@@ -589,7 +591,7 @@ impl RcmdM2 {
             return None;
         }
         Some(RecommendationModule {
-            title: "".to_owned(),
+            title: self.ui_element.get(),
             list,
         })
     }
@@ -609,27 +611,21 @@ struct RcmdM2CF {
     id: String,
     #[serde(rename = "resourceType", alias = "creativeType")]
     t: String,
-    ui_element: RcmdM2CU,
+    ui_element: RcmdMCU,
 }
 
 impl RcmdM2CF {
     fn standardize(self) -> RecommendationCard {
+        let (subtitle, cover_url) = self.ui_element.get();
         RecommendationCard {
             id: self.id,
             title: "".to_owned(),
-            subtitle: self.ui_element.main_title.title,
+            subtitle,
             kind: RecommendationType::Playlist,
-            cover_url: self.ui_element.image.image_url,
+            cover_url,
             collected: Some(false),
         }
     }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RcmdM2CU {
-    main_title: RcmdMCUT,
-    image: RcmdMCUI,
 }
 
 #[derive(Deserialize)]
@@ -647,13 +643,16 @@ impl RcmdM3 {
             .flat_map(|l| {
                 l.resources
                     .into_iter()
-                    .map(|c| RecommendationCard {
-                        id: c.resource_id,
-                        title: "".to_owned(),
-                        subtitle: c.ui_element.sub_title.title,
-                        kind: RecommendationType::Playlist,
-                        cover_url: c.ui_element.image.image_url,
-                        collected: Some(false),
+                    .map(|c| {
+                        let (subtitle, cover_url) = c.ui_element.get();
+                        RecommendationCard {
+                            id: c.resource_id,
+                            title: "".to_owned(),
+                            subtitle,
+                            kind: RecommendationType::Playlist,
+                            cover_url,
+                            collected: Some(false),
+                        }
                     })
                     .collect::<Vec<RecommendationCard>>()
             })
@@ -662,7 +661,7 @@ impl RcmdM3 {
             return None;
         }
         Some(RecommendationModule {
-            title: self.ui_element.title.title,
+            title: self.ui_element.get(),
             list,
         })
     }
@@ -676,15 +675,8 @@ struct RcmdM3C {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM3CR {
-    ui_element: RcmdM3CRU,
+    ui_element: RcmdMCU,
     resource_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RcmdM3CRU {
-    sub_title: RcmdMCUT,
-    image: RcmdMCUI,
 }
 
 #[derive(Deserialize)]
@@ -701,20 +693,23 @@ impl RcmdM4 {
         let list: Vec<RecommendationCard> = m
             .creatives
             .into_iter()
-            .map(|c| RecommendationCard {
-                id: c.creative_id,
-                title: "".to_owned(),
-                subtitle: c.ui_element.main_title.title,
-                kind: RecommendationType::Playlist,
-                cover_url: c.ui_element.images.into_iter().next().map(|v| v.image_url).unwrap_or_default(),
-                collected: Some(false),
+            .map(|c| {
+                let (subtitle, cover_url) = c.ui_element.get();
+                RecommendationCard {
+                    id: c.creative_id,
+                    title: "".to_owned(),
+                    subtitle,
+                    kind: RecommendationType::Playlist,
+                    cover_url,
+                    collected: Some(false),
+                }
             })
             .collect();
         if list.is_empty() {
             return None;
         }
         Some(RecommendationModule {
-            title: m.ui_element.title.title,
+            title: m.ui_element.get(),
             list,
         })
     }
@@ -732,40 +727,56 @@ struct RcmdM4R {
 #[serde(rename_all = "camelCase")]
 struct RcmdM4C {
     creative_id: String,
-    ui_element: RcmdM4CU,
+    ui_element: RcmdMCU,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RcmdM4CU {
-    main_title: RcmdMCUT,
-    // 气笑了
-    images: Vec<RcmdMCUI>,
-}
-
-#[derive(Deserialize)]
-/// 模块UI结构体
 struct RcmdMU {
-    #[serde(rename = "mainTitle", alias = "subTitle")]
-    title: RcmdMUT,
+    main_title: Option<TitleOnly>,
+    sub_title: Option<TitleOnly>,
+}
+
+impl RcmdMU {
+    fn get(self) -> String {
+        self.main_title
+            .or(self.sub_title)
+            .and_then(|t| t.title)
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Deserialize)]
-struct RcmdMUT {
-    title: String,
+#[serde(rename_all = "camelCase")]
+struct RcmdMCU {
+    #[serde(flatten)]
+    t: RcmdMU,
+    image: Option<ImageUrlOnly>,
+    images: Option<Vec<ImageUrlOnly>>,
+}
+
+impl RcmdMCU {
+    fn get(self) -> (String, String) {
+        (
+            self.t.get(),
+            self.image
+                .or_else(|| self.images.and_then(|v| v.into_iter().next()))
+                .and_then(|i| i.image_url)
+                .unwrap_or_default(),
+        )
+    }
 }
 
 #[derive(Deserialize)]
-/// 卡片标题结构体
-struct RcmdMCUT {
-    title: String,
+struct TitleOnly {
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// 卡片标题结构体
-struct RcmdMCUI {
-    image_url: String,
+struct ImageUrlOnly {
+    image_url: Option<String>,
 }
 
 #[derive(Deserialize)]
