@@ -441,6 +441,11 @@ impl NeteaseRcmdPageResp {
                             .ok()?
                             .standardize()?
                     }
+                    "HOMEPAGE_BLOCK_RED_SIMILAR_SONG" => {
+                        serde_json::from_str::<RcmdM3>(m.block_data.get())
+                            .ok()?
+                            .standardize()?
+                    }
                     _ => return None,
                 })
             })
@@ -467,6 +472,7 @@ struct NeteaseRcmdPageBlock {
     block_data: Box<RawValue>,
 }
 
+//模块模型命名缩写rcmd为Recommend, M代表Module, C代表Card
 #[derive(Deserialize)]
 struct RcmdM1 {
     items: Vec<RcmdM1C>,
@@ -546,6 +552,18 @@ struct RcmdM1CE {
 #[derive(Deserialize)]
 struct IdOnly {
     id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiElement {
+    sub_title: SubTitle,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubTitle {
+    title: String,
 }
 
 #[derive(Deserialize)]
@@ -630,6 +648,61 @@ struct RcmdM2CUT {
 #[serde(rename_all = "camelCase")]
 struct RcmdM2CUI {
     image_url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM3 {
+    ui_element: UiElement,
+    creatives: Vec<RcmdM3C>,
+}
+
+impl RcmdM3 {
+    fn standardize(self) -> Option<RecommendationModule> {
+        let list: Vec<RecommendationCard> = self
+            .creatives
+            .into_iter()
+            .flat_map(|l| {
+                l.resources
+                    .into_iter()
+                    .map(|c| RecommendationCard {
+                        id: c.resource_id,
+                        title: "".to_owned(),
+                        subtitle: c.ui_element.sub_title.title,
+                        kind: RecommendationType::Playlist,
+                        cover_url: c.ui_element.image.image_url,
+                        collected: Some(false),
+                    })
+                    .collect::<Vec<RecommendationCard>>()
+            })
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        Some(RecommendationModule {
+            title: self.ui_element.sub_title.title,
+            list,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct RcmdM3C {
+    resources: Vec<RcmdM3CR>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM3CR {
+    ui_element: RcmdM3CRU,
+    resource_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM3CRU {
+    sub_title: RcmdM2CUT,
+    image: RcmdM2CUI,
 }
 
 #[derive(Deserialize)]
