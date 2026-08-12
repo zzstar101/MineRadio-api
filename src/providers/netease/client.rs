@@ -391,37 +391,6 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn personalized(&self, limit: u32) -> ProviderResult<Value> {
-        self.request_weapi(
-            "/api/personalized/playlist",
-            json!({
-                "limit": limit,
-                "total": true,
-                "n": 1000
-            }),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
-    pub async fn recommend_resource(&self) -> ProviderResult<Value> {
-        self.request_weapi(
-            "/api/v1/discovery/recommend/resource",
-            json!({}),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
-    pub async fn recommend_songs(&self) -> ProviderResult<Value> {
-        self.request_weapi(
-            "/api/v3/discovery/recommend/songs",
-            json!({}),
-            self.current_cookie().await.as_deref(),
-        )
-        .await
-    }
-
     pub async fn login_status(&self) -> ProviderResult<NeteaseLoginStatusResp> {
         self.weapi_model(
             "/api/w/nuser/account/get",
@@ -663,7 +632,6 @@ impl NeteaseClient {
     ) -> ProviderResult<T> {
         let body = self.request_weapi(uri, payload, cookie).await?;
         let raw_message = body.to_string();
-        println!("{}", raw_message);
         serde_json::from_value(body).map_err(|err| ProviderError {
             code: ProviderErrorCode::InvalidResponse,
             provider: ProviderId::Netease,
