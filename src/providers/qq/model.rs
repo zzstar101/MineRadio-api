@@ -841,18 +841,18 @@ impl QqRecommendationResp {
         mid_by_id: Option<&HashMap<String, String>>,
     ) -> Option<RecommendationPage> {
         let list: Vec<RecommendationModule> = self
-                .req_0
-                .data
-                .v_shelf
-                .into_iter()
-                .filter_map(|shelf| shelf.standardize(mid_by_id))
-                .collect();
+            .req_0
+            .data
+            .v_shelf
+            .into_iter()
+            .filter_map(|shelf| shelf.standardize(mid_by_id))
+            .collect();
         if list.is_empty() {
             return None;
         }
         Some(RecommendationPage {
             provider: ProviderId::Qq,
-            list
+            list,
         })
     }
 }
@@ -887,13 +887,16 @@ impl VShelf {
         }
     }
 
-    fn standardize_cards(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationModule> {
+    fn standardize_cards(
+        self,
+        mid_by_id: &HashMap<String, String>,
+    ) -> Option<RecommendationModule> {
         let list: Vec<RecommendationCard> = self
-                .v_niche
-                .into_iter()
-                .flat_map(|niche| niche.v_card.into_iter())
-                .filter_map(|card| card.standardize(mid_by_id))
-                .collect();
+            .v_niche
+            .into_iter()
+            .flat_map(|niche| niche.v_card.into_iter())
+            .filter_map(|card| card.standardize(mid_by_id))
+            .collect();
         if list.is_empty() {
             return None;
         }

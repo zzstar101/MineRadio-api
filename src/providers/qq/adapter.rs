@@ -468,7 +468,9 @@ impl ProviderAdapter for QqAdapter {
             self.client.get_mids_by_ids(track_ids).await.ok()
         };
 
-        response.standardize(mid_by_id.as_ref()).ok_or_else(|| no_result("recommendation_page"))
+        response
+            .standardize(mid_by_id.as_ref())
+            .ok_or_else(|| no_result("recommendation_page"))
     }
 }
 
