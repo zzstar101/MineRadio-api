@@ -436,9 +436,11 @@ impl NeteaseRcmdPageResp {
                     "PC_HOMEPAGE_DAILY_MIX" => serde_json::from_str::<RcmdM1>(m.block_data.get())
                         .ok()?
                         .standardize()?,
-                    "HOMEPAGE_BLOCK_PLAYLIST_RCMD" => serde_json::from_str::<RcmdM2>(m.block_data.get())
-                        .ok()?
-                        .standardize()?,
+                    "HOMEPAGE_BLOCK_PLAYLIST_RCMD" => {
+                        serde_json::from_str::<RcmdM2>(m.block_data.get())
+                            .ok()?
+                            .standardize()?
+                    }
                     _ => return None,
                 })
             })
@@ -558,16 +560,18 @@ impl RcmdM2 {
             .into_iter()
             .filter_map(|c| {
                 let c = c?;
-                if c.creative_type.as_str() != "list" { return None; }
-                Some(RecommendationCard {
-                    id: c.creative_id,
-                    title: "".to_owned(),
-                    subtitle: c.ui_element.main_title.title,
-                    kind: RecommendationType::Playlist,
-                    cover_url: c.ui_element.image.image_url,
-                    collected: Some(false),
-                })
+                match c.r.t.as_str() {
+                    "list" => Some(vec![c.r.standardize()]),
+                    "scroll_playlist" => Some(
+                        c.resources
+                            .into_iter()
+                            .filter_map(|f| Some(f.standardize()))
+                            .collect(),
+                    ),
+                    _ => None,
+                }
             })
+            .flatten()
             .collect();
         if list.is_empty() {
             return None;
@@ -580,29 +584,51 @@ impl RcmdM2 {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RcmdM2C {
-    creative_id: String,
-    creative_type: String,
-    ui_element: RcmdM2CE,
+    resources: Vec<RcmdM2CF>,
+    #[serde(flatten)]
+    r: RcmdM2CF,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RcmdM2CE {
-    main_title: RcmdM2CET,
-    image: RcmdM2CEI,
+struct RcmdM2CF {
+    #[serde(rename = "resourceId", alias = "creativeId")]
+    id: String,
+    #[serde(rename = "resourceType", alias = "creativeType")]
+    t: String,
+    ui_element: RcmdM2CU,
+}
+
+impl RcmdM2CF {
+    fn standardize(self) -> RecommendationCard {
+        RecommendationCard {
+            id: self.id,
+            title: "".to_owned(),
+            subtitle: self.ui_element.main_title.title,
+            kind: RecommendationType::Playlist,
+            cover_url: self.ui_element.image.image_url,
+            collected: Some(false),
+        }
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RcmdM2CET {
+struct RcmdM2CU {
+    main_title: RcmdM2CUT,
+    image: RcmdM2CUI,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM2CUT {
     title: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RcmdM2CEI {
+struct RcmdM2CUI {
     image_url: String,
 }
 
