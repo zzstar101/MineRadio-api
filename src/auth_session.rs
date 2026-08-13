@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::types::ProviderId;
+use crate::{cache, types::ProviderId};
 
 static AUTH_SESSION: OnceLock<AuthSession> = OnceLock::new();
 
@@ -48,12 +48,14 @@ impl AuthSession {
             .await
             .insert(provider.clone(), normalized.clone());
         self.set_persisted_provider_cookie(&provider, &normalized);
+        cache::remove(provider, "recommendation_page").await;
         Ok(())
     }
 
     pub async fn clear_runtime_provider_cookie(&self, provider: &ProviderId) {
         self.runtime.write().await.remove(provider);
         self.clear_persisted_provider_cookie(provider);
+        cache::remove(*provider, "recommendation_page").await;
     }
 }
 
