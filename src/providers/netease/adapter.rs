@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::{
     auth_session,
+    cache::{self, TTL_1_DAY},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
@@ -681,12 +682,36 @@ impl ProviderAdapter for NeteaseAdapter {
         })
     }
 
-    async fn recommendation_page(&self) -> ProviderResult<crate::types::RecommendationPage> {
-        self.client.ensure_login().await?;
-        self.client
-            .recommendation_page()
-            .await?
-            .standardize()
+    async fn recommendation_page(
+        &self,
+        refresh: bool,
+    ) -> ProviderResult<crate::types::RecommendationPage> {
+        let fetch = || async {
+            self.client.ensure_login().await?;
+            Ok(self
+                .client
+                .recommendation_page()
+                .await?
+                .standardize()
+                .and_then(|page| serde_json::to_string(&page).ok()))
+        };
+        let raw = if refresh {
+            let raw = fetch().await?;
+            if let Some(value) = raw.as_ref() {
+                cache::insert(
+                    ProviderId::Netease,
+                    "recommendation_page",
+                    TTL_1_DAY,
+                    value.clone(),
+                )
+                .await;
+            }
+            raw
+        } else {
+            cache::get_or_refresh(ProviderId::Netease, "recommendation_page", TTL_1_DAY, fetch)
+                .await?
+        };
+        raw.and_then(|raw| serde_json::from_str(&raw).ok())
             .ok_or_else(|| no_result("recommendation_page"))
     }
 

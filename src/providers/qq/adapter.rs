@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     auth_session,
+    cache::{self, TTL_1_DAY},
     providers::lyric::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
@@ -456,20 +457,39 @@ impl ProviderAdapter for QqAdapter {
         })
     }
 
-    async fn recommendation_page(&self) -> ProviderResult<RecommendationPage> {
-        let response = self.client.recommend_page().await?;
-        let mut track_ids = response.track_ids();
-        track_ids.sort_unstable();
-        track_ids.dedup();
+    async fn recommendation_page(&self, refresh: bool) -> ProviderResult<RecommendationPage> {
+        let fetch = || async {
+            let response = self.client.recommend_page().await?;
+            let mut track_ids = response.track_ids();
+            track_ids.sort_unstable();
+            track_ids.dedup();
 
-        let mid_by_id = if track_ids.is_empty() {
-            None
-        } else {
-            self.client.get_mids_by_ids(track_ids).await.ok()
+            let mid_by_id = if track_ids.is_empty() {
+                None
+            } else {
+                self.client.get_mids_by_ids(track_ids).await.ok()
+            };
+
+            Ok(response
+                .standardize(mid_by_id.as_ref())
+                .and_then(|page| serde_json::to_string(&page).ok()))
         };
-
-        response
-            .standardize(mid_by_id.as_ref())
+        let raw = if refresh {
+            let raw = fetch().await?;
+            if let Some(value) = raw.as_ref() {
+                cache::insert(
+                    ProviderId::Qq,
+                    "recommendation_page",
+                    TTL_1_DAY,
+                    value.clone(),
+                )
+                .await;
+            }
+            raw
+        } else {
+            cache::get_or_refresh(ProviderId::Qq, "recommendation_page", TTL_1_DAY, fetch).await?
+        };
+        raw.and_then(|raw| serde_json::from_str(&raw).ok())
             .ok_or_else(|| no_result("recommendation_page"))
     }
 }
