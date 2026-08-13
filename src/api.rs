@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::json;
 
 use crate::{
-    auth_session,
+    auth_session, cache,
     config::LibraryConfig,
     cross_source,
     podcast::{PodcastService, create_podcast_service_with_client},
@@ -173,6 +173,8 @@ impl Api {
     pub async fn init(config: LibraryConfig) -> ApiResult<Self> {
         let data_dir = config
             .persistent_data_dir()
+            .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
+        cache::configure(data_dir.clone())
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
         auth_session::configure(Some(data_dir.join("provider-sessions.json")))
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;

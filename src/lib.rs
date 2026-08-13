@@ -4,6 +4,7 @@ extern crate async_trait;
 
 pub mod api;
 pub(crate) mod auth_session;
+pub(crate) mod cache;
 pub mod config;
 pub(crate) mod cross_source;
 pub(crate) mod error;
