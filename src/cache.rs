@@ -12,8 +12,8 @@ use tokio::sync::Mutex;
 
 use crate::types::ProviderId;
 
-pub(crate) const TTL_10_MINUTES: Duration = Duration::from_secs(10 * 60);
-pub(crate) const TTL_1_HOUR: Duration = Duration::from_secs(60 * 60);
+pub(crate) const _TTL_10_MINUTES: Duration = Duration::from_secs(10 * 60);
+pub(crate) const _TTL_1_HOUR: Duration = Duration::from_secs(60 * 60);
 pub(crate) const TTL_1_DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 const MIN_TTL: Duration = Duration::from_secs(5 * 60);
@@ -35,7 +35,7 @@ type CacheContents = BTreeMap<String, BTreeMap<String, CacheValue>>;
 
 pub(crate) fn configure(data_dir: PathBuf) -> Result<(), &'static str> {
     let cache = Cache {
-        file_path: data_dir.join("cache").join("cache.json"),
+        file_path: data_dir.join("cache.json"),
         lock: Mutex::new(()),
     };
 
