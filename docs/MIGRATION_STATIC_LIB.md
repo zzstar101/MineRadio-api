@@ -145,28 +145,26 @@ modules.
 
 ## Configuration
 
-`LibraryConfig` owns the two filesystem locations needed by the library:
+`LibraryConfig` owns the persistent-data directory needed by the library:
 
 ```rust
 LibraryConfig {
-    log_path: Some(app_data_dir.join("logs")),
-    cookie_file: Some(app_data_dir.join("provider-sessions.json")),
+    data_dir: Some(app_data_dir),
     ..LibraryConfig::default()
 }
 ```
 
-`cookie_file` is the persisted provider-cookie JSON file. When it is `None`,
-cookies are retained only in memory and no environment fallback is consulted.
+MineRadio stores provider cookies in `data_dir/provider-sessions.json` and
+writes timestamped JSONL logs in `data_dir/logs`. When `data_dir` is `None`,
+it uses the current user's application-data directory plus `MineRadio-Tauri`
+(for example, `C:\\Users\\25100\\AppData\\Roaming\\MineRadio-Tauri` on Windows).
 
-`log_path` is optional. When it is `None`, MineRadio writes no file logs. A
-path that is an existing directory, or a non-existing path with no extension,
-is treated as a directory; MineRadio creates it and writes
-`mineradio-YYYYMMDD-HHMMSS.jsonl`. A path with a file name/extension is used
-directly. Each line in the log file is one redacted JSON object.
+Each log file is named `mineradio-YYYYMMDD-HHMMSS.jsonl`; each line is one
+redacted JSON object.
 
 The current QR/session implementation is still internally global. Therefore a
-process must initialize all `Api` instances with the same `cookie_file` and
-`log_path`; a conflicting later initialization returns an error until the
+process must initialize all `Api` instances with the same resolved data
+directory; a conflicting later initialization returns an error until the
 session implementation is made instance-scoped.
 
 The host application owns the Tokio runtime. `Api::init`, all `Api` calls, and

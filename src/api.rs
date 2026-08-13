@@ -171,9 +171,12 @@ pub struct Api {
 
 impl Api {
     pub async fn init(config: LibraryConfig) -> ApiResult<Self> {
-        auth_session::configure(config.cookie_file.clone())
+        let data_dir = config
+            .persistent_data_dir()
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
-        let logger = sidecar_log::configure_runtime_logger(config.log_path.as_deref())
+        auth_session::configure(Some(data_dir.join("provider-sessions.json")))
+            .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
+        let logger = sidecar_log::configure_runtime_logger(Some(&data_dir.join("logs")))
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
         let inner = Arc::new(ApiInner::new(config, logger));

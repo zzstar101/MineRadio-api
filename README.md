@@ -37,8 +37,7 @@ use mineradio_api::{Api, ApiError, ApiErrorCode, LibraryConfig, ProviderId, Trac
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = LibraryConfig {
         app_version: "1.0.0".into(),
-        log_path: Some("mineradio.log".into()),
-        cookie_file: Some("cookies.json".into()),
+        data_dir: Some("app-data".into()),
         ..Default::default()
     };
 
@@ -163,8 +162,7 @@ pub struct LibraryConfig {
     pub app_version: String,        // 应用版本号，写入日志
     pub api_version: String,        // API 版本号
     pub schema_version: String,     // schema 版本号
-    pub log_path: Option<PathBuf>,  // JSONL 日志路径；None 不写文件
-    pub cookie_file: Option<PathBuf>, // Cookie 持久化文件；None 仅内存
+    pub data_dir: Option<PathBuf>,  // 数据目录；None 使用用户数据目录/MineRadio-Tauri
 }
 ```
 
@@ -172,7 +170,7 @@ pub struct LibraryConfig {
 
 ```rust
 let config = LibraryConfig {
-    cookie_file: Some("cookies.json".into()),
+    data_dir: Some("app-data".into()),
     ..Default::default()
 };
 ```
