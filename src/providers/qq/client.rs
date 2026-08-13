@@ -738,7 +738,7 @@ impl QqClient {
 
     pub(super) async fn get_mids_by_ids(
         &self,
-        ids: Vec<String>,
+        ids: Vec<u32>,
     ) -> ProviderResult<std::collections::HashMap<String, String>> {
         let q: QqTrackInfo = self
             .post_json_with_sign(
@@ -748,7 +748,7 @@ impl QqClient {
                         "method": "CgiGetTrackInfo",
                         "param": {
                             "ids": ids,
-                            "types": vec![200; ids.len()],
+                            "types": vec![200; ids.len()]
                         }
                     },
                 }),
@@ -761,6 +761,7 @@ impl QqClient {
         q.standardize()
             .ok_or_else(|| unavailable_error("get_mids_by_ids"))
     }
+
     async fn post_json_with_sign<T: DeserializeOwned>(
         &self,
         body: Value,
@@ -773,7 +774,6 @@ impl QqClient {
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
             .expect("系统时间早于 UNIX 纪元");
-
         //构建鉴权部分
         let mut req = body;
         let c = &parse_cookie(&cookie.unwrap_or_default());

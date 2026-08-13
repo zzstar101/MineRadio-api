@@ -824,7 +824,7 @@ pub(super) struct QqRecommendationResp {
 }
 
 impl QqRecommendationResp {
-    pub(super) fn track_ids(&self) -> Vec<String> {
+    pub(super) fn track_ids(&self) -> Vec<u32> {
         self.req_0
             .data
             .v_shelf
@@ -832,7 +832,7 @@ impl QqRecommendationResp {
             .filter(|shelf| shelf.id == 207)
             .flat_map(|shelf| shelf.v_niche.iter())
             .flat_map(|niche| niche.v_card.iter())
-            .map(|card| card.id.clone())
+            .filter_map(|card| card.id.parse::<u32>().ok())
             .collect()
     }
 
@@ -1326,7 +1326,7 @@ mod tests {
         }))
         .expect("deserialize recommendation response");
 
-        assert_eq!(response.track_ids(), vec!["123", "456"]);
+        assert_eq!(response.track_ids(), vec![123, 456]);
 
         let page = response.standardize(Some(&HashMap::from([(
             "123".to_owned(),
