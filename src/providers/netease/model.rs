@@ -416,7 +416,7 @@ struct IdOnly {
 #[serde(rename_all = "camelCase")]
 struct RcmdM2 {
     ui_element: RcmdMU,
-    creatives: Vec<Option<RcmdM2C>>,
+    creatives: Vec<RcmdM2C>,
 }
 
 impl RcmdM2 {
@@ -424,18 +424,15 @@ impl RcmdM2 {
         let list: Vec<RecommendationCard> = self
             .creatives
             .into_iter()
-            .filter_map(|c| {
-                let c = c?;
-                match c.r.t.as_str() {
-                    "list" => Some(vec![c.r.standardize()]),
-                    "scroll_playlist" => Some(
-                        c.resources
-                            .into_iter()
-                            .filter_map(|f| Some(f.standardize()))
-                            .collect(),
-                    ),
-                    _ => None,
-                }
+            .filter_map(|c| match c.r.t.as_str() {
+                "list" => Some(vec![c.r.standardize()]),
+                "scroll_playlist" => Some(
+                    c.resources
+                        .into_iter()
+                        .filter_map(|f| Some(f.standardize()))
+                        .collect(),
+                ),
+                _ => None,
             })
             .flatten()
             .collect();
@@ -584,6 +581,7 @@ struct RcmdM4C {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 模块标题结构
 struct RcmdMU {
     main_title: Option<TitleOnly>,
     sub_title: Option<TitleOnly>,
@@ -600,6 +598,7 @@ impl RcmdMU {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// 卡片标题, 封面结构
 struct RcmdMCU {
     #[serde(flatten)]
     t: RcmdMU,
@@ -626,7 +625,6 @@ struct TitleOnly {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// 卡片标题结构体
 struct ImageUrlOnly {
     image_url: Option<String>,
 }
