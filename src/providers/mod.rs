@@ -194,7 +194,7 @@ pub trait ProviderAdapter: Send + Sync {
         ))
     }
 
-    async fn recommendation_page(&self) -> ProviderResult<RecommendationPage> {
+    async fn recommendation_page(&self, _refresh: bool) -> ProviderResult<RecommendationPage> {
         Err(error::ProviderError::not_implemented(
             self.id(),
             "recommend_page",

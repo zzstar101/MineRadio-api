@@ -149,10 +149,10 @@ impl CrossSourceApi {
             .await
     }
 
-    pub(crate) async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
+    pub(crate) async fn recommendation_pages(&self, refresh: bool) -> ApiResult<Vec<RecommendationPage>> {
         self.call(
             "recommendation_pages",
-            self.resolver.resolve_recommendation_page(),
+            self.resolver.resolve_recommendation_page(refresh),
         )
         .await
     }
@@ -167,10 +167,10 @@ pub struct CrossSourceResolver {
 }
 
 impl CrossSourceResolver {
-    pub async fn resolve_recommendation_page(&self) -> ProviderResult<Vec<RecommendationPage>> {
+    pub async fn resolve_recommendation_page(&self, refresh: bool) -> ProviderResult<Vec<RecommendationPage>> {
         let requests = PROVIDER_IDS.into_iter().filter_map(|provider_id| {
             let provider = self.provider(&provider_id)?;
-            Some(async move { provider.recommendation_page().await })
+            Some(async move { provider.recommendation_page(refresh).await })
         });
 
         Ok(join_all(requests)
@@ -975,7 +975,10 @@ mod tests {
             Ok(())
         }
 
-        async fn recommendation_page(&self) -> providers::ProviderResult<RecommendationPage> {
+        async fn recommendation_page(
+            &self,
+            _refresh: bool,
+        ) -> providers::ProviderResult<RecommendationPage> {
             self.calls
                 .lock()
                 .unwrap()
@@ -1200,7 +1203,7 @@ mod tests {
             ),
         ]);
 
-        let pages = resolver.resolve_recommendation_page().await.unwrap();
+        let pages = resolver.resolve_recommendation_page(true).await.unwrap();
 
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].provider, ProviderId::Qq);

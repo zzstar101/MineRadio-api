@@ -164,8 +164,11 @@ impl ProviderApi {
             .await
     }
 
-    pub async fn recommendation_page(&self) -> ApiResult<RecommendationPage> {
-        self.call("recommendation_page", self.adapter.recommendation_page())
-            .await
+    pub async fn recommendation_page(&self, refresh: bool) -> ApiResult<RecommendationPage> {
+        self.call(
+            "recommendation_page",
+            self.adapter.recommendation_page(refresh),
+        )
+        .await
     }
 }

@@ -259,8 +259,8 @@ impl Api {
         self.inner.cross_source.song_url(track, options).await
     }
 
-    pub async fn recommendation_pages(&self) -> ApiResult<Vec<RecommendationPage>> {
-        self.inner.cross_source.recommendation_pages().await
+    pub async fn recommendation_pages(&self, refresh: bool) -> ApiResult<Vec<RecommendationPage>> {
+        self.inner.cross_source.recommendation_pages(refresh).await
     }
 
     pub fn qr_login(&self, kind: QrLoginKind) -> Option<&QrLoginApi> {
