@@ -44,11 +44,6 @@ pub struct NeteaseClient {
     http: Client,
 }
 
-#[derive(Clone, Debug)]
-struct NeteaseClientResponse {
-    body: Value,
-}
-
 impl NeteaseClient {
     pub fn new() -> Self {
         Self::with_client(Client::new())
@@ -89,7 +84,7 @@ impl NeteaseClient {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<Value> {
-        self.request_eapi(
+        self.eapi_model(
             "/api/cloudsearch/pc",
             json!({
                 "s": keyword,
@@ -100,6 +95,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "cloudsearch",
         )
         .await
     }
@@ -178,16 +174,17 @@ impl NeteaseClient {
         if level == "sky" {
             body["immerseType"] = Value::String("c51".to_owned());
         }
-        self.request_eapi(
+        self.eapi_model(
             "/api/song/enhance/player/url/v1",
             body,
             self.current_cookie().await.as_deref(),
+            "song_url_v1",
         )
         .await
     }
 
     pub async fn song_url(&self, id: &str, br: u32) -> ProviderResult<Value> {
-        self.request_eapi(
+        self.eapi_model(
             "/api/song/enhance/player/url",
             json!({
                 "ids": format!("[\"{id}\"]"),
@@ -195,6 +192,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "song_url",
         )
         .await
     }
@@ -307,30 +305,32 @@ impl NeteaseClient {
     }
 
     pub async fn dj_hot(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/djradio/hot/v1",
             json!({
                 "limit": limit,
                 "offset": offset
             }),
             self.current_cookie().await.as_deref(),
+            "dj_hot",
         )
         .await
     }
 
     pub async fn dj_detail(&self, rid: &str) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/djradio/v2/get",
             json!({
                 "id": rid
             }),
             self.current_cookie().await.as_deref(),
+            "dj_detail",
         )
         .await
     }
 
     pub async fn dj_program(&self, rid: &str, limit: u32, offset: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/dj/program/byradio",
             json!({
                 "radioId": rid,
@@ -339,12 +339,13 @@ impl NeteaseClient {
                 "asc": false
             }),
             self.current_cookie().await.as_deref(),
+            "dj_program",
         )
         .await
     }
 
     pub async fn dj_sublist(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/djradio/get/subed",
             json!({
                 "limit": limit,
@@ -352,23 +353,25 @@ impl NeteaseClient {
                 "total": true
             }),
             self.current_cookie().await.as_deref(),
+            "dj_sublist",
         )
         .await
     }
 
     pub async fn user_audio(&self, uid: &str) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/djradio/get/byuser",
             json!({
                 "userId": uid
             }),
             self.current_cookie().await.as_deref(),
+            "user_audio",
         )
         .await
     }
 
     pub async fn dj_paygift(&self, limit: u32, offset: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/djradio/home/paygift/list",
             json!({
                 "limit": limit,
@@ -376,17 +379,19 @@ impl NeteaseClient {
                 "_nmclfl": 1
             }),
             self.current_cookie().await.as_deref(),
+            "dj_paygift",
         )
         .await
     }
 
     pub async fn record_recent_voice(&self, limit: u32) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/play-record/voice/list",
             json!({
                 "limit": limit
             }),
             self.current_cookie().await.as_deref(),
+            "record_recent_voice",
         )
         .await
     }
@@ -407,27 +412,27 @@ impl NeteaseClient {
             return Err(unavailable_error("vip_info"));
         }
 
-        let cookie = self.current_cookie().await;
         self.weapi_model(
             "/api/music-vip-membership/front/vip/info",
             json!({ "userId": uid }),
-            cookie.as_deref(),
+            self.current_cookie().await.as_deref(),
             "vip_info",
         )
         .await
     }
 
     pub async fn logout(&self) -> ProviderResult<Value> {
-        self.request_eapi(
+        self.eapi_model(
             "/api/logout",
             json!({ "e_r": false }),
             self.current_cookie().await.as_deref(),
+            "logout",
         )
         .await
     }
 
     pub async fn like(&self, id: &str, liked: bool) -> ProviderResult<Value> {
-        self.request_weapi(
+        self.weapi_model(
             "/api/radio/like",
             json!({
                 "alg": "itembased",
@@ -437,31 +442,34 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "like",
         )
         .await
     }
 
     pub async fn song_like_check(&self, ids: &[String]) -> ProviderResult<Value> {
         let track_ids = json!(ids).to_string();
-        self.request_eapi(
+        self.eapi_model(
             "/api/song/like/check",
             json!({
                 "trackIds": track_ids,
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "song_like_check",
         )
         .await
     }
 
     pub async fn likelist(&self, uid: &str) -> ProviderResult<Value> {
-        self.request_eapi(
+        self.eapi_model(
             "/api/song/like/get",
             json!({
                 "uid": uid,
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "likelist",
         )
         .await
     }
@@ -472,7 +480,7 @@ impl NeteaseClient {
         track_id: &str,
     ) -> ProviderResult<Value> {
         let track_ids = json!([track_id]).to_string();
-        self.request_eapi(
+        self.eapi_model(
             "/api/playlist/manipulate/tracks",
             json!({
                 "op": "add",
@@ -482,6 +490,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "playlist_tracks",
         )
         .await
     }
@@ -492,7 +501,7 @@ impl NeteaseClient {
         track_id: &str,
     ) -> ProviderResult<Value> {
         let tracks = json!([{"type": 3, "id": track_id}]).to_string();
-        self.request_weapi(
+        self.weapi_model(
             "/api/playlist/track/add",
             json!({
                 "id": playlist_id,
@@ -500,6 +509,7 @@ impl NeteaseClient {
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),
+            "playlist_track_add",
         )
         .await
     }
@@ -592,18 +602,6 @@ impl NeteaseClient {
         .await
     }
 
-    async fn request_weapi(
-        &self,
-        uri: &str,
-        payload: Value,
-        cookie: Option<&str>,
-    ) -> ProviderResult<Value> {
-        Ok(self
-            .request_weapi_response(uri, payload, cookie)
-            .await?
-            .body)
-    }
-
     async fn eapi_model<T: DeserializeOwned>(
         &self,
         uri: &str,
@@ -611,79 +609,6 @@ impl NeteaseClient {
         cookie: Option<&str>,
         action: &str,
     ) -> ProviderResult<T> {
-        let body = self.request_eapi(uri, payload, cookie).await?;
-        let raw_message = body.to_string();
-        serde_json::from_value(body).map_err(|err| ProviderError {
-            code: ProviderErrorCode::InvalidResponse,
-            provider: ProviderId::Netease,
-            message: format!("decode netease {action} response: {err}"),
-            retryable: false,
-            action: Some(action.to_owned()),
-            raw_message: Some(raw_message),
-        })
-    }
-
-    async fn weapi_model<T: DeserializeOwned>(
-        &self,
-        uri: &str,
-        payload: Value,
-        cookie: Option<&str>,
-        action: &str,
-    ) -> ProviderResult<T> {
-        let body = self.request_weapi(uri, payload, cookie).await?;
-        let raw_message = body.to_string();
-        serde_json::from_value(body).map_err(|err| ProviderError {
-            code: ProviderErrorCode::InvalidResponse,
-            provider: ProviderId::Netease,
-            message: format!("decode netease {action} response: {err}"),
-            retryable: false,
-            action: Some(action.to_owned()),
-            raw_message: Some(raw_message),
-        })
-    }
-
-    async fn request_weapi_response(
-        &self,
-        uri: &str,
-        payload: Value,
-        cookie: Option<&str>,
-    ) -> ProviderResult<NeteaseClientResponse> {
-        let cookie_map = process_cookie_map(parse_cookie_header(cookie.unwrap_or_default()));
-        let csrf = cookie_map.get("__csrf").cloned().unwrap_or_default();
-        let mut body = payload.as_object().cloned().unwrap_or_default();
-        body.insert("csrf_token".to_owned(), Value::String(csrf));
-        let encrypted = encrypt_weapi(&Value::Object(body), Some(&generate_weapi_secret_key()))
-            .map_err(|err| internal_error(format!("encrypt weapi payload: {err}")))?;
-
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(UA_WEAPI_PC));
-        headers.insert(REFERER, HeaderValue::from_static(DOMAIN));
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/x-www-form-urlencoded"),
-        );
-        if !cookie_map.is_empty() {
-            headers.insert(COOKIE, header_value(&cookie_map_to_string(&cookie_map))?);
-        }
-
-        self.post_form_response(
-            format!("{DOMAIN}/weapi/{}", uri.trim_start_matches("/api/")),
-            headers,
-            HashMap::from([
-                ("params".to_owned(), encrypted.params),
-                ("encSecKey".to_owned(), encrypted.enc_sec_key),
-            ]),
-            false,
-        )
-        .await
-    }
-
-    async fn request_eapi(
-        &self,
-        uri: &str,
-        payload: Value,
-        cookie: Option<&str>,
-    ) -> ProviderResult<Value> {
         let response_encrypted = payload.get("e_r").and_then(Value::as_bool).unwrap_or(false);
         let cookie_map = parse_cookie_header(cookie.unwrap_or_default());
         let header = create_eapi_header(&cookie_map);
@@ -714,18 +639,57 @@ impl NeteaseClient {
                 headers,
                 HashMap::from([("params".to_owned(), encrypted.params)]),
                 response_encrypted,
+                action,
             )
-            .await?
-            .body)
+            .await?)
     }
 
-    async fn post_form_response(
+    async fn weapi_model<T: DeserializeOwned>(
+        &self,
+        uri: &str,
+        payload: Value,
+        cookie: Option<&str>,
+        action: &str,
+    ) -> ProviderResult<T> {
+        let cookie_map = process_cookie_map(parse_cookie_header(cookie.unwrap_or_default()));
+        let csrf = cookie_map.get("__csrf").cloned().unwrap_or_default();
+        let mut body = payload.as_object().cloned().unwrap_or_default();
+        body.insert("csrf_token".to_owned(), Value::String(csrf));
+        let encrypted = encrypt_weapi(&Value::Object(body), Some(&generate_weapi_secret_key()))
+            .map_err(|err| internal_error(format!("encrypt weapi payload: {err}")))?;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, HeaderValue::from_static(UA_WEAPI_PC));
+        headers.insert(REFERER, HeaderValue::from_static(DOMAIN));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        if !cookie_map.is_empty() {
+            headers.insert(COOKIE, header_value(&cookie_map_to_string(&cookie_map))?);
+        }
+
+        self.post_form_response(
+            format!("{DOMAIN}/weapi/{}", uri.trim_start_matches("/api/")),
+            headers,
+            HashMap::from([
+                ("params".to_owned(), encrypted.params),
+                ("encSecKey".to_owned(), encrypted.enc_sec_key),
+            ]),
+            false,
+            action,
+        )
+        .await
+    }
+
+    async fn post_form_response<T: DeserializeOwned>(
         &self,
         url: String,
         headers: HeaderMap,
         form: HashMap<String, String>,
         response_encrypted: bool,
-    ) -> ProviderResult<NeteaseClientResponse> {
+        action: &str,
+    ) -> ProviderResult<T> {
         let response = self
             .http
             .post(url)
@@ -741,45 +705,32 @@ impl NeteaseClient {
             .await
             .context("read netease upstream response")
             .map_err(|err| unavailable_error(err.to_string()))?;
+        let raw_body = String::from_utf8_lossy(&bytes).into_owned();
         let body = if response_encrypted {
-            let encrypted = hex::encode_upper(&bytes);
-            Value::Object(decrypt_eapi_response(&encrypted, false).map_err(|err| {
-                unavailable_error(format!("decrypt netease eapi response: {err}"))
-            })?)
-        } else {
-            let text = String::from_utf8(bytes.to_vec()).map_err(|err| {
-                unavailable_error(format!("decode netease upstream response: {err}"))
+            let decrypted = decrypt_eapi_response(&bytes, false).map_err(|err| {
+                unavailable_error(format!("decrypt netease {action} eapi response: {err}"))
             })?;
-            serde_json::from_str::<Value>(&text).map_err(|err| {
+            serde_json::from_slice::<T>(&decrypted).map_err(|err| {
+                unavailable_error(format!("parse netease {action} eapi response: {err}"))
+            })?
+        } else {
+            serde_json::from_slice::<T>(&bytes).map_err(|err| {
                 unavailable_error(format!(
-                    "parse netease upstream response: {err}; body: {text}"
+                    "parse netease {action} upstream response: {err}; body: {raw_body}"
                 ))
             })?
         };
-        let code = body
-            .get("code")
-            .and_then(Value::as_i64)
-            .unwrap_or(i64::from(status.as_u16()));
-        if (200..300).contains(&status.as_u16())
-            && matches!(code, 200 | 201 | 302 | 400 | 502 | 800 | 801 | 802 | 803)
-        {
-            return Ok(NeteaseClientResponse { body });
+        if status.is_success() {
+            return Ok(body);
         }
 
         Err(ProviderError {
-            code: match code {
-                401 => ProviderErrorCode::LoginRequired,
-                _ => ProviderErrorCode::Unavailable,
-            },
+            code: ProviderErrorCode::Unavailable,
             provider: ProviderId::Netease,
-            message: body
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("netease upstream error")
-                .to_owned(),
-            retryable: code == 401,
-            action: (code == 401).then(|| "login".to_owned()),
-            raw_message: Some(body.to_string()),
+            message: format!("netease upstream http {}", status.as_u16()),
+            retryable: true,
+            action: None,
+            raw_message: Some(raw_body),
         })
     }
 }
