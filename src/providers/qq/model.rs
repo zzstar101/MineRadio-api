@@ -745,7 +745,7 @@ impl QqSongUrlResp {
             url.trim_start_matches('/')
         );
         if !ekey.trim().is_empty() && en {
-            url = url + "|||" + &ekey;
+            url = url + "&ekey=" + &ekey;
         }
 
         Some(SongUrlResult {
