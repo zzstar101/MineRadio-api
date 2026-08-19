@@ -149,7 +149,10 @@ impl CrossSourceApi {
             .await
     }
 
-    pub(crate) async fn recommendation_pages(&self, refresh: bool) -> ApiResult<Vec<RecommendationPage>> {
+    pub(crate) async fn recommendation_pages(
+        &self,
+        refresh: bool,
+    ) -> ApiResult<Vec<RecommendationPage>> {
         self.call(
             "recommendation_pages",
             self.resolver.resolve_recommendation_page(refresh),
@@ -167,7 +170,10 @@ pub struct CrossSourceResolver {
 }
 
 impl CrossSourceResolver {
-    pub async fn resolve_recommendation_page(&self, refresh: bool) -> ProviderResult<Vec<RecommendationPage>> {
+    pub async fn resolve_recommendation_page(
+        &self,
+        refresh: bool,
+    ) -> ProviderResult<Vec<RecommendationPage>> {
         let requests = PROVIDER_IDS.into_iter().filter_map(|provider_id| {
             let provider = self.provider(&provider_id)?;
             Some(async move { provider.recommendation_page(refresh).await })
