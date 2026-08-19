@@ -58,6 +58,7 @@ pub(crate) struct ApiInner {
 
 impl ApiInner {
     fn new(config: LibraryConfig, logger: Arc<SidecarLogger>) -> Self {
+        let _ = crate::utils::cryptors::csigner::init();
         let shared_http_client = Client::new();
         let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
         let qq_qr_client = Client::builder()

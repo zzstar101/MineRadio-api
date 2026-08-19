@@ -13,6 +13,7 @@ use crate::{
         PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
+    utils::cryptors::qq::x4_fix_identity,
     utils::decrypt_qrc,
 };
 use async_trait::async_trait;
@@ -353,6 +354,9 @@ impl ProviderAdapter for QqAdapter {
         let Some(uin) = uin else {
             return Ok(qq_logged_out_status());
         };
+        if let Some(guid) = self.client.guid().await {
+            x4_fix_identity(&uin, &guid);
+        }
         let (login_status, vip_info) = tokio::join!(
             self.client.login_status_with_cookie(&uin, &cookie),
             self.client.vip_info_with_cookie(&uin, &cookie),

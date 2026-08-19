@@ -3,6 +3,7 @@
 // will be enabled as more sidecar features migrate to Rust.
 
 pub mod common;
+pub(crate) mod csigner;
 pub mod kugou;
 pub mod netease;
 pub mod qq;
@@ -33,4 +34,4 @@ pub use netease::{
 #[allow(unused_imports)]
 pub use qq::{decrypt_qq_audio, decrypt_qrc, decrypt_qrc_file};
 #[allow(unused_imports)]
-pub use soda::decrypt_soda_audio;
+pub use soda::{decrypt_soda_audio, q9v, q9v_with_body};

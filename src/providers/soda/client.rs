@@ -6,7 +6,6 @@ use reqwest::{
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 
-use crate::auth_session;
 use crate::providers::{
     ProviderId, ProviderResult,
     error::{ProviderError, ProviderErrorCode},
@@ -15,16 +14,18 @@ use crate::providers::{
         SodaSearch2Resp, SodaTrackV2Resp,
     },
 };
+use crate::utils::cryptors::q9v_with_body;
+use crate::{auth_session, utils::cryptors::qq::x5};
 
 use super::model::{
     SodaAlbumDetailResp, SodaCollectionListResp, SodaMultiSearchResp, SodaSongUrlResp,
 };
 
-const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=&region=&geo_region=&os_region=&sim_region=&device_id=&cdid=&iid=&version_name=&version_code=&channel=&build_mode=&network_carrier=&ac=&tz_name=&resolution=&device_platform=&device_type=&os_version=&fp=&cursor=&search_id=&search_method=input&debug_params=&from_search_id=&search_scene=";
+const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088&app_name=luna_pc&region=cn&geo_region=cn&os_region=cn&sim_region=&device_id=3753066532709850&cdid=&iid=357778617272924&version_name=3.6.0&version_code=30060000&channel=official&build_mode=master&network_carrier=&ac=wifi&tz_name=Asia%%2FShanghai&resolution=&device_platform=windows&device_type=Windows&os_version=Windows+11+Pro&fp=3753066532709850&q=jay&cursor=0&search_method=input&debug_params=&from_search_id=&search_scene=";
 const SEARCH_FALLBACK_URL: &str = "https://api-vehicle.volcengine.com/v2/search/type";
 const SEARCH_ALBUM_URL: &str = "https://api.qishui.com/luna/pc/search/album?aid=386088";
 const SEARCH_PLAYLIST_URL: &str = "https://api.qishui.com/luna/pc/search/playlist?aid=386088";
-const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?&media_type=track&queue_type=&aid=386088&iid=27960026095955";
+const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?aid=386088&app_name=luna_pc&version_name=3.6.0&version_code=30060000&device_id=516099631228988&iid=27960026095955";
 const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=386088";
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
 const ME_URL: &str = "https://api.qishui.com/luna/pc/me?aid=386088&version_code=30050100";
@@ -83,13 +84,9 @@ impl SodaClient {
         let mut url = reqwest::Url::parse(SEARCH_URL).map_err(internal_error)?;
         url.query_pairs_mut()
             .append_pair("q", keyword)
-            .append_pair("cursor", &cursor.to_string());
-        self.get_model(
-            url.to_string(),
-            self.current_cookie().await.as_deref(),
-            "search",
-        )
-        .await
+            .append_pair("cursor", &cursor.to_string())
+            .append_pair("search_id", &x5());
+        self.get_model(&url.to_string(), "search").await
     }
 
     pub(super) async fn search_track_fallback(
@@ -105,12 +102,7 @@ impl SodaClient {
             .append_pair("search_type", "music")
             .append_pair("real_offset", &offset.to_string())
             .append_pair("limit", &limit.to_string());
-        self.get_model(
-            url.to_string(),
-            self.current_cookie().await.as_deref(),
-            "search_fallback",
-        )
-        .await
+        self.get_model(&url.to_string(), "search_fallback").await
     }
 
     pub(super) async fn search_album(
@@ -122,12 +114,7 @@ impl SodaClient {
         url.query_pairs_mut()
             .append_pair("q", keyword)
             .append_pair("cursor", &cursor.to_string());
-        self.get_model(
-            url.to_string(),
-            self.current_cookie().await.as_deref(),
-            "search_album",
-        )
-        .await
+        self.get_model(&url.to_string(), "search_album").await
     }
 
     pub(super) async fn search_playlist(
@@ -139,12 +126,7 @@ impl SodaClient {
         url.query_pairs_mut()
             .append_pair("q", keyword)
             .append_pair("cursor", &cursor.to_string());
-        self.get_model(
-            url.to_string(),
-            self.current_cookie().await.as_deref(),
-            "search_playlist",
-        )
-        .await
+        self.get_model(&url.to_string(), "search_playlist").await
     }
 
     pub(super) async fn song_url(&self, track_id: &str) -> ProviderResult<SodaSongUrlResp> {
@@ -154,12 +136,7 @@ impl SodaClient {
                 "soda track {track_id} missing url_player_info"
             )));
         }
-        self.get_model(
-            info_url.to_owned(),
-            self.current_cookie().await.as_deref(),
-            "song_url",
-        )
-        .await
+        self.get_model(&info_url, "song_url").await
     }
 
     pub(super) async fn lyric(&self, track_id: &str) -> ProviderResult<SodaTrackV2Resp> {
@@ -167,32 +144,25 @@ impl SodaClient {
     }
 
     pub(super) async fn track_detail(&self, track_id: &str) -> ProviderResult<SodaTrackV2Resp> {
-        let mut url = reqwest::Url::parse(TRACK_URL).map_err(internal_error)?;
-        url.query_pairs_mut().append_pair("track_id", track_id);
-        self.get_model(
-            url.to_string(),
-            self.current_cookie().await.as_deref(),
+        self.post_model(
+            TRACK_URL,
+            json!({
+                "track_id": track_id,
+                "media_type": "track",
+                "queue_type": "daily_mix",
+                "scene_name": "track_reco"
+            }),
             "track_detail",
         )
         .await
     }
 
     pub(super) async fn user_playlist_list(&self) -> ProviderResult<SodaPlaylistListResp> {
-        self.get_model(
-            PLAYLIST_LIST_URL.to_owned(),
-            self.current_cookie().await.as_deref(),
-            "playlist_list",
-        )
-        .await
+        self.get_model(PLAYLIST_LIST_URL, "playlist_list").await
     }
     //这个是收藏的专辑和歌单接口
     pub(super) async fn user_collected_list(&self) -> ProviderResult<SodaCollectionListResp> {
-        self.get_model(
-            COLLECTION_LIST_URL.to_owned(),
-            self.current_cookie().await.as_deref(),
-            "album_list",
-        )
-        .await
+        self.get_model(COLLECTION_LIST_URL, "album_list").await
     }
 
     pub(super) async fn playlist_detail(
@@ -201,32 +171,21 @@ impl SodaClient {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<SodaPlaylistDetailResp> {
-        let cookie = self.current_cookie().await;
         let mut url = reqwest::Url::parse(PLAYLIST_DETAIL_URL).map_err(internal_error)?;
         url.query_pairs_mut()
             .append_pair("playlist_id", playlist_id)
             .append_pair("cursor", &offset.to_string())
             .append_pair("count", &limit.to_string());
-        self.get_model(url.to_string(), cookie.as_deref(), "playlist_detail")
-            .await
+        self.get_model(&url.to_string(), "playlist_detail").await
     }
 
     pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<SodaAlbumDetailResp> {
-        self.get_model(
-            ALBUM_DETAIL_URL.replace("AID", id),
-            self.current_cookie().await.as_deref(),
-            "album_detail",
-        )
-        .await
+        self.get_model(&ALBUM_DETAIL_URL.replace("AID", id), "album_detail")
+            .await
     }
 
     pub(super) async fn login_status(&self) -> ProviderResult<SodaLoginStatusResp> {
-        self.get_model(
-            ME_URL.to_owned(),
-            self.current_cookie().await.as_deref(),
-            "login_status",
-        )
-        .await
+        self.get_model(ME_URL, "login_status").await
     }
 
     pub(super) async fn like_song(
@@ -292,16 +251,17 @@ impl SodaClient {
         Ok(())
     }
 
-    async fn get_model<T: DeserializeOwned>(
-        &self,
-        url: String,
-        cookie: Option<&str>,
-        action: &str,
-    ) -> ProviderResult<T> {
+    async fn get_model<T: DeserializeOwned>(&self, url: &str, action: &str) -> ProviderResult<T> {
         let mut headers = HeaderMap::new();
-        if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
+        if let Some(cookie) = self
+            .current_cookie()
+            .await
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             headers.insert(COOKIE, header_value(cookie)?);
         }
+        q9v_with_body(&url, &[], &mut headers);
         let response = self
             .http
             .get(url)
@@ -351,6 +311,7 @@ impl SodaClient {
         {
             headers.insert(COOKIE, header_value(cookie)?);
         }
+        q9v_with_body(&url, (&payload).to_string().as_bytes(), &mut headers);
         let response = self
             .http
             .post(url)

@@ -12,7 +12,7 @@ use crate::{
     qr_login::common::{check_qq_login_error, normalize_login_cookie, qq_music_device_name},
     qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{x4, x5, x7, xj},
+    utils::cryptors::qq::{x4, x4_fix_identity, x5, x7, xj},
 };
 
 type CookieMap = HashMap<String, String>;
@@ -120,6 +120,9 @@ impl QrLogin for QqQrLoginService {
             e & 0x7fffffff
         };
         let key = encode_key(&qrsig, hash(&qrsig) as u64);
+        let guid = x5();
+        // 每生成一次 guid 就直接固化；登录过程中的签名请求复用最后一次固化的值
+        x4_fix_identity("", &guid);
         self.sessions
             .insert(
                 key.clone(),
@@ -127,7 +130,7 @@ impl QrLogin for QqQrLoginService {
                 QqQrLoginSession {
                     cookies,
                     login_sig,
-                    guid: x5(),
+                    guid,
                 },
             )
             .await;
@@ -271,13 +274,13 @@ impl QrLogin for QqQrLoginService {
             anyhow::bail!("QQ_QR_AUTHORIZE_FAILED");
         }
 
-        let uin = qq_uin(&session.state.cookies);
         let request = qq_client_login_request(&code, &session.state.guid);
         let request_body = serde_json::to_string(&request)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
-        let (a, b) = x4(&request_body, &uin, &session.state.guid, now);
+        // guid 已在生成时固化（uin 空串），登录请求直接复用最后一次固化的
+        let (a, b) = x4(&request_body, now);
         let login_resp = self
             .deps
             .client
@@ -516,19 +519,6 @@ fn qq_client_login_request(code: &str, guid: &str) -> serde_json::Value {
             "wid": "4810302018970526720"
         }
     })
-}
-
-fn qq_uin(cookies: &CookieMap) -> String {
-    let uin = cookie_value(cookies, "uin");
-    let digits = uin
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    if digits.is_empty() {
-        "0".to_owned()
-    } else {
-        digits
-    }
 }
 
 fn xlogin_url() -> String {

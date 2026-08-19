@@ -92,6 +92,11 @@ impl QqClient {
         Some(uin)
     }
 
+    pub async fn guid(&self) -> Option<String> {
+        let cookie = self.current_cookie().await?;
+        guid_from_cookie_map(&parse_cookie(&cookie))
+    }
+
     pub async fn euin(&self) -> Option<String> {
         if let Some(euin) = self.euin.read().await.clone() {
             return Some(euin);
@@ -849,12 +854,7 @@ impl QqClient {
         let mut h = build_headers(referer, cookie, false)?;
         let q = [xj(0x7063_6163_6865_7469), xj(0x6d65)].concat();
         let query: Vec<(&str, &str)> = if s {
-            let (a, b) = x4(
-                &req.to_string(),
-                &self.uin().await.unwrap_or_default(),
-                &cookie_key(c, "qqmusic_guid").unwrap_or(x5()),
-                since_epoch.as_secs(),
-            );
+            let (a, b) = x4(&req.to_string(), since_epoch.as_secs());
             h.insert(
                 HeaderName::from_bytes(xj(0x5369_676e).as_bytes()).map_err(internal_error)?,
                 header_value(&a)?,
@@ -1003,6 +1003,13 @@ fn uin_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Op
         .filter(|ch| ch.is_ascii_digit())
         .collect::<String>();
     (!digits.is_empty()).then_some(digits)
+}
+
+fn guid_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Option<String> {
+    cookie
+        .get("qqmusic_guid")
+        .map(|guid| guid.trim().to_owned())
+        .filter(|guid| !guid.is_empty())
 }
 
 fn euin_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Option<String> {
@@ -1163,8 +1170,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        QqClient, login_refresh_request_for_device, merge_cookie, parse_cookie,
-        playlist_song_write_body, uin_from_cookie_map,
+        QqClient, guid_from_cookie_map, login_refresh_request_for_device, merge_cookie,
+        parse_cookie, playlist_song_write_body, uin_from_cookie_map,
     };
 
     #[test]
@@ -1175,7 +1182,19 @@ mod tests {
     }
 
     #[test]
+    fn cookie_guid_is_extracted_from_map() {
+        let cookie = parse_cookie("qqmusic_guid=abcdef; uin=12345");
+
+        assert_eq!(guid_from_cookie_map(&cookie).as_deref(), Some("abcdef"));
+        assert!(guid_from_cookie_map(&parse_cookie("uin=12345")).is_none());
+    }
+
+    #[test]
     fn get_sign_executes_the_bundled_javascript() {
+        if option_env!("CSIGNER_LIB_FILENAME").is_none() {
+            return;
+        }
+        crate::utils::cryptors::csigner::init().expect("csigner 初始化应成功");
         let data = json!({"comm":{"ct":24},"req_1":{"module":"test","method":"test","param":{}}});
 
         assert_eq!(
