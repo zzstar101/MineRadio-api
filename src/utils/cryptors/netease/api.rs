@@ -122,25 +122,21 @@ pub fn encrypt_eapi(url: &str, object: EapiBody<'_>) -> Result<EapiParams, Strin
     })
 }
 
-pub fn decrypt_eapi_response(
-    encrypted_params: &str,
-    aeapi: bool,
-) -> Result<Map<String, Value>, String> {
+pub fn decrypt_eapi_response(encrypted_params: &[u8], aeapi: bool) -> Result<Vec<u8>, String> {
+    let encrypted_hex = hex::encode_upper(encrypted_params);
     let decrypted = decrypt_aes(
-        encrypted_params,
+        &encrypted_hex,
         AesMode::Ecb,
         EAPI_KEY,
         "",
         CipherOutputFormat::Hex,
     )?;
 
-    let text = if aeapi {
-        gunzip_to_string(&decrypted).map_err(|err| err.to_string())?
+    if aeapi {
+        gunzip_to_bytes(&decrypted).map_err(|err| err.to_string())
     } else {
-        String::from_utf8(decrypted).map_err(|err| err.to_string())?
-    };
-
-    parse_json_record(&text).map_err(|err| err.to_string())
+        Ok(decrypted)
+    }
 }
 
 pub fn decrypt_eapi_request(encrypted_params: &str) -> Result<Option<EapiReqDecrypted>, String> {
@@ -165,12 +161,12 @@ pub fn decrypt_eapi(cipher: &str) -> Result<String, String> {
         .map_err(|err| err.to_string())
 }
 
-fn gunzip_to_string(bytes: &[u8]) -> anyhow::Result<String> {
+fn gunzip_to_bytes(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut decoder = GzDecoder::new(bytes);
-    let mut output = String::new();
+    let mut output = Vec::new();
     // TODO: Add a decompressed-size limit here after we confirm the real EAPI payload size range.
     decoder
-        .read_to_string(&mut output)
+        .read_to_end(&mut output)
         .context("gunzip eapi response")?;
     Ok(output)
 }
