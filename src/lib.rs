@@ -3,7 +3,7 @@ extern crate log;
 extern crate async_trait;
 
 pub mod api;
-pub(crate) mod auth_session;
+pub mod auth_session;
 pub(crate) mod cache;
 pub mod config;
 pub(crate) mod cross_source;
@@ -26,9 +26,12 @@ pub mod types;
 pub(crate) mod utils;
 pub(crate) mod weather_radio;
 
-pub use api::{Api, ApiError, ApiErrorCode, ApiResult, ProviderApi};
+pub use api::{Api, ApiError, ApiErrorCode, ApiResult, ProviderApi, QrLoginApi};
 pub use config::LibraryConfig;
 pub use qr_login::QrLoginKind;
+/// Host（如 Tauri 壳）注入/清除登录会话 cookie 的入口；持久化由 `Api::init` 已配置好。
+pub use auth_session::{clear_runtime_provider_cookie, get_provider_cookie, set_runtime_provider_cookie};
+pub use types::{ProviderId, SongUrlOptions, Track};
 /// 将结构化事件写入已配置的运行时日志，并可通过后台任务异步提交。
 pub use sidecar_log::{log_runtime, spawn_runtime_log};
 /// 解密 QQ 音乐或汽水音乐的音频二进制数据，返回解密后的内容及 MIME 类型。
