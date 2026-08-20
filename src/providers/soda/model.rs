@@ -315,7 +315,7 @@ impl SodaSongUrlResp {
 
         Some(SongUrlResult {
             url: format!(
-                "{}&playAuth={}",
+                "audio-proxy?url={}&key={}&provider=soda",
                 urlencoding::encode(play_url),
                 urlencoding::encode(&play_info.play_auth)
             ),

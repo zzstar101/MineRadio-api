@@ -739,14 +739,20 @@ impl QqSongUrlResp {
         if url.trim().is_empty() {
             return None;
         }
-        let mut url = format!(
-            "{}/{}",
-            cdn.trim_end_matches('/'),
-            url.trim_start_matches('/')
-        );
-        if !ekey.trim().is_empty() && en {
-            url = url + "&ekey=" + &ekey;
-        }
+        let url = if !ekey.trim().is_empty() && en {
+            format!(
+                "audio-proxy?url={}/{}&key={}&provider=qq",
+                urlencoding::encode(cdn.trim_end_matches('/')),
+                urlencoding::encode(url.trim_start_matches('/')),
+                urlencoding::encode(&ekey)
+            )
+        } else {
+            format!(
+                "audio-proxy?url={}/{}&provider=qq",
+                urlencoding::encode(cdn.trim_end_matches('/')),
+                urlencoding::encode(url.trim_start_matches('/')),
+            )
+        };
 
         Some(SongUrlResult {
             url: url,

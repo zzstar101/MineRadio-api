@@ -199,7 +199,10 @@ impl ProviderAdapter for KugouAdapter {
                 if let Ok(body) = response {
                     if let Some(url) = play_url(&body) {
                         return Ok(SongUrlResult {
-                            url: url,
+                            url: format!(
+                                "audio-proxy?url={}&provider=kugou",
+                                urlencoding::encode(&url)
+                            ),
                             provider: Some(ProviderId::Kugou),
                             ..Default::default()
                         });

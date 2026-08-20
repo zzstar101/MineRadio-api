@@ -268,7 +268,10 @@ impl ProviderAdapter for NeteaseAdapter {
                 .clone()
                 .unwrap_or_else(|| crate::types::VipLevel::None);
             let result = SongUrlResult {
-                url: url.map(str::to_owned).unwrap_or_default(),
+                url: format!(
+                    "audio-proxy?url={}&provider=netease",
+                    urlencoding::encode(url.unwrap_or_default())
+                ),
                 proxied: false,
                 provider: Some(ProviderId::Netease),
                 trial: Some(trial),
