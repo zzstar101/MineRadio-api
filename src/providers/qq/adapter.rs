@@ -8,6 +8,7 @@ use crate::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
+    sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
@@ -39,9 +40,9 @@ const QQ_ENCRYPTED_QUALITY_CANDIDATES: [QqQualityCandidate; 8] = [
     QqQualityCandidate::new("AIM0", ".mflac", "master"),
     QqQualityCandidate::new("RSM1", ".mflac", "hires"),
     QqQualityCandidate::new("F0M0", ".mflac", "flac"),
-    QqQualityCandidate::new("O8M0", ".mgg", "320k"),
+    QqQualityCandidate::new("O6M0", ".mgg", "320k"),
     QqQualityCandidate::new("TLM1", ".mnac", "nac"),
-    QqQualityCandidate::new("O6M0", ".mgg", "128k"),
+    QqQualityCandidate::new("O4M0", ".mgg", "128k"),
 ];
 
 #[derive(Clone, Copy)]
@@ -272,7 +273,12 @@ impl ProviderAdapter for QqAdapter {
                 *self.created_playlist_dirids.write().await = response.tid_to_dirid();
                 response.standardize()
             }
-            Err(_) => None,
+            Err(err) => {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "QQ 歌单列表获取失败, 回退仅展示收藏: {err}"
+                )));
+                None
+            }
         };
 
         let collected = self

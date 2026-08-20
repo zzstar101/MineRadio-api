@@ -12,6 +12,7 @@ use crate::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
+    sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
@@ -59,12 +60,16 @@ impl ProviderAdapter for SodaAdapter {
             .filter(|tracks| !tracks.is_empty());
         let mut t = match primary {
             Some(tracks) => tracks,
-            None => self
-                .client
-                .search_track_fallback(keyword, offset, limit)
-                .await?
-                .standardize()
-                .ok_or_else(|| no_result("search_track"))?,
+            None => {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "Soda 主搜索无返回, 回退 search_track_fallback(keyword={keyword})"
+                )));
+                self.client
+                    .search_track_fallback(keyword, offset, limit)
+                    .await?
+                    .standardize()
+                    .ok_or_else(|| no_result("search_track"))?
+            }
         };
         t.truncate(limit as usize);
         Ok(t)

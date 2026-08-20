@@ -16,6 +16,7 @@ use crate::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
+    sidecar_log,
     types::{
         AlbumSummary, PlayableState, PlaylistSummary, ProviderId, RecommendationPage,
         SongUrlOptions, SongUrlResult, Track,
@@ -270,7 +271,11 @@ impl CrossSourceResolver {
                     Ok(result) => return Ok(result),
                     Err(err) => {
                         if first_error.is_none() {
+                            let msg = err.to_string();
                             first_error = Some(err);
+                            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                                "CrossSource 主源取URL失败(provider={provider_id}): {msg}"
+                            )));
                         }
                     }
                 }
@@ -285,7 +290,11 @@ impl CrossSourceResolver {
                             Ok(result) => return Ok(result),
                             Err(err) => {
                                 if first_error.is_none() {
+                                    let msg = err.to_string();
                                     first_error = Some(err);
+                                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                                        "CrossSource 回退候选取URL失败(provider={provider_id}): {msg}"
+                                    )));
                                 }
                             }
                         }
@@ -293,7 +302,11 @@ impl CrossSourceResolver {
                 }
                 Err(err) => {
                     if first_error.is_none() {
+                        let msg = err.to_string();
                         first_error = Some(err);
+                        sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                            "CrossSource 回退搜索失败(provider={provider_id}): {msg}"
+                        )));
                     }
                 }
             }
@@ -321,17 +334,18 @@ impl CrossSourceResolver {
                 .providers
                 .iter()
                 .enumerate()
-                .map(|(provider_index, (_, adapter))| {
+                .map(|(provider_index, (provider_id, adapter))| {
+                    let provider_id = provider_id.clone();
                     let keyword = keyword.to_owned();
                     async move {
                         let result = adapter.search_track(&keyword, 0, provider_limit).await;
-                        (provider_index, result)
+                        (provider_index, provider_id, result)
                     }
                 });
 
         let search_results = join_all(searches).await;
 
-        for (provider_index, result) in search_results {
+        for (provider_index, provider_id, result) in search_results {
             match result {
                 Ok(tracks) => {
                     ranked.extend(tracks.into_iter().enumerate().map(|(source_index, track)| {
@@ -343,7 +357,12 @@ impl CrossSourceResolver {
                         }
                     }));
                 }
-                Err(_) => continue,
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "CrossSource 合并搜索失败(provider={provider_id}): {err}"
+                    )));
+                    continue;
+                }
             }
         }
 
@@ -394,14 +413,20 @@ impl CrossSourceResolver {
             ));
         }
         let provider_limit = limit.div_ceil(provider_count).max(1);
-        let searches = self.deps.providers.iter().map(|(_, adapter)| {
+        let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
+            let provider_id = provider_id.clone();
             let keyword = keyword.to_owned();
-            async move { adapter.search_album(&keyword, 0, provider_limit).await }
+            async move { (provider_id, adapter.search_album(&keyword, 0, provider_limit).await) }
         });
         let mut albums = Vec::new();
-        for result in join_all(searches).await {
-            if let Ok(items) = result {
-                albums.extend(items);
+        for (provider_id, result) in join_all(searches).await {
+            match result {
+                Ok(items) => albums.extend(items),
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "CrossSource 合并专辑搜索失败(provider={provider_id}): {err}"
+                    )));
+                }
             }
         }
 
@@ -443,14 +468,20 @@ impl CrossSourceResolver {
             ));
         }
         let provider_limit = limit.div_ceil(provider_count).max(1);
-        let searches = self.deps.providers.iter().map(|(_, adapter)| {
+        let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
+            let provider_id = provider_id.clone();
             let keyword = keyword.to_owned();
-            async move { adapter.search_playlist(&keyword, 0, provider_limit).await }
+            async move { (provider_id, adapter.search_playlist(&keyword, 0, provider_limit).await) }
         });
         let mut playlists = Vec::new();
-        for result in join_all(searches).await {
-            if let Ok(items) = result {
-                playlists.extend(items);
+        for (provider_id, result) in join_all(searches).await {
+            match result {
+                Ok(items) => playlists.extend(items),
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "CrossSource 合并歌单搜索失败(provider={provider_id}): {err}"
+                    )));
+                }
             }
         }
 

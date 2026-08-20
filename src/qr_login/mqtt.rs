@@ -19,6 +19,8 @@ use rumqttc::v5::mqttbytes::v5::{
 };
 use serde_json::Value;
 
+use crate::sidecar_log;
+
 const MQTT_HOST: &str = "mu.y.qq.com";
 const MQTT_PORT: u16 = 443;
 const MQTT_PATH: &str = "/ws/handshake";
@@ -118,6 +120,9 @@ impl MqttLoginSession {
                     let now = Instant::now();
                     if now >= deadline {
                         self.socket = None;
+                        sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                            "QQ 二维码 MQTT 轮询超时, 返回回退事件: {err}"
+                        )));
                         return Ok(self.fallback_event());
                     }
 

@@ -28,6 +28,7 @@ use crate::{
         },
     },
     qr_login::common::normalize_login_cookie,
+    sidecar_log,
 };
 
 const UA: &str = "Mozilla/5.0";
@@ -109,7 +110,11 @@ impl QqClient {
         }
 
         let uin = self.uin().await?;
-        let _ = self.login_status_with_cookie(&uin, &cookie).await;
+        if let Err(err) = self.login_status_with_cookie(&uin, &cookie).await {
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "QQ 刷新 euin 登录状态失败: {err}"
+            )));
+        }
         if let Some(euin) = self.euin.read().await.clone() {
             return Some(euin);
         }
@@ -298,23 +303,19 @@ impl QqClient {
                     "module": if encrypted { "music.vkey.GetEVkey" } else { "music.vkey.GetVkey" },
                     "method": if encrypted { "CgiGetEVkey" } else { "UrlGetVkey" },
                     "param": {
-                        "guid": x5(),
-                        "uin": uin,
-                        "downloadfrom": 1,
+                        "checklimit": 0,
                         "ctx": 1,
+                        "downloadfrom": if encrypted { 0 } else { 1 },
+                        "filename": [filenames],
+                        "guid": cookie_key(&cookie_map, "qqmusic_guid").unwrap_or_default(),
+                        "musicfile": [filenames],
+                        "nettype": "",
                         "referer": "y.qq.com",
                         "scene": 0,
-                        "songtype": [1],
                         "songmid": [song_mid],
-                        "filename": [filenames],
+                        "songtype": [1],
+                        "uin": uin,
                     },
-                },
-                "comm": {
-                    "uin": uin,
-                    "format": "json",
-                    "ct": 19,
-                    "cv": 0,
-                    "authst": auth
                 }
             }),
             None,

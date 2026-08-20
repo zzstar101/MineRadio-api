@@ -15,6 +15,7 @@ use crate::{
         error::{ProviderError, ProviderErrorCode},
         lyric::{LrcParser, MemchrParsers},
     },
+    sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
@@ -222,13 +223,18 @@ impl ProviderAdapter for NeteaseAdapter {
                 .await
             {
                 Ok(body) => body,
-                Err(_) => match self.client.song_url(&track.source_id, quality.br).await {
-                    Ok(body) => body,
-                    Err(err) => {
-                        last_error = Some(err);
-                        continue;
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "Netease song_url_v1 失败回退旧接口(level={}): {err}", quality.level
+                    )));
+                    match self.client.song_url(&track.source_id, quality.br).await {
+                        Ok(body) => body,
+                        Err(err) => {
+                            last_error = Some(err);
+                            continue;
+                        }
                     }
-                },
+                }
             };
             let datum = pick_song_url_datum(&body, track);
 
@@ -322,10 +328,22 @@ impl ProviderAdapter for NeteaseAdapter {
                 .await
             {
                 Ok(body) => body,
-                Err(_) => match self.client.song_url(&track.source_id, quality.br).await {
-                    Ok(body) => body,
-                    Err(_) => continue,
-                },
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "Netease track_qualities song_url_v1 失败回退旧接口(level={level}): {err}",
+                        level = quality.level
+                    )));
+                    match self.client.song_url(&track.source_id, quality.br).await {
+                        Ok(body) => body,
+                        Err(err) => {
+                            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                                "Netease track_qualities 旧接口也失败(level={level}): {err}",
+                                level = quality.level
+                            )));
+                            continue;
+                        }
+                    }
+                }
             };
             if body.is_null() {
                 continue;
@@ -392,7 +410,12 @@ impl ProviderAdapter for NeteaseAdapter {
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let resp = match self.client.lyric_new(&track.source_id).await {
             Ok(resp) => resp,
-            Err(_) => self.client.lyric(&track.source_id).await?,
+            Err(err) => {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "Netease lyric_new 失败回退旧接口: {err}"
+                )));
+                self.client.lyric(&track.source_id).await?
+            }
         };
 
         let lrc_text = resp.lrc.lyric.unwrap_or_default();
@@ -617,7 +640,12 @@ impl ProviderAdapter for NeteaseAdapter {
                     .collect(),
                 _ => Vec::new(),
             },
-            Err(_) => Vec::new(),
+            Err(err) => {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "Netease 点赞状态检查失败, 回退为空: {err}"
+                )));
+                Vec::new()
+            }
         };
 
         if !liked_ids.is_empty() {

@@ -4,7 +4,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use crate::{auth_session, providers::netease::client::NeteaseClient, types::ProviderId};
+use crate::{
+    auth_session,
+    providers::netease::client::NeteaseClient,
+    sidecar_log,
+    types::ProviderId,
+};
 
 pub type NeteaseResponse = Value;
 
@@ -198,7 +203,12 @@ impl PodcastService {
         for key in keys {
             let collection = match self.fetch_my_podcast_items(key, &info, 12, 0).await {
                 Ok(data) => podcast_collection_meta(key, &data.items),
-                Err(_) => podcast_collection_meta(key, &[]),
+                Err(err) => {
+                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                        "Podcast 收藏列表获取失败(key={key}), 回退为空: {err}"
+                    )));
+                    podcast_collection_meta(key, &[])
+                }
             };
             collections.push(collection);
         }

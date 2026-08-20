@@ -10,7 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::types::ProviderId;
+use crate::{sidecar_log, types::ProviderId};
 
 pub(crate) const _TTL_10_MINUTES: Duration = Duration::from_secs(10 * 60);
 pub(crate) const _TTL_1_HOUR: Duration = Duration::from_secs(60 * 60);
@@ -135,6 +135,10 @@ fn write_cache(file_path: &PathBuf, contents: &CacheContents) {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(contents) {
-        let _ = fs::write(file_path, json);
+        if let Err(err) = fs::write(file_path, json) {
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "Cache 写入失败: {err}"
+            )));
+        }
     }
 }

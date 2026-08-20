@@ -8,7 +8,7 @@ use futures::future::{BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::types::Track;
+use crate::{sidecar_log, types::Track};
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const OPEN_METEO_FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
@@ -517,6 +517,9 @@ fn fallback_weather_for_radio(
     err: anyhow::Error,
     now: i64,
 ) -> WeatherSnapshot {
+    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+        "WeatherRadio 天气获取失败, 使用回退天气: {err}"
+    )));
     let mut location = default_location(true);
     location.name = first_param(params).unwrap_or(location.name);
     location.timezone = params.timezone.clone().unwrap_or(location.timezone);

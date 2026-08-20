@@ -14,6 +14,7 @@ use std::{
 
 use crate::{
     auth_session::set_runtime_provider_cookie,
+    sidecar_log,
     qr_login::{QrLogin, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::{
@@ -221,13 +222,21 @@ impl KugouQrLoginApi for KugouQrHttpApi {
         match primary {
             Ok(qr) => Ok((qr, Some(device_from_params(&primary_params)))),
             Err(primary_error) => {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "Kugou 二维码主请求失败, 尝试回退参数: {primary_error}"
+                )));
                 let fallback_params =
                     build_qr_params(current_time_seconds(), "20489", &mid, &dfid, "-");
                 match self.request_qr(fallback_params.clone()).await {
                     Ok(qr) => Ok((qr, Some(device_from_params(&fallback_params)))),
-                    Err(fallback_error) => Err(anyhow::anyhow!(
-                        "KUGOU_QR_PRIMARY_FAILED: {primary_error}; KUGOU_QR_FALLBACK_FAILED: {fallback_error}"
-                    )),
+                    Err(fallback_error) => {
+                        sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                            "酷狗 二维码回退请求也失败: {fallback_error}"
+                        )));
+                        Err(anyhow::anyhow!(
+                            "KUGOU_QR_PRIMARY_FAILED: {primary_error}; KUGOU_QR_FALLBACK_FAILED: {fallback_error}"
+                        ))
+                    }
                 }
             }
         }

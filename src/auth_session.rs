@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::{cache, types::ProviderId};
+use crate::{cache, sidecar_log, types::ProviderId};
 
 static AUTH_SESSION: OnceLock<AuthSession> = OnceLock::new();
 
@@ -150,7 +150,11 @@ impl AuthSession {
             providers: Some(cookies),
         };
         if let Ok(json) = serde_json::to_string_pretty(&body) {
-            let _ = fs::write(file, json);
+            if let Err(err) = fs::write(file, json) {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "auth session 写盘失败: {err}"
+                )));
+            }
         }
     }
 

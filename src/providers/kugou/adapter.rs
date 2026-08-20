@@ -14,6 +14,7 @@ use crate::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
     },
+    sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
@@ -210,6 +211,9 @@ impl ProviderAdapter for KugouAdapter {
                 }
             }
         }
+        sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+            "Kugou 所有取URL端点均未返回可播放地址(requested={requested})"
+        )));
         Err(ProviderError {
             code: ProviderErrorCode::NoUrl,
             provider: ProviderId::Kugou,
