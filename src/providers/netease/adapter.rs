@@ -97,7 +97,7 @@ const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
 #[derive(Clone, Default)]
 pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
-    album_cache: Arc<Mutex<HashMap<String, (Vec<Track>, Instant)>>>,
+    album_cache: Arc<Mutex<HashMap<String, (AlbumDetail, Instant)>>>,
     star_cache: Arc<Mutex<HashMap<String, Vec<Track>>>>,
 }
 
@@ -528,57 +528,24 @@ impl ProviderAdapter for NeteaseAdapter {
     async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
         {
             let cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((tracks, expires_at)) = cache.get(id) {
+            if let Some((detail, expires_at)) = cache.get(id) {
                 if *expires_at > Instant::now() {
-                    let start = offset as usize;
-                    let end = (start + limit as usize).min(tracks.len());
-                    let sliced = if start < tracks.len() {
-                        tracks[start..end].to_vec()
-                    } else {
-                        vec![]
-                    };
-                    let has_more = (offset + limit) < tracks.len() as u32;
-                    return Ok(AlbumDetail {
-                        provider: ProviderId::Netease,
-                        id: id.to_owned(),
-                        name: String::new(),
-                        artists: vec![],
-                        cover_url: String::new(),
-                        track_count: Some(tracks.len() as u32),
-                        track_ids: sliced.iter().map(|t| t.source_id.clone()).collect(),
-                        collected: None,
-                        tracks: sliced,
-                        has_more: Some(has_more),
-                    });
+                    return Ok(slice_album_detail(detail, offset, limit));
                 }
             }
         }
 
-        let mut detail = self.client.album_detail(id).await?.standardize();
+        let detail = self.client.album_detail(id).await?.standardize();
 
         {
             let mut cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
             cache.insert(
                 id.to_owned(),
-                (
-                    detail.tracks.clone(),
-                    Instant::now() + Duration::from_secs(300),
-                ),
+                (detail.clone(), Instant::now() + Duration::from_secs(300)),
             );
         }
 
-        let total = detail.tracks.len() as u32;
-        let start = offset as usize;
-        let end = (start + limit as usize).min(detail.tracks.len());
-        if start < detail.tracks.len() {
-            detail.tracks = detail.tracks[start..end].to_vec();
-            detail.track_ids = detail.track_ids[start..end].to_vec();
-        } else {
-            detail.tracks = vec![];
-            detail.track_ids = vec![];
-        }
-        detail.has_more = Some((offset + limit) < total);
-        Ok(detail)
+        Ok(slice_album_detail(&detail, offset, limit))
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -811,6 +778,38 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 }
 
+fn slice_album_detail(detail: &AlbumDetail, offset: u32, limit: u32) -> AlbumDetail {
+    let total = detail.tracks.len() as u32;
+    let start = offset as usize;
+    if start >= detail.tracks.len() {
+        return AlbumDetail {
+            provider: detail.provider,
+            id: detail.id.clone(),
+            name: detail.name.clone(),
+            artists: detail.artists.clone(),
+            cover_url: detail.cover_url.clone(),
+            track_count: detail.track_count,
+            track_ids: vec![],
+            collected: detail.collected,
+            tracks: vec![],
+            has_more: Some(offset < total),
+        };
+    }
+    let end = (start + limit as usize).min(detail.tracks.len());
+    AlbumDetail {
+        provider: detail.provider,
+        id: detail.id.clone(),
+        name: detail.name.clone(),
+        artists: detail.artists.clone(),
+        cover_url: detail.cover_url.clone(),
+        track_count: detail.track_count,
+        track_ids: detail.track_ids[start..end].to_vec(),
+        collected: detail.collected,
+        tracks: detail.tracks[start..end].to_vec(),
+        has_more: Some((offset + limit) < total),
+    }
+}
+
 fn pick_song_url_datum<'a>(body: &'a Value, track: &Track) -> Option<&'a Value> {
     let items = body.get("data")?.as_array()?;
     items
@@ -965,9 +964,9 @@ fn unavailable(message: String) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use crate::types::Track;
+    use crate::types::{AlbumDetail, ProviderId, Track};
 
-    use super::{pick_song_url_datum, response_code};
+    use super::{pick_song_url_datum, response_code, slice_album_detail};
 
     #[test]
     fn song_url_datum_prefers_the_requested_track_id() {
@@ -990,5 +989,53 @@ mod tests {
     fn response_code_defaults_only_when_the_code_field_is_missing_or_non_numeric() {
         assert_eq!(response_code(&json!({ "code": 201 })), 201);
         assert_eq!(response_code(&json!({ "code": "201" })), 200);
+    }
+
+    #[test]
+    fn slice_album_detail_preserves_metadata_and_cuts_tracks() {
+        let detail = AlbumDetail {
+            provider: ProviderId::Netease,
+            id: "1".to_owned(),
+            name: "专辑名".to_owned(),
+            artists: vec!["歌手".to_owned()],
+            cover_url: "https://example.com/c.jpg".to_owned(),
+            track_count: Some(3),
+            track_ids: vec!["1".to_owned(), "2".to_owned(), "3".to_owned()],
+            collected: None,
+            tracks: vec![
+                Track {
+                    source_id: "1".to_owned(),
+                    title: "歌1".to_owned(),
+                    ..Default::default()
+                },
+                Track {
+                    source_id: "2".to_owned(),
+                    title: "歌2".to_owned(),
+                    ..Default::default()
+                },
+                Track {
+                    source_id: "3".to_owned(),
+                    title: "歌3".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            has_more: None,
+        };
+
+        let sliced = slice_album_detail(&detail, 1, 1);
+        assert_eq!(sliced.name, "专辑名");
+        assert_eq!(sliced.artists, vec!["歌手"]);
+        assert_eq!(sliced.cover_url, "https://example.com/c.jpg");
+        assert_eq!(sliced.track_count, Some(3));
+        assert_eq!(sliced.track_ids, vec!["2"]);
+        assert_eq!(sliced.tracks.len(), 1);
+        assert_eq!(sliced.tracks[0].title, "歌2");
+        assert_eq!(sliced.has_more, Some(true));
+
+        let beyond = slice_album_detail(&detail, 5, 2);
+        assert!(beyond.tracks.is_empty());
+        assert!(beyond.track_ids.is_empty());
+        assert_eq!(beyond.name, "专辑名");
+        assert_eq!(beyond.has_more, Some(false));
     }
 }
