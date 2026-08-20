@@ -9,37 +9,54 @@ fn main() {
     deploy_csigner_resources();
 }
 
-/// 按当前打包目标平台从 `resources/<target>/` 筛选 csigner 动态库，复制到**业务方输出目录**
-/// （业务方最终产物所在，即 `target/<profile>/`），统一命名；只要找到动态库就无条件附带
-/// 库文件统一为 `csigner.dll` / `libcsigner.so` / `libcsigner.dylib`。
 fn deploy_csigner_resources() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+
     let target = env::var("TARGET").expect("TARGET");
-    println!("cargo:target={}", target);
-    // 目标平台 -> 源动态库扩展名 / 统一目标名
-    let (ext, dest_name) = if target.contains("windows") {
-        ("dll", "csigner.dll")
-    } else if target.contains("linux") {
-        ("so", "libcsigner.so")
-    } else if target.contains("apple") {
-        ("dylib", "libcsigner.dylib")
+
+    println!("cargo:warning=csigner: 目标平台 {target}");
+
+    //mac
+    let arch = if target.starts_with("x86_64-") {
+        "x86_64"
+    } else if target.starts_with("i686-") {
+        "x86"
+    } else if target.starts_with("aarch64-") {
+        "arm64"
     } else {
+        println!("cargo:warning=csigner: 不支持的架构 {target}");
         return;
     };
+
+    //                     x86        x86_64        arm64
+    //Windows             .dll/.bin   .dll/.bin     .dll
+    //Linux               .so/.bin    .so/.bin      .so
+    //macOS               .dylib      .dylib/.bin   .dylib/.bin
+    //bin是附加签名包, 动态链接库包含2个独立签名函数 以及附加包调用签名
+    
+    let (ext, bin) = if target.contains("windows") {
+        ("dll", "wine")
+    } else if target.contains("linux") {
+        ("so", "wine")
+    } else if target.contains("apple") {
+        ("dylib", "macos")
+    } else {
+        println!("cargo:warning=csigner: 不支持的操作系统 {target}");
+        return;
+    };
+
+    let filename = format!("{arch}.{ext}");
+    let bin_filename = format!("{bin}-{arch}.bin");
 
     let resources_dir = manifest_dir.join("resources");
-    let platform_dir = resources_dir.join(&target);
-    let Some(source) = find_platform_dll(&platform_dir, ext) else {
-        println!(
-            "cargo:warning=csigner: 未找到目标平台 {target} 的动态库（{}），跳过复制",
-            platform_dir.display()
-        );
-        return;
-    };
+    let source = resources_dir.join(&filename);
 
-    // 业务方输出目录：`CARGO_TARGET_DIR` 不会传给依赖的 build.rs（实测为未设置），
-    // 因此用 `OUT_DIR` 推导。`OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out`，
-    // 向上 3 级即 `<target>/<profile>`，正是业务方最终产物所在目录。
+    if !source.is_file() {
+        println!("cargo:warning=csigner: 未找到动态库 {}", source.display());
+        return;
+    }
+
+    // 业务方输出目录
     let out_dir = env::var("OUT_DIR")
         .ok()
         .and_then(|out| PathBuf::from(out).ancestors().nth(3).map(Path::to_path_buf))
@@ -47,42 +64,39 @@ fn deploy_csigner_resources() {
             let target_dir = env::var_os("CARGO_TARGET_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| manifest_dir.join("target"));
+
             let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_owned());
+
             target_dir.join(profile)
         });
+
     fs::create_dir_all(&out_dir).expect("create output dir");
 
-    fs::copy(&source, out_dir.join(&dest_name)).expect("copy csigner library");
+    fs::copy(&source, out_dir.join("csigner.bin")).expect("copy csigner library");
+
     println!("cargo:rerun-if-changed={}", source.display());
 
-    // sign.bin：只要找到对应目标平台的动态库就无条件复制
-    let sign_bin = resources_dir.join("sign.bin");
+    // sign.bin
+    let sign_bin = resources_dir.join(bin_filename);
+
+    if !sign_bin.is_file() {
+        println!(
+            "cargo:warning=csigner: 未找到附加bundle库 {}",
+            sign_bin.display()
+        );
+    }
+
     if sign_bin.is_file() {
         fs::copy(&sign_bin, out_dir.join("sign.bin")).expect("copy sign.bin");
+
         println!("cargo:rerun-if-changed={}", sign_bin.display());
     }
 
-    // 告知运行时库文件名（编译期常量，Rust 侧用 option_env! 读取）
-    println!("cargo:rustc-env=CSIGNER_LIB_FILENAME={dest_name}");
     println!(
-        "cargo:warning=csigner: 已部署 {dest_name} -> {}",
+        "cargo:warning=csigner: 已部署 {} -> {}",
+        source.display(),
         out_dir.display()
     );
-}
-
-/// 在平台目录里找第一个扩展名匹配的动态库
-/// （mingw 产物可能带 `lib` 前缀如 `libcsigner.dll`，MSVC 直接叫 `csigner.dll`）。
-fn find_platform_dll(dir: &Path, ext: &str) -> Option<PathBuf> {
-    let entries = fs::read_dir(dir).ok()?;
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(ext))
-        })
 }
 
 fn emit_librespot_env() {
