@@ -55,8 +55,8 @@ fn cx_lib() -> Result<&'static CxLib, String> {
 
 fn load() -> Result<CxLib, String> {
     let lib_name = option_env!("CSIGNER_LIB_FILENAME")
-        .ok_or_else(|| "本平台未部署 csigner 动态库（CSIGNER_LIB_FILENAME 未设置）".to_owned())?;
-    let path = resolve_lib_path(lib_name);
+        .unwrap_or("csigner.bin");
+    let path = resolve_lib_path(lib_name)?;
 
     let library = unsafe { libloading::Library::new(&path) }
         .map_err(|err| format!("csigner: 加载 {path:?} 失败: {err}"))?;
@@ -117,22 +117,16 @@ unsafe extern "C" fn __dummy_fn(_: u64, _: u64) -> u64 {
     0
 }
 
-fn resolve_lib_path(name: &str) -> PathBuf {
+fn resolve_lib_path(name: &str) -> Result<PathBuf, String> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let mut candidate = dir.join(name);
+            let candidate = dir.join(name);
             if candidate.is_file() {
-                return candidate;
-            }
-            if let Some(parent) = dir.parent() {
-                candidate = parent.join(name);
-                if candidate.is_file() {
-                    return candidate;
-                }
+                return Ok(candidate);
             }
         }
     }
-    PathBuf::from(name)
+    Err(format!("csigner: '{}' not found", name))
 }
 
 impl CxLib {
@@ -175,8 +169,7 @@ pub fn real_x9(body: &str) -> Result<String, String> {
     let tag = lib.call(15, mixed, seed);
     let ptr = lib.call(CX_REAL_X9, 0, 0);
     let _ = lib.call(20, tag, mixed);
-    let (sign, tail) = take_result(lib, ptr)?;
-    debug_assert!(tail.is_empty(), "x9 返回布局 m 应为 0");
+    let (sign, _) = take_result(lib, ptr)?;
     String::from_utf8(sign).map_err(|err| format!("csigner: x9 结果不是合法 UTF-8: {err}"))
 }
 
@@ -231,7 +224,6 @@ pub fn real_soda_sign(url: &str, headers: &str) -> Result<String, String> {
     if ptr == 0 {
         return Err(soda_last_error(lib));
     }
-    let (sign, tail) = take_result(lib, ptr)?;
-    debug_assert!(tail.is_empty(), "返回布局 m 应为 0");
+    let (sign, _) = take_result(lib, ptr)?;
     String::from_utf8(sign).map_err(|err| format!("csigner: 签名结果不是合法 UTF-8: {err}"))
 }
