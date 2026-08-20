@@ -292,19 +292,12 @@ pub(super) struct SodaSongUrlResp {
 impl SodaSongUrlResp {
     pub fn standardize(self, opt: SongUrlOptions) -> Option<SongUrlResult> {
         let target = opt.quality.unwrap_or(String::new());
-        let a = match target.as_str() {
-            "jymaster" => "spatial",
-            "hires" => "hi_res",
-            "lossless" => "highest",
-            "exhigh" => "higher",
-            "standard" | _ => "medium",
-        };
 
         let list = self.result.data;
         let play_info = list
             .play_info_list
             .iter()
-            .find(|item| item.quality == a)
+            .find(|item| item.quality == target.as_str())
             .or_else(|| list.play_info_list.first())?;
         let play_url = (!play_info.main_play_url.is_empty())
             .then_some(play_info.main_play_url.as_str())
@@ -369,11 +362,15 @@ impl SodaTrackV2Resp {
         )
     }
     pub fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
+        let track_id = self.track.id.clone();
+        let qualities = self.track.standardize_quality()?;
         Some(TrackQualityAvailability {
             provider: ProviderId::Soda,
-            track_id: self.track.id.clone(),
-            default_quality: Some("standard".to_string()),
-            qualities: self.track.standardize_quality()?,
+            track_id,
+            default_quality: qualities
+                .first()
+                .map(|item| item.request_quality.to_owned()),
+            qualities,
         })
     }
     pub fn get_songurl(self) -> String {
@@ -510,20 +507,20 @@ impl SodaTrack {
             .into_iter()
             .filter_map(|b| {
                 let raw_quality = b.quality;
-                let (level, label) = match raw_quality.as_str() {
-                    "spatial" => ("jymaster", "录音室音质"),
-                    "hi_res" => ("hires", "超清全景声"),
-                    "highest" => ("lossless", "无损音质"),
-                    "higher" => ("exhigh", "极高音质"),
-                    "medium" => ("standard", "标准音质"),
+                let label = match raw_quality.as_str() {
+                    "spatial" => "录音室音质",
+                    "hi_res" => "超清全景声",
+                    "highest" => "无损音质",
+                    "higher" => "极高音质",
+                    "medium" => "标准音质",
                     _ => return None,
-                };
-                let (level, label) = (level.to_string(), label.to_string());
+                }
+                .to_string();
                 let br = b.br;
                 let size = b.size;
                 Some(TrackQualityOption {
                     provider: ProviderId::Soda,
-                    id: level.to_owned(),
+                    id: raw_quality.to_owned(),
                     label,
                     detail: Some(
                         if self.label_info.only_vip_playable.unwrap_or(false) {
@@ -533,8 +530,8 @@ impl SodaTrack {
                         }
                         .to_owned(),
                     ),
-                    request_quality: level.to_owned(),
-                    level: Some(level.to_owned()),
+                    request_quality: raw_quality.to_owned(),
+                    level: Some(raw_quality.to_owned()),
                     r#type: Some(raw_quality),
                     br: Some(br),
                     size: Some(size),
