@@ -1001,7 +1001,7 @@ struct Album {
 
 fn get_playable(fee: u8) -> PlayableState {
     match fee {
-        0 => PlayableState::CopyrightUnavailable,
+        0 => PlayableState::Playable,
         1 => PlayableState::VipRequired,
         4 => PlayableState::PaidRequired,
         8 => PlayableState::TrialOnly,
