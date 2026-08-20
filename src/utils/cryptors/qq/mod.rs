@@ -16,6 +16,8 @@ pub use audio::{
 };
 pub use lyric::{decrypt_qrc, decrypt_qrc_file};
 
+use crate::sidecar_log;
+
 const K0: &[u8] = b"ABCDEF1234567890";
 const K1: u64 = 2_147_483_647;
 const K2: u64 = 5_381;
@@ -70,7 +72,9 @@ pub fn x4(a: &str, d: u64) -> (String, String) {
     match crate::utils::cryptors::csigner::real_x4(a, d) {
         Ok((j, m)) => (j, m),
         Err(err) => {
-            log::warn!("csigner x4 签名失败: {err}");
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "csigner x4 签名失败: {err}"
+            )));
             (String::new(), String::new())
         }
     }
@@ -78,7 +82,7 @@ pub fn x4(a: &str, d: u64) -> (String, String) {
 
 pub fn x4_fix_identity(uin: &str, guid: &str) {
     if let Err(err) = crate::utils::cryptors::csigner::set_x4_identity(uin, guid) {
-        log::warn!("csigner 固化 x4 uin/guid 失败: {err}");
+        sidecar_log::spawn_runtime_log(serde_json::json!(format!("csigner x4 签名失败: {err}")));
     }
 }
 
@@ -130,7 +134,9 @@ pub fn x9(a: &str) -> String {
     match crate::utils::cryptors::csigner::real_x9(a) {
         Ok(sign) => sign,
         Err(err) => {
-            log::warn!("csigner x9 签名失败: {err}");
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "csigner x9 签名失败: {err}"
+            )));
             String::new()
         }
     }

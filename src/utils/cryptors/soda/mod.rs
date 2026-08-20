@@ -3,14 +3,31 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
 pub mod audio;
+use crate::sidecar_log;
 pub use audio::decrypt_soda_audio;
 
 pub fn q9v(url: &str, headers: &mut HeaderMap) -> bool {
-    sign_with_body(url, &[], headers).is_ok()
+    match sign_with_body(url, &[], headers) {
+        Ok(_) => true,
+        Err(err) => {
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "csigner q9v 签名失败: {err}"
+            )));
+            false
+        }
+    }
 }
 
 pub fn q9v_with_body(url: &str, body: &[u8], headers: &mut HeaderMap) -> bool {
-    sign_with_body(url, body, headers).is_ok()
+    match sign_with_body(url, body, headers) {
+        Ok(_) => true,
+        Err(err) => {
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                "csigner q9v_with_body( 签名失败: {err}"
+            )));
+            false
+        }
+    }
 }
 
 fn sign_with_body(url: &str, body: &[u8], headers: &mut HeaderMap) -> Result<(), String> {

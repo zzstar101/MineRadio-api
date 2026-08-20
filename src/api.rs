@@ -58,7 +58,6 @@ pub(crate) struct ApiInner {
 
 impl ApiInner {
     fn new(config: LibraryConfig, logger: Arc<SidecarLogger>) -> Self {
-        let _ = crate::utils::cryptors::csigner::init();
         let shared_http_client = Client::new();
         let netease_client = Arc::new(NeteaseClient::with_client(shared_http_client.clone()));
         let qq_qr_client = Client::builder()
@@ -181,6 +180,15 @@ impl Api {
             .map_err(|message| ApiError::new(ApiErrorCode::Internal, message))?;
         let logger = sidecar_log::configure_runtime_logger(Some(&data_dir.join("logs")))
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
+
+        match crate::utils::cryptors::csigner::init() {
+            Err(e) => {
+                logger
+                    .log(serde_json::json!(format!("csigner init error: {e}")))
+                    .await
+            }
+            Ok(_) => (),
+        }
 
         let inner = Arc::new(ApiInner::new(config, logger));
         inner
