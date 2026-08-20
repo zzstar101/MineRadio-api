@@ -33,7 +33,7 @@ fn deploy_csigner_resources() {
     //Linux               .so/.bin    .so/.bin      .so
     //macOS               .dylib      .dylib/.bin   .dylib/.bin
     //bin是附加签名包, 动态链接库包含2个独立签名函数 以及附加包调用签名
-    
+
     let (ext, bin) = if target.contains("windows") {
         ("dll", "wine")
     } else if target.contains("linux") {

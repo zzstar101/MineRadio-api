@@ -54,8 +54,7 @@ fn cx_lib() -> Result<&'static CxLib, String> {
 }
 
 fn load() -> Result<CxLib, String> {
-    let lib_name = option_env!("CSIGNER_LIB_FILENAME")
-        .unwrap_or("csigner.bin");
+    let lib_name = option_env!("CSIGNER_LIB_FILENAME").unwrap_or("csigner.bin");
     let path = resolve_lib_path(lib_name)?;
 
     let library = unsafe { libloading::Library::new(&path) }
