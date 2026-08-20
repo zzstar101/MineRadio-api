@@ -57,7 +57,7 @@ src/
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
+| 注册到 ProviderRegistry | [x] | [x] | [api.rs](../src/api.rs) 的 `ApiInner::new` 组装 provider Map，[cross_source.rs](../src/cross_source.rs) 的 `PROVIDER_IDS` 维护清单 |
 | 二维码登录 | [x] | [x] | [netease.rs](../src/qr_login/netease.rs) 的 `create_key`、`create_image`、`check` |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/netease/adapter.rs) 的 `song_url` |
@@ -78,7 +78,7 @@ src/
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
+| 注册到 ProviderRegistry | [x] | [x] | [api.rs](../src/api.rs) 的 `ApiInner::new` 组装 provider Map，[cross_source.rs](../src/cross_source.rs) 的 `PROVIDER_IDS` 维护清单 |
 | 二维码登录 | [x] | [x] | [qq.rs](../src/qr_login/qq.rs)、[qq_music.rs](../src/qr_login/qq_music.rs)、[wechat.rs](../src/qr_login/wechat.rs) |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/qq/adapter.rs) 的 `song_url` |
@@ -99,7 +99,7 @@ src/
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 `build_capability_matrix` |
+| 注册到 ProviderRegistry | [x] | [x] | [api.rs](../src/api.rs) 的 `ApiInner::new` 组装 provider Map，[cross_source.rs](../src/cross_source.rs) 的 `PROVIDER_IDS` 维护清单 |
 | 二维码登录 | [x] | [x] | [soda.rs](../src/qr_login/soda.rs) 的 `create_image`、`check` |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/soda/adapter.rs) 的 `song_url` |
@@ -120,7 +120,7 @@ src/
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [x] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `KugouAdapter::shared` |
+| 注册到 ProviderRegistry | [x] | [x] | [api.rs](../src/api.rs) 的 `ApiInner::new` 组装 provider Map，[cross_source.rs](../src/cross_source.rs) 的 `PROVIDER_IDS` 维护清单 |
 | 二维码登录 | [x] | [x] | [kugou.rs](../src/qr_login/kugou.rs) |
 | 搜索 | [x] | [x] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `search`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `search` |
 | 播放地址 | [x] | [x] | [adapter.rs](../src/providers/kugou/adapter.rs) 的 `song_url`，调用 [client.rs](../src/providers/kugou/client.rs) 的 `song_url` |
@@ -142,7 +142,7 @@ src/
 
 | 通用能力 | 代码实现 | 人工测试并校验 | 代码举证 |
 | --- | :---: | :---: | --- |
-| 注册到 ProviderRegistry | [x] | [ ] | [registry.rs](../src/providers/registry.rs) 的 `PROVIDER_IDS` 与 [server.rs](../src/server.rs) 的 `SpotifyAdapter::shared` |
+| 注册到 ProviderRegistry | [x] | [ ] | [api.rs](../src/api.rs) 的 `ApiInner::new` 组装 provider Map，[cross_source.rs](../src/cross_source.rs) 的 `PROVIDER_IDS` 维护清单 |
 | 二维码登录 | [ ] | [ ] | 未建立 Spotify QR 登录服务 |
 | 搜索 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `search_track` |
 | 播放地址 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `song_url`，通过 librespot 音频代理返回播放地址 |
@@ -159,20 +159,6 @@ src/
 | 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_list` |
 | 专辑详情 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_detail` |
 
-## 路由共用举证
+## 能力对外暴露方式
 
-已注册 provider 的通用 HTTP 路由定义在 [router.rs](../src/router.rs)：
-
-- `/providers/{pid}/login-qr-key`
-- `/providers/{pid}/login-qr-create`
-- `/providers/{pid}/login-qr-check`
-- `/providers/{pid}/session-cookie` 与 `/providers/{pid}/session-cookie/clear`
-- `/providers/{pid}/search`
-- `/providers/{pid}/song-url`
-- `/providers/{pid}/qualities`
-- `/providers/{pid}/lyric`
-- `/providers/{pid}/playlists` 与 `/providers/{pid}/playlists/{id}`
-- `/providers/{pid}/login-status`、`/providers/{pid}/logout`
-- `/providers/{pid}/like`、`/providers/{pid}/like-check`
-- `/providers/{pid}/playlists/add-song`
-- `/providers/{pid}/playlists/del-song`
+HTTP sidecar 与 `router.rs` 已随静态库迁移移除；上述通用能力现在通过公开的 `Api`/`ProviderApi` 方法暴露（见 [lib.rs](../src/lib.rs) 的 re-export 与 [api.rs](../src/api.rs)）。旧 HTTP 路由参考见 [PROVIDERS_API.md](PROVIDERS_API.md)（已标记为历史）。

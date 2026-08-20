@@ -8,8 +8,11 @@ provider, parser, or service implementations.
 
 The migration has two phases:
 
-1. Build a complete public `Api` wrapper around the existing code.
-2. Remove the HTTP server only after every required capability has a wrapper.
+1. Build a complete public `Api` wrapper around the existing code. (done)
+2. Remove the HTTP server only after every required capability has a wrapper. (done)
+
+The sidecar HTTP server (`router.rs`, `server.rs`, `http/`) has been removed; remaining
+follow-up items are listed in "Remaining Work" below.
 
 Do not merge or reorganize the existing provider, parser, service, or utility
 files during phase 1. Make a local implementation change only when it is
@@ -31,9 +34,6 @@ src/
   providers/                pub(crate)
   qr_login/                 pub(crate)
   utils/                    pub(crate)
-  router.rs                 retained during phase 1
-  server.rs                 retained during phase 1
-  http/                     retained during phase 1
 ```
 
 `providers`, `qr_login`, and `utils` must not be public. Consumers
@@ -69,7 +69,6 @@ providers/
   soda/     adapter.rs, client.rs
   kugou/    adapter.rs, client.rs, model.rs, map.rs
   spotify/  adapter.rs, client.rs, map.rs
-  registry.rs
   error.rs
 ```
 
@@ -302,20 +301,31 @@ non-HTTP decryption module. No `Vec<u8>` proxy replacement is introduced.
 
 ## Migration Order
 
-1. Finalize `LibraryConfig`, `Api`, public errors, and public domain
-   re-exports.
-2. Keep the existing HTTP server running while adding wrappers one capability
-   at a time. Reuse existing adapters, parsers, and services.
-3. Refactor only the dependencies that block wrapping: global session state,
-   router-only diagnostics, HTTP request/response types, or route-shaped input
-   parsing.
-4. Add the provider-specific QR login wrappers under the provider namespace.
-5. Once every required capability is available through `Api`, make the router
-   call the same wrappers or remove it with the sidecar.
-6. Remove `router`, `server`, `http`, and proxy endpoints only after the static
-   library replacement is complete.
-7. Perform optional provider/service file consolidation only after migration;
-   it is not part of this plan.
+All steps are complete:
+
+1. Finalized `LibraryConfig`, `Api`, public errors, and public domain
+   re-exports. (done)
+2. Added wrappers over the existing adapters, parsers, and services while the
+   HTTP server ran. (done)
+3. Refactored the dependencies that blocked wrapping. (done)
+4. Added the provider-specific QR login wrappers under `QrLoginKind`. (done)
+5. Removed the router with the sidecar once every required capability was
+   available through `Api`. (done)
+6. Removed `router`, `server`, `http`, and proxy endpoints. (done)
+7. Optional provider/service file consolidation is deferred; it is not part of
+   this plan.
+
+## Remaining Work
+
+- Make session/cache/logger state instance-scoped. `auth_session`
+  (`OnceLock<AuthSession>`), `cache` (`OnceLock<Cache>`), and `sidecar_log`
+  (`OnceLock<Arc<SidecarLogger>>`) are still process-global singletons
+  configured once by `Api::init`. The migration targets instance-scoped state
+  owned by `Api` so that multiple `Api` instances with different data
+  directories can coexist without conflicting later initialization.
+- The pure decryption routines are exposed through `utils::cryptors`
+  (`decrypt_qq_audio`, `decrypt_soda_audio`, `AudioDecryptResult`); the HTTP
+  streaming proxy itself was intentionally not replaced.
 
 ## Out of Scope During Phase 1
 
