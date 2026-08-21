@@ -25,7 +25,7 @@ const SEARCH_URL: &str = "https://api.qishui.com/luna/pc/search/track?aid=386088
 const SEARCH_FALLBACK_URL: &str = "https://api-vehicle.volcengine.com/v2/search/type";
 const SEARCH_ALBUM_URL: &str = "https://api.qishui.com/luna/pc/search/album?aid=386088";
 const SEARCH_PLAYLIST_URL: &str = "https://api.qishui.com/luna/pc/search/playlist?aid=386088";
-const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?aid=386088&app_name=luna_pc&version_name=3.6.0&version_code=30060000&device_id=516099631228988&iid=27960026095955";
+const TRACK_URL: &str = "https://api.qishui.com/luna/pc/track_v2?aid=386088&app_name=luna_pc&region=cn&geo_region=cn&os_region=cn&sim_region=&device_id=3753066532709850&cdid=&iid=357778617272924&version_name=3.7.0&version_code=30070000&channel=official&build_mode=master&network_carrier=&ac=wifi&tz_name=Asia%2FShanghai&resolution=&device_platform=windows&device_type=Windows&os_version=Windows+11+Pro&fp=3753066532709850";
 const PLAYLIST_LIST_URL: &str = "https://api.qishui.com/luna/pc/me/playlist?aid=386088";
 const PLAYLIST_DETAIL_URL: &str = "https://api.qishui.com/luna/pc/playlist/detail?aid=386088";
 const ME_URL: &str = "https://api.qishui.com/luna/pc/me?aid=386088&version_code=30050100";
@@ -149,8 +149,8 @@ impl SodaClient {
             json!({
                 "track_id": track_id,
                 "media_type": "track",
-                "queue_type": "daily_mix",
-                "scene_name": "track_reco"
+                "queue_type": "favorite_track_playlist",
+                "scene_name": "library"
             }),
             "track_detail",
         )
