@@ -423,26 +423,39 @@ pub struct PlaylistAddSongAck {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
-pub enum RecommendationType {
+/// 决定卡片交互逻辑
+pub enum RecommendationCardKind {
     Track,
     Stream,
     Playlist,
     #[default]
     Unknown,
 }
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+/// 决定ui渲染模块时候的样式
+pub enum RecommendationModuleKind {
+    Track,
+    Mixed,
+    Playlist,
+    #[default]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub struct RecommendationCard {
     pub id: String,
     pub title: String,
     pub subtitle: String, //副标题或介绍
-    pub kind: RecommendationType,
     pub cover_url: String,
     pub collected: Option<bool>,
+    pub kind: RecommendationCardKind,
 }
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub struct RecommendationModule {
     pub title: String, //模块名
     pub list: Vec<RecommendationCard>,
+    pub kind: RecommendationModuleKind,
 }
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
 pub struct RecommendationPage {

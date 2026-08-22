@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, RecommendationCard, RecommendationModule, RecommendationPage,
-    RecommendationType, Track, VipLevel,
+    ProviderLoginStatus, RecommendationCard, RecommendationCardKind, RecommendationModule,
+    RecommendationModuleKind, RecommendationPage, Track, VipLevel,
 };
 
 use super::map::normalize_provider_image_url;
@@ -344,7 +344,7 @@ impl RcmdM1 {
             .filter_map(|c| {
                 let (id, kind) = match c.resource_type.as_str() {
                     //可以直接获取
-                    "playList" => (c.resource_id?, RecommendationType::Playlist),
+                    "playList" => (c.resource_id?, RecommendationCardKind::Playlist),
                     //包装后由stream解析
                     "star" => {
                         let e = c.ext_data?;
@@ -353,18 +353,18 @@ impl RcmdM1 {
                                 + &e.playlist?.id.to_string()
                                 + "|"
                                 + &e.song_id?.to_string(),
-                            RecommendationType::Stream,
+                            RecommendationCardKind::Stream,
                         )
                     }
                     //目前客户端只要求该fm
-                    "fm" => ("P".to_owned(), RecommendationType::Stream),
+                    "fm" => ("P".to_owned(), RecommendationCardKind::Stream),
                     //由于由两个每日推荐接口并且无法获取接口名, 解析需要名字就封装进id
                     "dailySongs" => (
                         "D".to_owned()
                             + &c.target_url?.split_once('?').map(|(_, after)| after)?
                             + "|"
                             + &c.cover_text,
-                        RecommendationType::Playlist,
+                        RecommendationCardKind::Playlist,
                     ),
                     _ => return None,
                 };
@@ -384,6 +384,7 @@ impl RcmdM1 {
         Some(RecommendationModule {
             title: "".to_owned(),
             list,
+            kind: RecommendationModuleKind::Mixed,
         })
     }
 }
@@ -442,6 +443,7 @@ impl RcmdM2 {
         Some(RecommendationModule {
             title: self.ui_element.get(),
             list,
+            kind: RecommendationModuleKind::Playlist,
         })
     }
 }
@@ -470,7 +472,7 @@ impl RcmdM2CF {
             id: self.id,
             title: "".to_owned(),
             subtitle,
-            kind: RecommendationType::Playlist,
+            kind: RecommendationCardKind::Playlist,
             cover_url,
             collected: Some(false),
         }
@@ -498,7 +500,7 @@ impl RcmdM3 {
                             id: c.resource_id,
                             title: "".to_owned(),
                             subtitle,
-                            kind: RecommendationType::Playlist,
+                            kind: RecommendationCardKind::Track,
                             cover_url,
                             collected: Some(false),
                         }
@@ -512,6 +514,7 @@ impl RcmdM3 {
         Some(RecommendationModule {
             title: self.ui_element.get(),
             list,
+            kind: RecommendationModuleKind::Track,
         })
     }
 }
@@ -548,7 +551,7 @@ impl RcmdM4 {
                     id: c.creative_id,
                     title: "".to_owned(),
                     subtitle,
-                    kind: RecommendationType::Playlist,
+                    kind: RecommendationCardKind::Playlist,
                     cover_url,
                     collected: Some(false),
                 }
@@ -560,6 +563,7 @@ impl RcmdM4 {
         Some(RecommendationModule {
             title: m.ui_element.get(),
             list,
+            kind: RecommendationModuleKind::Playlist,
         })
     }
 }

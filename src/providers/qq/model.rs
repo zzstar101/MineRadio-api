@@ -5,9 +5,9 @@ use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
     AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, RecommendationCard, RecommendationModule, RecommendationPage,
-    RecommendationType, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
-    VipLevel,
+    ProviderLoginStatus, RecommendationCard, RecommendationCardKind, RecommendationModule,
+    RecommendationModuleKind, RecommendationPage, SongUrlResult, Track, TrackQualityAvailability,
+    TrackQualityOption, VipLevel,
 };
 
 #[derive(Deserialize)]
@@ -886,17 +886,18 @@ impl VShelf {
         self,
         mid_by_id: Option<&HashMap<String, String>>,
     ) -> Option<RecommendationModule> {
-        match self.id {
-            207 => self.standardize_cards(mid_by_id?),
-            271 | 205 | 272 | 301 => self.standardize_cards(&HashMap::new()),
-            _ => None,
-        }
-    }
+        let (mid_by_id, kind) = match self.id {
+            207 => (mid_by_id?, RecommendationModuleKind::Track),
+            _ => (
+                &HashMap::<String, String>::new(),
+                match self.id {
+                    271 | 205 => RecommendationModuleKind::Playlist,
+                    272 | 301 => RecommendationModuleKind::Mixed,
+                    _ => return None,
+                },
+            ),
+        };
 
-    fn standardize_cards(
-        self,
-        mid_by_id: &HashMap<String, String>,
-    ) -> Option<RecommendationModule> {
         let list: Vec<RecommendationCard> = self
             .v_niche
             .into_iter()
@@ -909,6 +910,7 @@ impl VShelf {
         Some(RecommendationModule {
             title: self.title_template.replace("{String}", &self.title_content),
             list,
+            kind,
         })
     }
 }
@@ -931,16 +933,19 @@ pub(super) struct VCard {
 impl VCard {
     fn standardize(self, mid_by_id: &HashMap<String, String>) -> Option<RecommendationCard> {
         let (id, kind) = match self.t {
-            200 => (mid_by_id.get(&self.id)?.clone(), RecommendationType::Track),
-            500 => (self.id, RecommendationType::Playlist),
-            700 => (self.id, RecommendationType::Stream),
+            200 => (
+                mid_by_id.get(&self.id)?.clone(),
+                RecommendationCardKind::Track,
+            ),
+            500 => (self.id, RecommendationCardKind::Playlist),
+            700 => (self.id, RecommendationCardKind::Stream),
             900 => (
                 if self.title.contains("杜比") {
                     return None;
                 } else {
                     22000.to_string()
                 },
-                RecommendationType::Stream,
+                RecommendationCardKind::Stream,
             ),
             _ => return None,
         };
@@ -1206,7 +1211,7 @@ mod tests {
         Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData, QqLoginStatusResp,
         QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp, QqTrack, QqTrackInfo,
     };
-    use crate::types::RecommendationType;
+    use crate::types::RecommendationCardKind;
 
     #[test]
     fn track_uses_default_album_when_album_is_missing() {
@@ -1345,12 +1350,12 @@ mod tests {
         assert_eq!(page.list[1].list[0].id, "0039MnYb0qxYhV");
         assert!(matches!(
             page.list[1].list[0].kind,
-            RecommendationType::Track
+            RecommendationCardKind::Track
         ));
         // 电台 shelf (id=272, type=400) 卡片全部被滤掉，整个模块被移除
         assert!(matches!(
             page.list[3].list[0].kind,
-            RecommendationType::Stream
+            RecommendationCardKind::Stream
         ));
     }
 
