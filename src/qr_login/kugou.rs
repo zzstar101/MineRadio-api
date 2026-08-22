@@ -14,8 +14,8 @@ use std::{
 
 use crate::{
     auth_session::set_runtime_provider_cookie,
-    sidecar_log,
     qr_login::{QrLogin, QrSessionStore},
+    sidecar_log,
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::cryptors::{
         decrypt_kugou_register_payload, encrypt_kugou_register_payload, encrypt_kugou_register_rsa,

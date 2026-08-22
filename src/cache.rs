@@ -136,9 +136,7 @@ fn write_cache(file_path: &PathBuf, contents: &CacheContents) {
     }
     if let Ok(json) = serde_json::to_string_pretty(contents) {
         if let Err(err) = fs::write(file_path, json) {
-            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
-                "Cache 写入失败: {err}"
-            )));
+            sidecar_log::spawn_runtime_log(serde_json::json!(format!("Cache 写入失败: {err}")));
         }
     }
 }

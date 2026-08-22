@@ -37,7 +37,7 @@ pub use crate::types::{
     AlbumDetail, AlbumSummary, LyricLine, LyricPayload, LyricWord, PlayableState,
     PlaylistAddSongAck, PlaylistDetail, PlaylistSummary, ProviderId, ProviderLoginQrCheck,
     ProviderLoginQrImage, ProviderLoginQrKey, ProviderLoginStatus, RecommendationCard,
-    RecommendationModule, RecommendationPage, RecommendationType, SearchType, SongLikeAck,
+    RecommendationCardKind, RecommendationModule, RecommendationPage, SearchType, SongLikeAck,
     SongLikeCheckAck, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     TrackQualityOption, VipLevel,
 };

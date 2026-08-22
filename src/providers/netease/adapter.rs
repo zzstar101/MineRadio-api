@@ -225,7 +225,8 @@ impl ProviderAdapter for NeteaseAdapter {
                 Ok(body) => body,
                 Err(err) => {
                     sidecar_log::spawn_runtime_log(serde_json::json!(format!(
-                        "Netease song_url_v1 失败回退旧接口(level={}): {err}", quality.level
+                        "Netease song_url_v1 失败回退旧接口(level={}): {err}",
+                        quality.level
                     )));
                     match self.client.song_url(&track.source_id, quality.br).await {
                         Ok(body) => body,

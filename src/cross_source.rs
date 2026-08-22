@@ -329,19 +329,16 @@ impl CrossSourceResolver {
         let provider_limit = limit.div_ceil(provider_count).max(1);
         let mut ranked = Vec::new();
 
-        let searches =
-            self.deps
-                .providers
-                .iter()
-                .enumerate()
-                .map(|(provider_index, (provider_id, adapter))| {
-                    let provider_id = provider_id.clone();
-                    let keyword = keyword.to_owned();
-                    async move {
-                        let result = adapter.search_track(&keyword, 0, provider_limit).await;
-                        (provider_index, provider_id, result)
-                    }
-                });
+        let searches = self.deps.providers.iter().enumerate().map(
+            |(provider_index, (provider_id, adapter))| {
+                let provider_id = provider_id.clone();
+                let keyword = keyword.to_owned();
+                async move {
+                    let result = adapter.search_track(&keyword, 0, provider_limit).await;
+                    (provider_index, provider_id, result)
+                }
+            },
+        );
 
         let search_results = join_all(searches).await;
 
@@ -416,7 +413,12 @@ impl CrossSourceResolver {
         let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
             let provider_id = provider_id.clone();
             let keyword = keyword.to_owned();
-            async move { (provider_id, adapter.search_album(&keyword, 0, provider_limit).await) }
+            async move {
+                (
+                    provider_id,
+                    adapter.search_album(&keyword, 0, provider_limit).await,
+                )
+            }
         });
         let mut albums = Vec::new();
         for (provider_id, result) in join_all(searches).await {
@@ -471,7 +473,12 @@ impl CrossSourceResolver {
         let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
             let provider_id = provider_id.clone();
             let keyword = keyword.to_owned();
-            async move { (provider_id, adapter.search_playlist(&keyword, 0, provider_limit).await) }
+            async move {
+                (
+                    provider_id,
+                    adapter.search_playlist(&keyword, 0, provider_limit).await,
+                )
+            }
         });
         let mut playlists = Vec::new();
         for (provider_id, result) in join_all(searches).await {
