@@ -30,6 +30,7 @@ codegen-units = 1
 protobuf-codegen = "3"
 
 [dependencies]
+mac_address = "1.1.8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 aes = "0.8"
 aes-gcm = "0.10"
@@ -96,6 +97,7 @@ url = "2"
 urlencoding = "2"
 memchr = "2.8.3"
 sha1 = { version = "0.10", features = ["oid"] }
+sha2 = "0.10"
 hex = "0.4.3"
 shannon = "0.2"
 sysinfo = { version = "0.36", default-features = false, features = ["system"] }
