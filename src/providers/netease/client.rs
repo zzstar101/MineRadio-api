@@ -19,10 +19,13 @@ use crate::{
         netease::model::{
             NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp,
             NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp,
-            NeteaseVipInfoResp,
+            NeteaseVipInfoResp, RcmdM1SingleResp,
         },
     },
-    utils::{decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key},
+    utils::{
+        cookie::Cookie, decrypt_eapi_response, encrypt_eapi, encrypt_weapi,
+        generate_weapi_secret_key,
+    },
 };
 
 use super::model::{
@@ -30,14 +33,10 @@ use super::model::{
     NeteaseLyricV1Resp, NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp, NeteaseSearchTrackResp,
 };
 
-const API_DOMAIN: &str = "https://interface.music.163.com";
+const API_DOMAIN: &str = "https://interfacepc.music.163.com";
 const DOMAIN: &str = "https://music.163.com";
-const UA_API_IPHONE: &str = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)";
-const UA_WEAPI_PC: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
-const DEFAULT_APPVER: &str = "9.0.90";
-const DEFAULT_CHANNEL: &str = "distribution";
-const DEFAULT_OS: &str = "iPhone OS";
-const DEFAULT_OSVER: &str = "16.2";
+const UA: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.34.205281";
+const CFG: &str = "{\"IuRPVVmc3WWul9fT\":{\"version\":983040,\"appver\":\"3.1.34.205281\"}}";
 
 #[derive(Clone)]
 pub struct NeteaseClient {
@@ -514,6 +513,22 @@ impl NeteaseClient {
         .await
     }
 
+    pub(super) async fn recommendation_module1(&self) -> ProviderResult<RcmdM1SingleResp> {
+        let now = chrono::Local::now();
+        let time = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        self.eapi_model(
+            "/api/pc/daily/rcmd/block",
+            json!({
+                "clientTime": time,
+                "e_r": true,
+            }),
+            self.current_cookie().await.as_deref(),
+            "recommendation_module1",
+        )
+        .await
+    }
+
     pub(super) async fn recommendation_page(&self) -> ProviderResult<NeteaseRcmdPageResp> {
         let now = chrono::Local::now();
         let time = now.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -530,7 +545,7 @@ impl NeteaseClient {
                 "e_r": true
             }),
             self.current_cookie().await.as_deref(),
-            "daily_songs",
+            "recommendation_page",
         )
         .await
     }
@@ -610,28 +625,27 @@ impl NeteaseClient {
         action: &str,
     ) -> ProviderResult<T> {
         let response_encrypted = payload.get("e_r").and_then(Value::as_bool).unwrap_or(false);
-        let cookie_map = parse_cookie_header(cookie.unwrap_or_default());
-        let header = create_eapi_header(&cookie_map);
+        let header: HashMap<String, Value> = create_eapi_header(&cookie.unwrap_or_default());
         let mut body = payload.as_object().cloned().unwrap_or_default();
         body.insert(
             "header".to_owned(),
-            Value::Object(
-                header
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Value::String(value.clone())))
-                    .collect(),
-            ),
+            json!(serde_json::to_string(&header).unwrap_or_default()),
         );
+
         let encrypted = encrypt_eapi(uri, crate::utils::EapiBody::Json(&Value::Object(body)))
             .map_err(|err| internal_error(format!("encrypt eapi payload: {err}")))?;
 
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(UA_API_IPHONE));
+        headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+
         headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
-        headers.insert(COOKIE, header_value(&header_cookie_string(&header))?);
+
+        headers.insert("mconfig-info", HeaderValue::from_static(CFG));
+
+        headers.insert(COOKIE, header_value(&cookie.unwrap_or_default())?);
 
         Ok(self
             .post_form_response(
@@ -659,7 +673,7 @@ impl NeteaseClient {
             .map_err(|err| internal_error(format!("encrypt weapi payload: {err}")))?;
 
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(UA_WEAPI_PC));
+        headers.insert(USER_AGENT, HeaderValue::from_static(UA));
         headers.insert(REFERER, HeaderValue::from_static(DOMAIN));
         headers.insert(
             CONTENT_TYPE,
@@ -797,69 +811,30 @@ fn cookie_map_to_string(cookie: &HashMap<String, String>) -> String {
         .join("; ")
 }
 
-fn create_eapi_header(cookie: &HashMap<String, String>) -> HashMap<String, String> {
-    let mut header = HashMap::from([
+fn create_eapi_header(cookie: &str) -> HashMap<String, Value> {
+    let c = Cookie::new(cookie);
+    let v = vec![
+        ("clientSign", ""),
+        ("os", "pc"),
+        ("appver", "3.1.34.205281"),
+        ("deviceId", ""),
         (
-            "__csrf".to_owned(),
-            cookie.get("__csrf").cloned().unwrap_or_default(),
+            "osver",
+            "Microsoft-Windows-11-Professional-build-114514-64bit",
         ),
-        (
-            "appver".to_owned(),
-            cookie
-                .get("appver")
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_APPVER.to_owned()),
-        ),
-        ("buildver".to_owned(), format!("{}", unix_ms() / 1_000)),
-        (
-            "channel".to_owned(),
-            cookie
-                .get("channel")
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_CHANNEL.to_owned()),
-        ),
-        ("deviceId".to_owned(), unique_seed()),
-        (
-            "os".to_owned(),
-            cookie
-                .get("os")
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_OS.to_owned()),
-        ),
-        (
-            "osver".to_owned(),
-            cookie
-                .get("osver")
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_OSVER.to_owned()),
-        ),
-        ("requestId".to_owned(), format!("{}_0001", unix_ms())),
-        ("resolution".to_owned(), "1920x1080".to_owned()),
-        ("versioncode".to_owned(), "140".to_owned()),
-    ]);
-
-    if let Some(music_a) = cookie.get("MUSIC_A").cloned() {
-        header.insert("MUSIC_A".to_owned(), music_a);
-    }
-    if let Some(music_u) = cookie.get("MUSIC_U").cloned() {
-        header.insert("MUSIC_U".to_owned(), music_u);
-    }
-
-    header
-}
-
-fn header_cookie_string(header: &HashMap<String, String>) -> String {
-    header
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                urlencoding::encode(key),
-                urlencoding::encode(value)
+    ];
+    //find_or::<Value> will return Null.
+    let mut header: HashMap<String, Value> = v
+        .into_iter()
+        .map(|(a, b)| {
+            (
+                a.to_owned(),
+                serde_json::json!(c.find_or::<String>(a, b.into())),
             )
         })
-        .collect::<Vec<_>>()
-        .join("; ")
+        .collect();
+    header.insert("requestId".to_owned(), json!(0));
+    header
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
