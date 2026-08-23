@@ -15,7 +15,10 @@ use crate::providers::qq::model::{
     QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqRadarResp, QqRadioDetailResp,
     QqRecommendationResp, QqSongUrlResp, QqTrackInfo, QqVipIconResp,
 };
-use crate::utils::cryptors::qq::{x4, x5, x7, x9, xj};
+use crate::utils::{
+    cookie::Cookie,
+    cryptors::qq::{x4, x5, x7, x9, xj},
+};
 use crate::{
     auth_session,
     providers::{
@@ -87,15 +90,15 @@ impl QqClient {
         }
 
         let cookie = self.current_cookie().await?;
-        let uin = uin_from_cookie_map(&parse_cookie(&cookie))?;
+        let uin = uin_from_cookie(&cookie)?;
 
         *self.uin.write().await = Some(uin.clone());
         Some(uin)
     }
 
     pub async fn guid(&self) -> Option<String> {
-        let cookie = self.current_cookie().await?;
-        guid_from_cookie_map(&parse_cookie(&cookie))
+        let c = Cookie::new(&self.current_cookie().await?);
+        c.find("qqmusic_guid")
     }
 
     pub async fn euin(&self) -> Option<String> {
@@ -104,7 +107,7 @@ impl QqClient {
         }
 
         let cookie = self.current_cookie().await?;
-        if let Some(euin) = euin_from_cookie_map(&parse_cookie(&cookie)) {
+        if let Some(euin) = euin_from_cookie(&cookie) {
             self.set_euin(euin.clone()).await;
             return Some(euin);
         }
@@ -294,9 +297,8 @@ impl QqClient {
         encrypted: bool,
     ) -> ProviderResult<QqSongUrlResp> {
         let cookie = self.current_cookie().await;
-        let cookie_map = parse_cookie(cookie.as_deref().unwrap_or_default());
+        let c = Cookie::new(cookie.as_deref().unwrap_or_default());
         let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
-        let auth = qq_playback_key_from_cookie_map(&cookie_map);
         self.post_json_with_sign(
             json!({
                 "req_0": {
@@ -307,7 +309,7 @@ impl QqClient {
                         "ctx": 1,
                         "downloadfrom": if encrypted { 0 } else { 1 },
                         "filename": [filenames],
-                        "guid": cookie_key(&cookie_map, "qqmusic_guid").unwrap_or_default(),
+                        "guid": c.find_or_else("qqmusic_guid", x5),
                         "musicfile": [filenames],
                         "nettype": "",
                         "referer": "y.qq.com",
@@ -457,8 +459,8 @@ impl QqClient {
         &self,
         cookie: &str,
     ) -> ProviderResult<Option<String>> {
-        let cookie_map = parse_cookie(cookie);
-        let Some((request_key, body, is_wechat)) = login_refresh_request(&cookie_map) else {
+        let c = Cookie::new(cookie);
+        let Some((request_key, body, is_wechat)) = login_refresh_request(&c.map) else {
             return Ok(None);
         };
         let response: Value = self
@@ -477,10 +479,10 @@ impl QqClient {
         else {
             return Ok(None);
         };
-        let guid = cookie_key(&cookie_map, "qqmusic_guid").unwrap_or_else(x5);
+        let guid = c.find_or_else("qqmusic_guid", x5);
         let refreshed = normalize_login_cookie(data, &guid, is_wechat, "QQ_LOGIN_REFRESH_EMPTY")
             .map_err(internal_error)?;
-        Ok(Some(merge_cookie(cookie, &refreshed)))
+        Ok(Some(merge_cookie(c, &refreshed)))
     }
 
     pub(super) async fn vip_info_with_cookie(
@@ -782,7 +784,7 @@ impl QqClient {
             .expect("系统时间早于 UNIX 纪元");
         //构建鉴权部分
         let mut req = body;
-        let c = &parse_cookie(&cookie.unwrap_or_default());
+        let c = Cookie::new(cookie.unwrap_or_default());
 
         let cookie_keys = vec!["psrf_qqaccess_token", "psrf_qqopenid", "psrf_qqunionid"];
 
@@ -792,7 +794,7 @@ impl QqClient {
         comm_obj.insert("_os_version".to_string(), json!("6.2.9200-2"));
         comm_obj.insert(
             "authst".to_string(),
-            json!(cookie_key(c, "qm_keyst").unwrap_or_default()),
+            json!(c.find_or_default::<String>("qm_keyst")),
         );
 
         comm_obj.insert("format".to_string(), json!("json"));
@@ -805,44 +807,32 @@ impl QqClient {
         comm_obj.insert("cv".to_string(), json!("2230"));
         comm_obj.insert(
             "guid".to_string(),
-            json!(cookie_key(c, "qqmusic_guid").unwrap_or_default()),
+            json!(c.find_or_else("qqmusic_guid", x5)),
         );
         comm_obj.insert("patch".to_string(), json!("118"));
         comm_obj.insert(
             "psrf_access_token_expiresAt".to_string(),
-            json!(
-                cookie_key(c, "psrf_access_token_expiresAt")
-                    .unwrap_or_default()
-                    .parse::<u128>()
-                    .unwrap_or(0)
-            ),
+            json!(c.find_or_default::<u128>("psrf_access_token_expiresAt")),
         );
 
         for key in cookie_keys {
-            comm_obj.insert(
-                key.to_string(),
-                json!(cookie_key(c, key).unwrap_or("".to_owned())),
-            );
+            comm_obj.insert(key.to_string(), json!(c.find_or_default::<String>(key)));
         }
 
         comm_obj.insert("tmeAppID".to_string(), json!("qqmusic"));
         comm_obj.insert(
             "tmeLoginType".to_string(),
-            json!(
-                cookie_key(c, "tmeLoginType")
-                    .unwrap_or_default()
-                    .parse::<u8>()
-                    .unwrap_or(2)
-            ),
+            json!(c.find_or("tmeLoginType", 2)),
         );
         comm_obj.insert(
             "uin".to_string(),
             json!(self.uin().await.unwrap_or_default()),
         );
         comm_obj.insert("wid".to_string(), json!("4810302018970526720"));
-        let g_tk = x7(&cookie_key(c, "musickey").unwrap_or_default()).to_string();
+        let g_tk = x7(&c.find_or_default::<String>("musickey")).to_string();
         comm_obj.insert("g_tk_new_20200303".to_string(), json!(&g_tk));
         comm_obj.insert("g_tk".to_string(), json!(&g_tk));
+        drop(c);
         if let Some(obj) = req.as_object_mut() {
             obj.insert("comm".to_string(), comm_obj.into());
         }
@@ -984,40 +974,18 @@ fn playlist_song_write_body(method: &str, dir_id: u64, track_id: &str) -> Value 
     })
 }
 
-fn parse_cookie(cookie: &str) -> std::collections::HashMap<String, String> {
-    cookie
-        .split(';')
-        .filter_map(|segment| {
-            let (name, value) = segment.trim().split_once('=')?;
-            Some((name.trim().to_owned(), value.trim().to_owned()))
-        })
-        .collect()
-}
+fn uin_from_cookie(cookie: &str) -> Option<String> {
+    let cookie = Cookie::new(cookie);
+    let raw = cookie.first::<String>(&["wxuin", "qqmusic_uin", "uin"])?;
 
-fn uin_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Option<String> {
-    let raw = cookie
-        .get("wxuin")
-        .or_else(|| cookie.get("qqmusic_uin"))
-        .or_else(|| cookie.get("uin"))?;
-    let digits = raw
-        .chars()
-        .filter(|ch| ch.is_ascii_digit())
-        .collect::<String>();
+    let digits: String = raw.chars().filter(|ch| ch.is_ascii_digit()).collect();
+
     (!digits.is_empty()).then_some(digits)
 }
 
-fn guid_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Option<String> {
-    cookie
-        .get("qqmusic_guid")
-        .map(|guid| guid.trim().to_owned())
-        .filter(|guid| !guid.is_empty())
-}
-
-fn euin_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> Option<String> {
-    cookie
-        .get("encrypt_uin")
-        .or_else(|| cookie.get("euin"))
-        .map(|e| e.to_owned())
+fn euin_from_cookie(cookie: &str) -> Option<String> {
+    let cookie = Cookie::new(cookie);
+    cookie.first::<String>(&["encrypt_uin", "euin"])
 }
 
 fn qq_playback_key_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> String {
@@ -1128,9 +1096,9 @@ fn cookie_number_or_string(value: String) -> Value {
         .unwrap_or(Value::String(value))
 }
 
-fn merge_cookie(existing: &str, replacement: &str) -> String {
-    let mut merged = parse_cookie(existing);
-    merged.extend(parse_cookie(replacement));
+fn merge_cookie(existing: Cookie, replacement: &str) -> String {
+    let mut merged = existing.map;
+    merged.extend(Cookie::new(replacement).map);
     let mut entries: Vec<_> = merged.into_iter().collect();
     entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
     entries
@@ -1170,25 +1138,11 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
 mod tests {
     use serde_json::json;
 
+    use crate::utils::cookie::Cookie;
+
     use super::{
-        QqClient, guid_from_cookie_map, login_refresh_request_for_device, merge_cookie,
-        parse_cookie, playlist_song_write_body, uin_from_cookie_map,
+        QqClient, login_refresh_request_for_device, merge_cookie, playlist_song_write_body,
     };
-
-    #[test]
-    fn cookie_user_id_is_normalized() {
-        let cookie = parse_cookie("uin=o0012345; login_type=1");
-
-        assert_eq!(uin_from_cookie_map(&cookie).as_deref(), Some("0012345"));
-    }
-
-    #[test]
-    fn cookie_guid_is_extracted_from_map() {
-        let cookie = parse_cookie("qqmusic_guid=abcdef; uin=12345");
-
-        assert_eq!(guid_from_cookie_map(&cookie).as_deref(), Some("abcdef"));
-        assert!(guid_from_cookie_map(&parse_cookie("uin=12345")).is_none());
-    }
 
     #[test]
     fn get_sign_executes_the_bundled_javascript() {
@@ -1221,11 +1175,12 @@ mod tests {
 
     #[test]
     fn login_refresh_matches_the_native_qq_request_shape() {
-        let cookie = parse_cookie(
+        let cookie = Cookie::new(
             "tmeLoginType=2; psrf_qqopenid=openid; qm_keyst=music-key; expired_in=3600; \
              musicid=10001; refresh_key=refresh-key; psrf_qqaccess_token=access; \
              psrf_qqrefresh_token=refresh; appid=qqmusic",
-        );
+        )
+        .map;
 
         let (key, request, is_wechat) =
             login_refresh_request_for_device(&cookie, "DESKTOP".to_owned()).unwrap();
@@ -1244,10 +1199,11 @@ mod tests {
 
     #[test]
     fn login_refresh_matches_the_native_wechat_request_shape() {
-        let cookie = parse_cookie(
+        let cookie = Cookie::new(
             "tmeLoginType=1; qm_keyst=music-key; musicid=1152921505274451474; \
              refresh_key=refresh-key",
-        );
+        )
+        .map;
 
         let (key, request, is_wechat) =
             login_refresh_request_for_device(&cookie, "DESKTOP".to_owned()).unwrap();
@@ -1269,11 +1225,11 @@ mod tests {
     #[test]
     fn refreshed_cookie_replaces_session_values_and_keeps_unrelated_values() {
         let cookie = merge_cookie(
-            "qqmusic_gkey=old-gkey; qm_keyst=old-key; refresh_key=old-refresh",
+            Cookie::new("qqmusic_gkey=old-gkey; qm_keyst=old-key; refresh_key=old-refresh"),
             "qm_keyst=new-key; refresh_key=new-refresh; tmeLoginType=2",
         );
 
-        let cookie = parse_cookie(&cookie);
+        let cookie = Cookie::new(&cookie).map;
         assert_eq!(cookie["qqmusic_gkey"], "old-gkey");
         assert_eq!(cookie["qm_keyst"], "new-key");
         assert_eq!(cookie["refresh_key"], "new-refresh");
