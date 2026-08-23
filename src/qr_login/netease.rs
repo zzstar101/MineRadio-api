@@ -6,17 +6,32 @@ use reqwest::{
     header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
 };
 use serde_json::Value;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     auth_session::set_runtime_provider_cookie,
     qr_login::QrLogin,
+    sidecar_log,
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::{encrypt_weapi, generate_weapi_secret_key},
+    utils::{
+        cryptors::netease::{
+            cloudmusic_dll_encode_id, generate_client_sign, generate_deviceid, generate_nmtid,
+            generate_ntes_nuid, generate_wnmcid,
+        },
+        decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key,
+    },
 };
 
 const NETEASE_DOMAIN: &str = "https://music.163.com";
+const EAPI_ANONIMOUS_URL: &str = "https://interfacepc.music.163.com/eapi/register/anonimous";
+const EAPI_ANONIMOUS_API: &str = "/api/register/anonimous";
+const FORM_URLENCODED: &str = "application/x-www-form-urlencoded";
 const NETEASE_QR_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0";
+const APPVER: &str = "3.1.34.205281";
+const CFG: &str = "{\"IuRPVVmc3WWul9fT\":{\"version\":983040,\"appver\":\"3.1.34.205281\"}}";
+const UA: &str = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.34.205281";
+const OSVER: &str = "Microsoft-Windows-11-Professional-build-114514-64bit";
 
 #[derive(Clone, Debug, Default)]
 pub struct NeteaseApiResponse {
@@ -48,7 +63,7 @@ impl QrLogin for NeteaseQrLoginService {
             .qr_key
             .call(serde_json::json!({ "timestamp": self.now() }))
             .await?;
-        let key = read_string(response_body(&resp).get("unikey"))
+        let key = read_string(body_map(&resp).and_then(|body| body.get("unikey")))
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_MISSING"))?;
         Ok(ProviderLoginQrKey {
             provider: ProviderId::Netease,
@@ -70,14 +85,14 @@ impl QrLogin for NeteaseQrLoginService {
                 "timestamp": self.now()
             }))
             .await?;
-        let data = response_data(&resp);
-        let img = read_string(data.get("qrimg"))
+        let data = data_map(&resp);
+        let img = read_string(data.and_then(|data| data.get("qrimg")))
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_IMAGE_MISSING"))?;
         Ok(ProviderLoginQrImage {
             provider: ProviderId::Netease,
             key: normalized_key.to_owned(),
             img,
-            url: read_string(data.get("qrurl")),
+            url: read_string(data.and_then(|data| data.get("qrurl"))),
         })
     }
 
@@ -111,9 +126,37 @@ impl QrLogin for NeteaseQrLoginService {
 
         let stored = code == 803 && cookie.is_some();
         if let Some(cookie) = cookie.filter(|_| stored) {
-            set_runtime_provider_cookie(ProviderId::Netease, cookie + " os=pc;")
-                .await
-                .map_err(|err| anyhow::anyhow!(err))?;
+            let r = {
+                let mut result = String::new();
+
+                for _ in 0..5 {
+                    match reg().await {
+                        Ok((a, b, c)) => {
+                            result = format!("deviceId={}; clientSign={}; NMTID={}", a, b, c);
+                            break;
+                        }
+                        Err(e) => {
+                            sidecar_log::spawn_runtime_log(serde_json::json!(e));
+                        }
+                    }
+                }
+
+                result
+            };
+            set_runtime_provider_cookie(
+                ProviderId::Netease,
+                //一定存在的
+                format!(
+                    "{}; os=pc; WEVNSM=1.0.0; _ntes_nuid={}; WNMCID={}; ",
+                    cookie.trim_end_matches(';'),
+                    generate_ntes_nuid(),
+                    generate_wnmcid()
+                )
+                //申请成功才持久化
+                + &r,
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!(err))?;
         }
 
         Ok(ProviderLoginQrCheck {
@@ -127,6 +170,70 @@ impl QrLogin for NeteaseQrLoginService {
             stored: Some(stored),
         })
     }
+}
+
+/// 匿名注册接口复用同一个 Client，保留连接池避免每次重试重建 TLS 连接
+fn anon_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(Client::new)
+}
+
+async fn reg() -> Result<(String, String, String), String> {
+    let mut headers = HeaderMap::new();
+    let device_id = generate_deviceid();
+    let nmtid = generate_nmtid();
+    let encoded_id = BASE64.encode(format!(
+        "{} {}",
+        &device_id,
+        cloudmusic_dll_encode_id(&device_id),
+    ));
+    let sign = generate_client_sign(&device_id, "");
+
+    headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver=; clientSign={}; MUSIC_SNS=; NMTID={}", &device_id, &sign, &nmtid)).map_err(|e| format!("fail to insert cookie: {}", e.to_string()))?);
+
+    headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(FORM_URLENCODED));
+
+    headers.insert("mconfig-info", HeaderValue::from_static(CFG));
+
+    let header = serde_json::json!({
+        "clientSign": sign,
+        "os": "pc",
+        "appver": APPVER,
+        "requestId": 0,
+        "osver": OSVER,
+    });
+
+    let body = &serde_json::json!({
+        "username": encoded_id,
+        "e_r": true,
+        "header": serde_json::to_string(&header).map_err(|e| format!("fail to convert Value to String: {}", e.to_string()))?
+    });
+
+    let encrypted = encrypt_eapi(EAPI_ANONIMOUS_API, crate::utils::EapiBody::Json(&body))
+        .map_err(|e| format!("fail to encrypt req: {}", e.to_string()))?;
+    let response = anon_client()
+        .post(EAPI_ANONIMOUS_URL)
+        .headers(headers)
+        .form(&[("params", encrypted.params)])
+        .send()
+        .await
+        .map_err(|e| format!("fail to send req: {}", e.to_string()))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("fail to read resp: {}", e.to_string()))?;
+    let decrypted = decrypt_eapi_response(&bytes, false)
+        .map_err(|e| format!("fail to decrypt req: {}", e.to_string()))?;
+    serde_json::from_slice::<Value>(&decrypted)
+        .unwrap()
+        .get("code")
+        .and_then(|v| v.as_u64())
+        .map(|v| v == 200)
+        .unwrap_or(false)
+        .then_some((device_id, sign, nmtid))
+        .ok_or("failed to reg".into())
 }
 
 impl NeteaseQrLoginService {
@@ -155,20 +262,14 @@ pub fn create_netease_qr_login_service_with_client(client: Client) -> NeteaseQrL
     })
 }
 
-fn as_obj(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
-    value.and_then(Value::as_object)
+fn body_map(resp: &NeteaseApiResponse) -> Option<&serde_json::Map<String, Value>> {
+    resp.body.as_ref().and_then(Value::as_object)
 }
 
-fn response_body(resp: &NeteaseApiResponse) -> serde_json::Map<String, Value> {
-    as_obj(resp.body.as_ref()).cloned().unwrap_or_default()
-}
-
-fn response_data(resp: &NeteaseApiResponse) -> serde_json::Map<String, Value> {
-    response_body(resp)
-        .get("data")
+fn data_map(resp: &NeteaseApiResponse) -> Option<&serde_json::Map<String, Value>> {
+    body_map(resp)
+        .and_then(|body| body.get("data"))
         .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default()
 }
 
 fn read_string(value: Option<&Value>) -> Option<String> {
@@ -184,26 +285,27 @@ fn read_number(value: Option<&Value>) -> Option<i64> {
 }
 
 fn read_qr_cookie(resp: &NeteaseApiResponse) -> Option<String> {
-    let body = response_body(resp);
-    let data = response_data(resp);
+    let body = body_map(resp);
+    let data = data_map(resp);
     read_string(resp.cookie.as_ref())
-        .or_else(|| read_string(body.get("cookie")))
-        .or_else(|| read_string(data.get("cookie")))
-        .or_else(|| read_string(data.get("cookies")))
+        .or_else(|| body.and_then(|body| read_string(body.get("cookie"))))
+        .or_else(|| data.and_then(|data| read_string(data.get("cookie"))))
+        .or_else(|| data.and_then(|data| read_string(data.get("cookies"))))
 }
 
 fn read_qr_code(resp: &NeteaseApiResponse) -> i64 {
-    let body = response_body(resp);
-    let data = response_data(resp);
-    read_number(body.get("code"))
-        .or_else(|| read_number(data.get("code")))
+    let body = body_map(resp);
+    let data = data_map(resp);
+    read_number(body.and_then(|body| body.get("code")))
+        .or_else(|| read_number(data.and_then(|data| data.get("code"))))
         .unwrap_or(0)
 }
 
 fn read_qr_message(resp: &NeteaseApiResponse) -> Option<String> {
-    let body = response_body(resp);
-    let data = response_data(resp);
-    read_string(body.get("message")).or_else(|| read_string(data.get("message")))
+    let body = body_map(resp);
+    let data = data_map(resp);
+    read_string(body.and_then(|body| body.get("message")))
+        .or_else(|| data.and_then(|data| read_string(data.get("message"))))
 }
 
 struct NeteaseQrKeyCall {
@@ -233,7 +335,7 @@ impl NeteaseApiCall for NeteaseQrCreateCall {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("NETEASE_QR_KEY_REQUIRED"))?;
-        let url = format!("https://music.163.com/login?codekey={key}");
+        let url = format!("{NETEASE_DOMAIN}/login?codekey={key}");
         let include_image = query.get("qrimg").and_then(Value::as_bool).unwrap_or(false);
         let image = if include_image {
             render_qr_data_uri(&url)?
@@ -280,7 +382,10 @@ async fn request_qr_response(
     uri: &str,
     payload: Value,
 ) -> anyhow::Result<NeteaseApiResponse> {
-    let mut body = payload.as_object().cloned().unwrap_or_default();
+    let mut body = match payload {
+        Value::Object(map) => map,
+        _ => Default::default(),
+    };
     body.insert("csrf_token".to_owned(), Value::String(String::new()));
     let encrypted = encrypt_weapi(&Value::Object(body), Some(&generate_weapi_secret_key()))
         .map_err(|err| anyhow::anyhow!("NETEASE_QR_ENCRYPT_FAILED: {err}"))?;
@@ -288,10 +393,7 @@ async fn request_qr_response(
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static(NETEASE_QR_USER_AGENT));
     headers.insert(REFERER, HeaderValue::from_static(NETEASE_DOMAIN));
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("application/x-www-form-urlencoded"),
-    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(FORM_URLENCODED));
     headers.insert(COOKIE, HeaderValue::from_str(&qr_cookie_header())?);
     let response = client
         .post(format!(
@@ -328,11 +430,11 @@ fn qr_cookie_header() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
-    let seed = format!("netease{timestamp:x}");
+    let a = generate_ntes_nuid();
+
     format!(
-        "__remember_me=true; _ntes_nuid={seed}; _ntes_nnid={seed},{timestamp}; WEVNSM=1.0.0; WNMCID={}.{}.01.0; appver=3.1.17.204416; channel=netease; os=pc; osver=Microsoft-Windows-10-Professional-build-19045-64bit",
-        &seed[..6.min(seed.len())],
-        timestamp
+        "__remember_me=true; _ntes_nuid={a}; _ntes_nnid={a},{timestamp}; WEVNSM=1.0.0; WNMCID={}; appver={APPVER}; channel=netease; os=pc; osver={OSVER}",
+        generate_wnmcid()
     )
 }
 
@@ -347,6 +449,9 @@ fn render_qr_data_uri(url: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::cryptors::netease::{generate_client_sign, generate_nmtid};
+    use crate::utils::{decrypt_eapi_response, encrypt_eapi};
+
     use super::*;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -436,5 +541,50 @@ mod tests {
         assert_eq!(result.code, 803);
         assert!(result.logged_in);
         assert_eq!(result.stored, Some(true));
+    }
+
+    #[tokio::test]
+    async fn t() {
+        let mut headers = HeaderMap::new();
+        let device_id = generate_deviceid();
+        println!("{}", device_id);
+        let encoded_id = BASE64.encode(format!(
+            "{} {}",
+            &device_id,
+            cloudmusic_dll_encode_id(&device_id),
+        ));
+        let sign = generate_client_sign(&device_id, "");
+        headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver={APPVER}; clientSign={}; MUSIC_SNS=; NMTID={}", &device_id, &sign, generate_nmtid())).expect("fail to generate cookie"));
+        headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        headers.insert("mconfig-info", HeaderValue::from_static(CFG));
+        let body = &serde_json::json!({
+            "username": encoded_id,
+            "e_r": true,
+            "header": "{\"clientSign\":\"".to_owned() + &sign + "\",\"os\":\"pc\",\"appver\":\"" + APPVER + "\",\"requestId\":0,\"osver\":\"" + OSVER + "\"}"
+        });
+
+        let encrypted = encrypt_eapi(EAPI_ANONIMOUS_API, crate::utils::EapiBody::Json(&body))
+            .expect("failed to encrypt params");
+        let response = anon_client()
+            .post(EAPI_ANONIMOUS_URL)
+            .headers(headers)
+            .form(&[("params", encrypted.params)])
+            .send()
+            .await
+            .expect("fail to send req");
+        let bytes = response.bytes().await.expect("failed to read resp");
+        let decrypted = decrypt_eapi_response(&bytes, false).expect("fail to decrypt resp");
+        println!(
+            "{}",
+            serde_json::from_slice::<Value>(&decrypted)
+                .unwrap()
+                .get("code")
+                .expect("failed to read code")
+                .to_string()
+        );
     }
 }
