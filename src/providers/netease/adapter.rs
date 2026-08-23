@@ -687,11 +687,24 @@ impl ProviderAdapter for NeteaseAdapter {
     ) -> ProviderResult<crate::types::RecommendationPage> {
         let fetch = || async {
             self.client.ensure_login().await?;
+            let m1 = self
+                .client
+                .recommendation_module1()
+                .await
+                .map_err(async |e| {
+                    sidecar_log::log_runtime(serde_json::json!(
+                        "failed to get recommendation_module1"
+                    ))
+                    .await;
+                    e
+                })
+                .ok();
+
             Ok(self
                 .client
                 .recommendation_page()
                 .await?
-                .standardize()
+                .standardize(m1)
                 .and_then(|page| serde_json::to_string(&page).ok()))
         };
         let raw = if refresh {

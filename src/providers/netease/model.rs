@@ -278,15 +278,18 @@ pub(super) struct NeteaseRcmdPageResp {
 }
 
 impl NeteaseRcmdPageResp {
-    pub(super) fn standardize(self) -> Option<RecommendationPage> {
+    pub(super) fn standardize(self, m1: Option<RcmdM1SingleResp>) -> Option<RecommendationPage> {
+        let mut m1 = m1;
         let list: Vec<RecommendationModule> = self
             .data
             .blocks
             .into_iter()
             .filter_map(|m| {
                 Some(match m.block_code.as_str() {
-                    "PC_HOMEPAGE_DAILY_MIX" => serde_json::from_str::<RcmdM1>(m.block_data.get())
-                        .ok()?
+                    "PC_HOMEPAGE_DAILY_MIX" => m1
+                        .take()
+                        .map(|s| s.data)
+                        .or_else(|| serde_json::from_str::<RcmdM1>(m.block_data.get()).ok())?
                         .standardize()?,
                     "HOMEPAGE_BLOCK_PLAYLIST_RCMD" => {
                         serde_json::from_str::<RcmdM2>(m.block_data.get())
@@ -330,6 +333,10 @@ struct NeteaseRcmdPageBlock {
 // 模块模型命名缩写
 // rcmd为Recommend, M代表Module, C代表Card, U代表Ui, R代表Resource
 // T代表Title, I代表Image
+#[derive(Deserialize)]
+pub struct RcmdM1SingleResp {
+    data: RcmdM1,
+}
 
 #[derive(Deserialize)]
 struct RcmdM1 {
