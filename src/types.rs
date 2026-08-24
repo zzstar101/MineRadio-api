@@ -145,7 +145,6 @@ pub struct Track {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SongUrlOptions {
     pub quality: Option<String>,
 }
@@ -388,7 +387,6 @@ pub struct ProviderLoginQrCheck {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SongLikeAck {
     #[serde(default)]
     pub provider: ProviderId,
@@ -399,7 +397,6 @@ pub struct SongLikeAck {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SongLikeCheckAck {
     #[serde(default)]
     pub provider: ProviderId,
@@ -423,6 +420,7 @@ pub struct PlaylistAddSongAck {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case")]
 /// 决定卡片交互逻辑
 pub enum RecommendationCardKind {
     Track,
@@ -433,6 +431,7 @@ pub enum RecommendationCardKind {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case")]
 /// 决定ui渲染模块时候的样式
 pub enum RecommendationModuleKind {
     Track,
@@ -443,6 +442,7 @@ pub enum RecommendationModuleKind {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecommendationCard {
     pub id: String,
     pub title: String,
