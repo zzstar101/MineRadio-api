@@ -502,13 +502,13 @@ impl RcmdM3 {
                 l.resources
                     .into_iter()
                     .map(|c| {
-                        let (subtitle, cover_url) = c.ui_element.get();
+                        let c = c.resource_ext_info.song_data.standardize();
                         RecommendationCard {
-                            id: c.resource_id,
-                            title: "".to_owned(),
-                            subtitle,
+                            id: c.id,
+                            title: c.title,
+                            subtitle: c.artists.join(" / "),
                             kind: RecommendationCardKind::Track,
-                            cover_url,
+                            cover_url: c.cover_url,
                             collected: Some(false),
                         }
                     })
@@ -534,8 +534,13 @@ struct RcmdM3C {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM3CR {
-    ui_element: RcmdMCU,
-    resource_id: String,
+    resource_ext_info: RcmdM3CRE
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcmdM3CRE {
+    song_data: NeteaseTrack,
 }
 
 #[derive(Deserialize)]
