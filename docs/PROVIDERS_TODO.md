@@ -46,12 +46,16 @@ src/
 - [x] 移除 `api/`、`services/` 与 `parsers/` 目录，按上述目标移动模块并更新引用。
 - [x] 将二维码登录以 `QrLoginKind` 注册表公开，不再挂在 `ProviderApi` 的无语义 `Vec` 上。
 
-## 响应体建模 TODO
+## 响应体建模 TODO（后续出问题了再做）
 
 - [ ] 脆弱响应体建模：目前部分 provider 响应体直接按“坏了就整个请求失败”的方式建模，不做过多的 `Option` 兜底。为保持免试错完整性，后续可以把高频易变的字段逐步补成 `Option`/默认值，避免单个字段缺失导致整条响应失败。
 - [ ] 收藏状态字段语义：`collected = null` 表示“该来源无法通过现有在线接口确认收藏状态”，不是接口漏填。
   - QQ：歌单/歌曲/电台的收藏状态没有公开的在线查询接口，统一填 `null`（`collected: None`）。
   - 网易推荐卡（模块 1 / “每日30首”）：推荐卡整体不提供收藏能力，且被标准化为“每日30首”的推荐类型本就不可收藏，故不提供收藏接口；后续如需支持推荐卡收藏再补充。
+
+## 已知问题
+- [ ] 已明确汽水歌单中若出现无版权歌曲则需过滤，其他几个 provider 待验证
+- [ ] 网易云游客状态也需要注册设备获取初始cookie
 
 ## 网易云（netease）
 
@@ -158,7 +162,3 @@ src/
 | 从歌单移除歌曲 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `update_song_in_playlist`（`adding = false`） |
 | 专辑列表 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_list` |
 | 专辑详情 | [x] | [ ] | [adapter.rs](../src/providers/spotify/adapter.rs) 的 `album_detail` |
-
-## 能力对外暴露方式
-
-HTTP sidecar 与 `router.rs` 已随静态库迁移移除；上述通用能力现在通过公开的 `Api`/`ProviderApi` 方法暴露（见 [lib.rs](../src/lib.rs) 的 re-export 与 [api.rs](../src/api.rs)）。旧 HTTP 路由参考见 [PROVIDERS_API.md](PROVIDERS_API.md)（已标记为历史）。
