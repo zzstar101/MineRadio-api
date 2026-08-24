@@ -462,3 +462,64 @@ pub struct RecommendationPage {
     pub provider: ProviderId,
     pub list: Vec<RecommendationModule>,
 }
+
+impl crate::utils::single_flight::Paginated for PlaylistDetail {
+    fn total(&self) -> usize {
+        self.tracks.len()
+    }
+
+    fn slice_range(&self, start: usize, end: usize) -> Self {
+        // tracks 与 track_ids 理论上成对, 钳制越界防反序列化字段缺失时 panic
+        fn page_of<T: Clone>(v: &[T], start: usize, end: usize) -> Vec<T> {
+            if start >= v.len() {
+                Vec::new()
+            } else {
+                v[start..end.min(v.len())].to_vec()
+            }
+        }
+        let ids = page_of(&self.track_ids, start, end);
+        let tracks = page_of(&self.tracks, start, end);
+        PlaylistDetail {
+            provider: self.provider,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            cover_url: self.cover_url.clone(),
+            track_count: self.track_count,
+            track_ids: ids,
+            collected: self.collected,
+            tracks,
+            has_more: self.has_more,
+        }
+    }
+}
+
+impl crate::utils::single_flight::Paginated for AlbumDetail {
+    fn total(&self) -> usize {
+        self.tracks.len()
+    }
+
+    fn slice_range(&self, start: usize, end: usize) -> Self {
+        // tracks 与 track_ids 理论上成对, 钳制越界防反序列化字段缺失时 panic
+        fn page_of<T: Clone>(v: &[T], start: usize, end: usize) -> Vec<T> {
+            if start >= v.len() {
+                Vec::new()
+            } else {
+                v[start..end.min(v.len())].to_vec()
+            }
+        }
+        let ids = page_of(&self.track_ids, start, end);
+        let tracks = page_of(&self.tracks, start, end);
+        AlbumDetail {
+            provider: self.provider,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            artists: self.artists.clone(),
+            cover_url: self.cover_url.clone(),
+            track_count: self.track_count,
+            track_ids: ids,
+            collected: self.collected,
+            tracks,
+            has_more: self.has_more,
+        }
+    }
+}

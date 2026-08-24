@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::{client::SodaClient, lyric::SodaParser};
 use crate::providers::lyric::{LrcParser, MemchrParsers, UniversalLrcParser};
+use crate::utils::single_flight::SingleFlightCache;
 use crate::{
     auth_session,
     providers::{
@@ -20,17 +19,25 @@ use crate::{
     },
 };
 
+/// 分页缓存扩容步长与失败重试次数(总尝试 = 1 + PAGE_RETRIES)
+const PAGE_BATCH: u32 = 200;
+const PAGE_RETRIES: u32 = 2;
+
 #[derive(Clone)]
 pub struct SodaAdapter {
     client: Arc<SodaClient>,
-    album_cache: Arc<Mutex<HashMap<String, (Vec<Track>, Instant)>>>,
+    album_cache: Arc<SingleFlightCache<AlbumDetail>>,
 }
 
 impl SodaAdapter {
     pub fn new(client: Arc<SodaClient>) -> Self {
         Self {
             client,
-            album_cache: Arc::new(Mutex::new(HashMap::new())),
+            album_cache: Arc::new(SingleFlightCache::new(
+                ProviderId::Soda,
+                PAGE_BATCH,
+                PAGE_RETRIES,
+            )),
         }
     }
 
@@ -228,59 +235,19 @@ impl ProviderAdapter for SodaAdapter {
     }
 
     async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
-        {
-            let cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((tracks, expires_at)) = cache.get(id) {
-                if *expires_at > Instant::now() {
-                    let start = offset as usize;
-                    let end = (start + limit as usize).min(tracks.len());
-                    let sliced = if start < tracks.len() {
-                        tracks[start..end].to_vec()
-                    } else {
-                        vec![]
-                    };
-                    let has_more = (offset + limit) < tracks.len() as u32;
-                    return Ok(AlbumDetail {
-                        provider: ProviderId::Soda,
-                        id: id.to_owned(),
-                        name: String::new(),
-                        artists: vec![],
-                        cover_url: String::new(),
-                        track_count: Some(tracks.len() as u32),
-                        track_ids: sliced.iter().map(|t| t.source_id.clone()).collect(),
-                        collected: None,
-                        tracks: sliced,
-                        has_more: Some(has_more),
-                    });
-                }
-            }
-        }
-
-        let mut detail = self.client.album_detail(id).await?.standardize();
-
-        {
-            let mut cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
-            cache.insert(
-                id.to_owned(),
-                (
-                    detail.tracks.clone(),
-                    Instant::now() + Duration::from_secs(300),
-                ),
-            );
-        }
-
-        let total = detail.tracks.len() as u32;
-        let start = offset as usize;
-        let end = (start + limit as usize).min(detail.tracks.len());
-        if start < detail.tracks.len() {
-            detail.tracks = detail.tracks[start..end].to_vec();
-            detail.track_ids = detail.track_ids[start..end].to_vec();
-        } else {
-            detail.tracks = vec![];
-            detail.track_ids = vec![];
-        }
-        detail.has_more = Some((offset + limit) < total);
-        Ok(detail)
+        // 专辑接口返回全量曲目表, capacity 参数用不上; 缓存整个 AlbumDetail,
+        // 命中时也能带上名称/封面等元信息(旧实现只缓存曲目列表, 命中路径元信息为空)
+        let client = Arc::clone(&self.client);
+        let page = self
+            .album_cache
+            .get(id, offset, limit, move |id, _| {
+                let client = Arc::clone(&client);
+                async move { Ok(client.album_detail(&id).await?.standardize()) }
+            })
+            .await?;
+        let mut value = page.value;
+        value.has_more = Some(page.has_more);
+        Ok(value)
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {

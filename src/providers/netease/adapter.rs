@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -21,6 +20,7 @@ use crate::{
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
+    utils::single_flight::SingleFlightCache,
 };
 
 use super::{
@@ -94,11 +94,15 @@ const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
     },
 ];
 
+/// 分页缓存扩容步长与失败重试次数(总尝试 = 1 + PAGE_RETRIES)
+const PAGE_BATCH: u32 = 200;
+const PAGE_RETRIES: u32 = 2;
+
 #[derive(Clone, Default)]
 pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
-    playlist_cache: Arc<Mutex<HashMap<String, (PlaylistDetail, Instant)>>>,
-    album_cache: Arc<Mutex<HashMap<String, (AlbumDetail, Instant)>>>,
+    playlist_cache: Arc<SingleFlightCache<PlaylistDetail>>,
+    album_cache: Arc<SingleFlightCache<AlbumDetail>>,
     star_cache: Arc<Mutex<HashMap<String, Vec<Track>>>>,
 }
 
@@ -106,8 +110,16 @@ impl NeteaseAdapter {
     pub fn new(client: Arc<NeteaseClient>) -> Self {
         Self {
             client,
-            playlist_cache: Arc::new(Mutex::new(HashMap::new())),
-            album_cache: Arc::new(Mutex::new(HashMap::new())),
+            playlist_cache: Arc::new(SingleFlightCache::new(
+                ProviderId::Netease,
+                PAGE_BATCH,
+                PAGE_RETRIES,
+            )),
+            album_cache: Arc::new(SingleFlightCache::new(
+                ProviderId::Netease,
+                PAGE_BATCH,
+                PAGE_RETRIES,
+            )),
             star_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -513,32 +525,17 @@ impl ProviderAdapter for NeteaseAdapter {
                 .standardize(title.unwrap_or_default().to_string(), id.to_string()));
         }
 
-        {
-            let cache = self
-                .playlist_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if let Some((detail, expires_at)) = cache.get(id) {
-                if *expires_at > Instant::now() {
-                    return Ok(slice_playlist_detail(detail, offset, limit));
-                }
-            }
-        }
-
-        let detail = self.client.playlist_detail(id).await?.standardize();
-
-        {
-            let mut cache = self
-                .playlist_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            cache.insert(
-                id.to_owned(),
-                (detail.clone(), Instant::now() + Duration::from_secs(300)),
-            );
-        }
-
-        Ok(slice_playlist_detail(&detail, offset, limit))
+        let client = Arc::clone(&self.client);
+        let page = self
+            .playlist_cache
+            .get(id, offset, limit, move |id, n| {
+                let client = Arc::clone(&client);
+                async move { Ok(client.playlist_detail(&id, n).await?.standardize()) }
+            })
+            .await?;
+        let mut value = page.value;
+        value.has_more = Some(page.has_more);
+        Ok(value)
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -552,26 +549,17 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 
     async fn album_detail(&self, id: &str, offset: u32, limit: u32) -> ProviderResult<AlbumDetail> {
-        {
-            let cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((detail, expires_at)) = cache.get(id) {
-                if *expires_at > Instant::now() {
-                    return Ok(slice_album_detail(detail, offset, limit));
-                }
-            }
-        }
-
-        let detail = self.client.album_detail(id).await?.standardize();
-
-        {
-            let mut cache = self.album_cache.lock().unwrap_or_else(|e| e.into_inner());
-            cache.insert(
-                id.to_owned(),
-                (detail.clone(), Instant::now() + Duration::from_secs(300)),
-            );
-        }
-
-        Ok(slice_album_detail(&detail, offset, limit))
+        let client = Arc::clone(&self.client);
+        let page = self
+            .album_cache
+            .get(id, offset, limit, move |id, _| {
+                let client = Arc::clone(&client);
+                async move { Ok(client.album_detail(&id).await?.standardize()) }
+            })
+            .await?;
+        let mut value = page.value;
+        value.has_more = Some(page.has_more);
+        Ok(value)
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
@@ -814,68 +802,6 @@ impl ProviderAdapter for NeteaseAdapter {
 
             _ => Err(unavailable("stream_next: invalid id".to_owned())),
         }
-    }
-}
-
-fn slice_album_detail(detail: &AlbumDetail, offset: u32, limit: u32) -> AlbumDetail {
-    let total = detail.tracks.len() as u32;
-    let start = offset as usize;
-    if start >= detail.tracks.len() {
-        return AlbumDetail {
-            provider: detail.provider,
-            id: detail.id.clone(),
-            name: detail.name.clone(),
-            artists: detail.artists.clone(),
-            cover_url: detail.cover_url.clone(),
-            track_count: detail.track_count,
-            track_ids: vec![],
-            collected: detail.collected,
-            tracks: vec![],
-            has_more: Some(offset < total),
-        };
-    }
-    let end = (start + limit as usize).min(detail.tracks.len());
-    AlbumDetail {
-        provider: detail.provider,
-        id: detail.id.clone(),
-        name: detail.name.clone(),
-        artists: detail.artists.clone(),
-        cover_url: detail.cover_url.clone(),
-        track_count: detail.track_count,
-        track_ids: detail.track_ids[start..end].to_vec(),
-        collected: detail.collected,
-        tracks: detail.tracks[start..end].to_vec(),
-        has_more: Some((offset + limit) < total),
-    }
-}
-
-fn slice_playlist_detail(detail: &PlaylistDetail, offset: u32, limit: u32) -> PlaylistDetail {
-    let total = detail.tracks.len() as u32;
-    let start = offset as usize;
-    if start >= detail.tracks.len() {
-        return PlaylistDetail {
-            provider: detail.provider,
-            id: detail.id.clone(),
-            name: detail.name.clone(),
-            cover_url: detail.cover_url.clone(),
-            track_count: detail.track_count,
-            track_ids: vec![],
-            collected: detail.collected,
-            tracks: vec![],
-            has_more: Some(offset < total),
-        };
-    }
-    let end = (start + limit as usize).min(detail.tracks.len());
-    PlaylistDetail {
-        provider: detail.provider,
-        id: detail.id.clone(),
-        name: detail.name.clone(),
-        cover_url: detail.cover_url.clone(),
-        track_count: detail.track_count,
-        track_ids: detail.track_ids[start..end].to_vec(),
-        collected: detail.collected,
-        tracks: detail.tracks[start..end].to_vec(),
-        has_more: Some((offset + limit) < total),
     }
 }
 
