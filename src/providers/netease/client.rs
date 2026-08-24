@@ -240,15 +240,14 @@ impl NeteaseClient {
     pub(super) async fn playlist_detail(
         &self,
         id: &str,
-        offset: u32,
-        limit: u32,
     ) -> ProviderResult<NeteasePlaylistDetailResp> {
+        //v6接口不支持offset分页(n只截断track数), 一次取全量由adapter本地切片
         self.eapi_model(
             "/api/v6/playlist/detail",
             json!({
                 "id": id,
-                "n": limit,
-                "s": offset,
+                "n": 1000,
+                "s": 0,
                 "e_r": false
             }),
             self.current_cookie().await.as_deref(),

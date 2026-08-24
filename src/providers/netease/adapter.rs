@@ -97,6 +97,7 @@ const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
 #[derive(Clone, Default)]
 pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
+    playlist_cache: Arc<Mutex<HashMap<String, (PlaylistDetail, Instant)>>>,
     album_cache: Arc<Mutex<HashMap<String, (AlbumDetail, Instant)>>>,
     star_cache: Arc<Mutex<HashMap<String, Vec<Track>>>>,
 }
@@ -105,6 +106,7 @@ impl NeteaseAdapter {
     pub fn new(client: Arc<NeteaseClient>) -> Self {
         Self {
             client,
+            playlist_cache: Arc::new(Mutex::new(HashMap::new())),
             album_cache: Arc::new(Mutex::new(HashMap::new())),
             star_cache: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -495,25 +497,48 @@ impl ProviderAdapter for NeteaseAdapter {
         offset: u32,
         limit: u32,
     ) -> ProviderResult<PlaylistDetail> {
-        Ok(if let Some(raw) = id.strip_prefix("D") {
+        if let Some(raw) = id.strip_prefix("D") {
             let (args, title) = raw.split_once('|').unzip();
             if !id.contains("categoryId") {
-                self.client
+                return Ok(self
+                    .client
                     .daily_songs()
                     .await?
-                    .standardize(title.unwrap_or_default().to_string(), id.to_string())
-            } else {
-                self.client
-                    .daily_songs2(args.unwrap_or(raw))
-                    .await?
-                    .standardize(title.unwrap_or_default().to_string(), id.to_string())
+                    .standardize(title.unwrap_or_default().to_string(), id.to_string()));
             }
-        } else {
-            self.client
-                .playlist_detail(id, offset, limit)
+            return Ok(self
+                .client
+                .daily_songs2(args.unwrap_or(raw))
                 .await?
-                .standardize()
-        })
+                .standardize(title.unwrap_or_default().to_string(), id.to_string()));
+        }
+
+        {
+            let cache = self
+                .playlist_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some((detail, expires_at)) = cache.get(id) {
+                if *expires_at > Instant::now() {
+                    return Ok(slice_playlist_detail(detail, offset, limit));
+                }
+            }
+        }
+
+        let detail = self.client.playlist_detail(id).await?.standardize();
+
+        {
+            let mut cache = self
+                .playlist_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            cache.insert(
+                id.to_owned(),
+                (detail.clone(), Instant::now() + Duration::from_secs(300)),
+            );
+        }
+
+        Ok(slice_playlist_detail(&detail, offset, limit))
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -815,6 +840,36 @@ fn slice_album_detail(detail: &AlbumDetail, offset: u32, limit: u32) -> AlbumDet
         id: detail.id.clone(),
         name: detail.name.clone(),
         artists: detail.artists.clone(),
+        cover_url: detail.cover_url.clone(),
+        track_count: detail.track_count,
+        track_ids: detail.track_ids[start..end].to_vec(),
+        collected: detail.collected,
+        tracks: detail.tracks[start..end].to_vec(),
+        has_more: Some((offset + limit) < total),
+    }
+}
+
+fn slice_playlist_detail(detail: &PlaylistDetail, offset: u32, limit: u32) -> PlaylistDetail {
+    let total = detail.tracks.len() as u32;
+    let start = offset as usize;
+    if start >= detail.tracks.len() {
+        return PlaylistDetail {
+            provider: detail.provider,
+            id: detail.id.clone(),
+            name: detail.name.clone(),
+            cover_url: detail.cover_url.clone(),
+            track_count: detail.track_count,
+            track_ids: vec![],
+            collected: detail.collected,
+            tracks: vec![],
+            has_more: Some(offset < total),
+        };
+    }
+    let end = (start + limit as usize).min(detail.tracks.len());
+    PlaylistDetail {
+        provider: detail.provider,
+        id: detail.id.clone(),
+        name: detail.name.clone(),
         cover_url: detail.cover_url.clone(),
         track_count: detail.track_count,
         track_ids: detail.track_ids[start..end].to_vec(),
