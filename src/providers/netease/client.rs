@@ -625,12 +625,39 @@ impl NeteaseClient {
         action: &str,
     ) -> ProviderResult<T> {
         let response_encrypted = payload.get("e_r").and_then(Value::as_bool).unwrap_or(false);
-        let header: HashMap<String, Value> = create_eapi_header(&cookie.unwrap_or_default());
         let mut body = payload.as_object().cloned().unwrap_or_default();
-        body.insert(
-            "header".to_owned(),
-            json!(serde_json::to_string(&header).unwrap_or_default()),
-        );
+        let cookie = if let Some(cookie) = cookie {
+            let c = Cookie::new(cookie);
+            let v = vec![
+                ("clientSign", ""),
+                ("os", "pc"),
+                ("appver", "3.1.34.205281"),
+                ("deviceId", ""),
+                (
+                    "osver",
+                    "Microsoft-Windows-11-Professional-build-114514-64bit",
+                ),
+            ];
+            //find_or::<Value> will return Null.
+            let mut header: HashMap<String, Value> = v
+                .into_iter()
+                .map(|(a, b)| {
+                    (
+                        a.to_owned(),
+                        serde_json::json!(c.find_or::<String>(a, b.into())),
+                    )
+                })
+                .collect();
+            header.insert("requestId".to_owned(), json!(0));
+            body.insert(
+                "header".to_owned(),
+                json!(serde_json::to_string(&header).unwrap_or_default()),
+            );
+            &format!("{}; _ntes_nnid={},{}", cookie.trim_end_matches(";"), c.find_or_default::<String>("_ntes_nuid"), chrono::Utc::now().timestamp_millis())
+        } else {
+            ""
+        };
+        
 
         let encrypted = encrypt_eapi(uri, crate::utils::EapiBody::Json(&Value::Object(body)))
             .map_err(|err| internal_error(format!("encrypt eapi payload: {err}")))?;
@@ -644,8 +671,8 @@ impl NeteaseClient {
         );
 
         headers.insert("mconfig-info", HeaderValue::from_static(CFG));
-
-        headers.insert(COOKIE, header_value(&cookie.unwrap_or_default())?);
+        
+        headers.insert(COOKIE, header_value(&cookie)?);
 
         Ok(self
             .post_form_response(
@@ -809,32 +836,6 @@ fn cookie_map_to_string(cookie: &HashMap<String, String>) -> String {
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>()
         .join("; ")
-}
-
-fn create_eapi_header(cookie: &str) -> HashMap<String, Value> {
-    let c = Cookie::new(cookie);
-    let v = vec![
-        ("clientSign", ""),
-        ("os", "pc"),
-        ("appver", "3.1.34.205281"),
-        ("deviceId", ""),
-        (
-            "osver",
-            "Microsoft-Windows-11-Professional-build-114514-64bit",
-        ),
-    ];
-    //find_or::<Value> will return Null.
-    let mut header: HashMap<String, Value> = v
-        .into_iter()
-        .map(|(a, b)| {
-            (
-                a.to_owned(),
-                serde_json::json!(c.find_or::<String>(a, b.into())),
-            )
-        })
-        .collect();
-    header.insert("requestId".to_owned(), json!(0));
-    header
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
