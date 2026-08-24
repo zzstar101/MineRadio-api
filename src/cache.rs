@@ -1,9 +1,9 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     future::Future,
     path::PathBuf,
-    sync::OnceLock,
+    sync::{Arc, LazyLock, Mutex as StdMutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +19,17 @@ pub(crate) const TTL_1_DAY: Duration = Duration::from_secs(24 * 60 * 60);
 const MIN_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_TTL: Duration = Duration::from_secs(36 * 60 * 60);
 static CACHE: OnceLock<Cache> = OnceLock::new();
+
+/// 刷新去重闸门: 同 (provider, key) 的并发刷新只放一个真正执行, 其余排队后
+/// 通过双检直接吃缓存结果。键数量有限(目前仅各 provider 的推荐页), 不做回收。
+static REFRESH_GATES: LazyLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn refresh_gate(provider: ProviderId, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let gate_key = format!("{}:{key}", provider.as_str());
+    let mut gates = REFRESH_GATES.lock().unwrap_or_else(|e| e.into_inner());
+    Arc::clone(gates.entry(gate_key).or_default())
+}
 
 struct Cache {
     file_path: PathBuf,
@@ -91,6 +102,16 @@ where
     if let Some(raw) = get(provider, key).await {
         return Ok(Some(raw));
     }
+
+    // 同 key 并发 miss 只放一个去刷新, 其余在闸门上排队
+    let gate = refresh_gate(provider, key);
+    let _guard = gate.lock().await;
+
+    // 双检: 排队期间前一个请求可能已经刷新完成
+    if let Some(raw) = get(provider, key).await {
+        return Ok(Some(raw));
+    }
+
     let raw = refresh().await?;
     if let Some(raw) = raw.as_ref() {
         insert(provider, key, ttl, raw.clone()).await;
@@ -113,7 +134,14 @@ pub(crate) async fn remove(provider: ProviderId, key: &str) {
 }
 
 fn dead_at(ttl: Duration) -> Option<u64> {
-    (ttl > MIN_TTL && ttl <= MAX_TTL).then(|| now().saturating_add(ttl.as_secs()))
+    if ttl > MIN_TTL && ttl <= MAX_TTL {
+        return Some(now().saturating_add(ttl.as_secs()));
+    }
+    // 区间外的 TTL 会让本次写入被静默跳过, 必须留痕否则调用方无从察觉
+    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+        "cache: TTL {ttl:?} 超出允许区间 [{MIN_TTL:?}, {MAX_TTL:?}], 本次写入忽略"
+    )));
+    None
 }
 
 fn now() -> u64 {
@@ -140,5 +168,79 @@ fn write_cache(file_path: &PathBuf, contents: &CacheContents) {
         if let Err(err) = fs::write(&tmp, json).and_then(|()| fs::rename(&tmp, file_path)) {
             sidecar_log::spawn_runtime_log(serde_json::json!(format!("Cache 写入失败: {err}")));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use super::*;
+
+    /// CACHE 是进程级 OnceLock, 相关用例必须共用同一路径并合并在单个测试里
+    #[tokio::test]
+    async fn refresh_dedup_and_ttl_bounds() {
+        let dir = std::env::temp_dir().join(format!("mineradio_cache_test_{}", std::process::id()));
+        configure(dir.clone()).expect("configure cache");
+
+        // 同 key 并发刷新只允许一次真实上游调用: 刷新期间让出执行权,
+        // 强制第二个请求在闸门上排队后走双检命中
+        let calls = Arc::new(AtomicU32::new(0));
+        let make_refresh = |calls: Arc<AtomicU32>| {
+            move || {
+                let calls = Arc::clone(&calls);
+                async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    Ok::<_, ()>(Some("value".to_owned()))
+                }
+            }
+        };
+
+        let (a, b) = tokio::join!(
+            get_or_refresh(
+                ProviderId::Netease,
+                "dedup_test",
+                TTL_1_DAY,
+                make_refresh(Arc::clone(&calls))
+            ),
+            get_or_refresh(
+                ProviderId::Netease,
+                "dedup_test",
+                TTL_1_DAY,
+                make_refresh(Arc::clone(&calls))
+            ),
+        );
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        // 区间外的 TTL 拒绝写入且不落盘
+        insert(
+            ProviderId::Soda,
+            "short_ttl",
+            Duration::from_secs(1),
+            "x".to_owned(),
+        )
+        .await;
+        assert_eq!(get(ProviderId::Soda, "short_ttl").await, None);
+        insert(
+            ProviderId::Soda,
+            "long_ttl",
+            Duration::from_secs(48 * 60 * 60),
+            "y".to_owned(),
+        )
+        .await;
+        assert_eq!(get(ProviderId::Soda, "long_ttl").await, None);
+
+        // 区间内的正常写入可读回
+        insert(ProviderId::Soda, "valid_ttl", TTL_1_DAY, "z".to_owned()).await;
+        assert_eq!(
+            get(ProviderId::Soda, "valid_ttl").await.as_deref(),
+            Some("z")
+        );
+
+        let _ = std::fs::remove_file(dir.join("cache.json"));
+        let _ = std::fs::remove_dir(dir);
     }
 }
