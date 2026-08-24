@@ -135,7 +135,9 @@ fn write_cache(file_path: &PathBuf, contents: &CacheContents) {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(contents) {
-        if let Err(err) = fs::write(file_path, json) {
+        // 先写临时文件再原子替换, 写一半崩溃也不会留下截断的 JSON
+        let tmp = file_path.with_extension("tmp");
+        if let Err(err) = fs::write(&tmp, json).and_then(|()| fs::rename(&tmp, file_path)) {
             sidecar_log::spawn_runtime_log(serde_json::json!(format!("Cache 写入失败: {err}")));
         }
     }
