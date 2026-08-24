@@ -270,7 +270,7 @@ pub fn generate_ntes_nuid() -> String {
 pub fn generate_client_sign(device_id: &str, secret_key: &str) -> String {
     let hex_device_id = hex::encode(device_id.as_bytes());
 
-    let sign_string = format!("{}@@@{}", generate_random_mac(), hex_device_id);
+    let sign_string = format!("{}@@@{}", generate_random_mac(), &hex_device_id[..hex_device_id.len().min(40)]);
 
     let mut hasher = Sha256::new();
     hasher.update(sign_string.as_bytes());

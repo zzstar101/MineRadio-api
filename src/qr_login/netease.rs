@@ -131,8 +131,8 @@ impl QrLogin for NeteaseQrLoginService {
 
                 for _ in 0..5 {
                     match reg().await {
-                        Ok((a, b, c)) => {
-                            result = format!("deviceId={}; clientSign={}; NMTID={}", a, b, c);
+                        Ok((a, b)) => {
+                            result = format!("deviceId={a}; clientSign={b};");
                             break;
                         }
                         Err(e) => {
@@ -147,7 +147,7 @@ impl QrLogin for NeteaseQrLoginService {
                 ProviderId::Netease,
                 //一定存在的
                 format!(
-                    "{}; os=pc; WEVNSM=1.0.0; _ntes_nuid={}; WNMCID={}; ",
+                    "{}; os=pc; WEVNSM=1.0.0; channel=netease; mode=System Product Name; _ntes_nuid={}; WNMCID={}; osver={OSVER}; appver={APPVER}; ",
                     cookie.trim_end_matches(';'),
                     generate_ntes_nuid(),
                     generate_wnmcid()
@@ -178,10 +178,9 @@ fn anon_client() -> &'static Client {
     CLIENT.get_or_init(Client::new)
 }
 
-async fn reg() -> Result<(String, String, String), String> {
+async fn reg() -> Result<(String, String), String> {
     let mut headers = HeaderMap::new();
     let device_id = generate_deviceid();
-    let nmtid = generate_nmtid();
     let encoded_id = BASE64.encode(format!(
         "{} {}",
         &device_id,
@@ -189,7 +188,7 @@ async fn reg() -> Result<(String, String, String), String> {
     ));
     let sign = generate_client_sign(&device_id, "");
 
-    headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver=; clientSign={}; MUSIC_SNS=; NMTID={}", &device_id, &sign, &nmtid)).map_err(|e| format!("fail to insert cookie: {}", e.to_string()))?);
+    headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver=; clientSign={}; MUSIC_SNS=;", &device_id, &sign)).map_err(|e| format!("fail to insert cookie: {}", e.to_string()))?);
 
     headers.insert(USER_AGENT, HeaderValue::from_static(UA));
 
@@ -232,7 +231,7 @@ async fn reg() -> Result<(String, String, String), String> {
         .and_then(|v| v.as_u64())
         .map(|v| v == 200)
         .unwrap_or(false)
-        .then_some((device_id, sign, nmtid))
+        .then_some((device_id, sign))
         .ok_or("failed to reg".into())
 }
 
