@@ -959,9 +959,12 @@ fn unavailable(message: String) -> ProviderError {
 mod tests {
     use serde_json::json;
 
-    use crate::types::{AlbumDetail, ProviderId, Track};
+    use std::sync::Arc;
 
-    use super::{pick_song_url_datum, response_code, slice_album_detail};
+    use crate::types::{AlbumDetail, ProviderId, Track};
+    use crate::utils::single_flight::SingleFlightCache;
+
+    use super::{pick_song_url_datum, response_code};
 
     #[test]
     fn song_url_datum_prefers_the_requested_track_id() {
@@ -986,8 +989,9 @@ mod tests {
         assert_eq!(response_code(&json!({ "code": "201" })), 200);
     }
 
-    #[test]
-    fn slice_album_detail_preserves_metadata_and_cuts_tracks() {
+    /// 缓存路径下切片保留元数据、正确截取曲目并给出 has_more
+    #[tokio::test]
+    async fn cache_slices_pages_and_preserves_metadata() {
         let detail = AlbumDetail {
             provider: ProviderId::Netease,
             id: "1".to_owned(),
@@ -1016,21 +1020,37 @@ mod tests {
             ],
             has_more: None,
         };
+        let data = Arc::new(detail);
+        let cache = SingleFlightCache::<AlbumDetail>::new(ProviderId::Netease, 200, 0);
+        let fetch_data = Arc::clone(&data);
 
-        let sliced = slice_album_detail(&detail, 1, 1);
-        assert_eq!(sliced.name, "专辑名");
-        assert_eq!(sliced.artists, vec!["歌手"]);
-        assert_eq!(sliced.cover_url, "https://example.com/c.jpg");
-        assert_eq!(sliced.track_count, Some(3));
-        assert_eq!(sliced.track_ids, vec!["2"]);
-        assert_eq!(sliced.tracks.len(), 1);
-        assert_eq!(sliced.tracks[0].title, "歌2");
-        assert_eq!(sliced.has_more, Some(true));
+        let page = cache
+            .get("1", 1, 1, move |_, _| {
+                let data = Arc::clone(&fetch_data);
+                async move { Ok((*data).clone()) }
+            })
+            .await
+            .expect("page");
+        assert_eq!(page.value.name, "专辑名");
+        assert_eq!(page.value.artists, vec!["歌手"]);
+        assert_eq!(page.value.cover_url, "https://example.com/c.jpg");
+        assert_eq!(page.value.track_count, Some(3));
+        assert_eq!(page.value.track_ids, vec!["2"]);
+        assert_eq!(page.value.tracks.len(), 1);
+        assert_eq!(page.value.tracks[0].title, "歌2");
+        assert!(page.has_more);
 
-        let beyond = slice_album_detail(&detail, 5, 2);
-        assert!(beyond.tracks.is_empty());
-        assert!(beyond.track_ids.is_empty());
-        assert_eq!(beyond.name, "专辑名");
-        assert_eq!(beyond.has_more, Some(false));
+        // 区间越过缓存末尾: 触发扩容重取后仍得到空页
+        let beyond = cache
+            .get("1", 5, 2, move |_, _| {
+                let data = Arc::clone(&data);
+                async move { Ok((*data).clone()) }
+            })
+            .await
+            .expect("page");
+        assert!(beyond.value.tracks.is_empty());
+        assert!(beyond.value.track_ids.is_empty());
+        assert_eq!(beyond.value.name, "专辑名");
+        assert!(!beyond.has_more);
     }
 }
