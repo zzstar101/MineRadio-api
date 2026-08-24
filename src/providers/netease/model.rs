@@ -534,7 +534,7 @@ struct RcmdM3C {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RcmdM3CR {
-    resource_ext_info: RcmdM3CRE
+    resource_ext_info: RcmdM3CRE,
 }
 
 #[derive(Deserialize)]

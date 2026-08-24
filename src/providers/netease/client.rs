@@ -653,11 +653,15 @@ impl NeteaseClient {
                 "header".to_owned(),
                 json!(serde_json::to_string(&header).unwrap_or_default()),
             );
-            &format!("{}; _ntes_nnid={},{}", cookie.trim_end_matches(";"), c.find_or_default::<String>("_ntes_nuid"), chrono::Utc::now().timestamp_millis())
+            &format!(
+                "{}; _ntes_nnid={},{}",
+                cookie.trim_end_matches(";"),
+                c.find_or_default::<String>("_ntes_nuid"),
+                chrono::Utc::now().timestamp_millis()
+            )
         } else {
             ""
         };
-        
 
         let encrypted = encrypt_eapi(uri, crate::utils::EapiBody::Json(&Value::Object(body)))
             .map_err(|err| internal_error(format!("encrypt eapi payload: {err}")))?;
@@ -671,7 +675,7 @@ impl NeteaseClient {
         );
 
         headers.insert("mconfig-info", HeaderValue::from_static(CFG));
-        
+
         headers.insert(COOKIE, header_value(&cookie)?);
 
         Ok(self
