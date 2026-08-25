@@ -16,8 +16,8 @@ use crate::{
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
     utils::{
         cryptors::netease::{
-            cloudmusic_dll_encode_id, generate_client_sign, generate_deviceid, generate_nmtid,
-            generate_ntes_nuid, generate_wnmcid,
+            cloudmusic_dll_encode_id, generate_client_sign, generate_deviceid, generate_ntes_nuid,
+            generate_wnmcid,
         },
         decrypt_eapi_response, encrypt_eapi, encrypt_weapi, generate_weapi_secret_key,
     },
@@ -448,7 +448,7 @@ fn render_qr_data_uri(url: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::cryptors::netease::{generate_client_sign, generate_nmtid};
+    use crate::utils::cryptors::netease::generate_client_sign;
     use crate::utils::{decrypt_eapi_response, encrypt_eapi};
 
     use super::*;
@@ -553,7 +553,7 @@ mod tests {
             cloudmusic_dll_encode_id(&device_id),
         ));
         let sign = generate_client_sign(&device_id, "");
-        headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver={APPVER}; clientSign={}; MUSIC_SNS=; NMTID={}", &device_id, &sign, generate_nmtid())).expect("fail to generate cookie"));
+        headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver={APPVER}; clientSign={}; MUSIC_SNS=; NMTID={}", &device_id, &sign, "0102030405060708090a0b0c0d0e0f10")).expect("fail to generate cookie"));
         headers.insert(USER_AGENT, HeaderValue::from_static(UA));
         headers.insert(
             CONTENT_TYPE,

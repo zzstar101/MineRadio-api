@@ -230,15 +230,6 @@ pub fn generate_random_mac() -> String {
     )
 }
 
-pub fn generate_nmtid() -> String {
-    let mut rng = rand::rng();
-    let mut bytes = [0u8; 16];
-
-    rng.fill(&mut bytes);
-
-    hex::encode(bytes)
-}
-
 pub fn generate_wnmcid() -> String {
     const CHARACTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 
