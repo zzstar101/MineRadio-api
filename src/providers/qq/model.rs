@@ -274,11 +274,12 @@ pub(super) struct QqPlaylistDetailResp {
 }
 
 impl QqPlaylistDetailResp {
-    pub fn standardize(self) -> PlaylistDetail {
+    pub fn standardize(self, offset: u32) -> PlaylistDetail {
         let data = self.req_0.data;
         let info = data.dirinfo;
         let songlist = data.songlist;
         let mut track_ids = Vec::new();
+        let has_more = Some(info.songnum > offset + track_ids.len() as u32);
         let tracks = songlist
             .into_iter()
             .map(|t| {
@@ -294,7 +295,7 @@ impl QqPlaylistDetailResp {
             track_count: Some(info.songnum),
             track_ids,
             collected: None,
-            has_more: None,
+            has_more,
             tracks,
         }
     }

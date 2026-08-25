@@ -310,7 +310,7 @@ impl ProviderAdapter for QqAdapter {
             .client
             .playlist_detail(id, offset, limit)
             .await?
-            .standardize())
+            .standardize(offset))
     }
 
     async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
