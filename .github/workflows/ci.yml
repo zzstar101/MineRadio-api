@@ -2,27 +2,124 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
+    tags: ["**"]
+  pull_request:
 
 jobs:
-  build:
+  plan:
+    name: 决定运行平台
     runs-on: ubuntu-latest
-
+    outputs:
+      windows: ${{ steps.decide.outputs.windows }}
+      macos: ${{ steps.decide.outputs.macos }}
+      linux: ${{ steps.decide.outputs.linux }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - id: decide
+        name: 解析触发条件
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          run_windows=false
+          run_macos=false
+          run_linux=false
+          msg_lower=$(printf '%s' "$COMMIT_MSG" | tr '[:upper:]' '[:lower:]')
+          tag_lower=$(printf '%s' "$REF_NAME" | tr '[:upper:]' '[:lower:]')
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+          if [ "$EVENT" = "pull_request" ]; then
+            # PR 一律全平台
+            run_windows=true
+            run_macos=true
+            run_linux=true
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
+          elif [ "$REF_TYPE" = "tag" ]; then
+            # 标签关键字定向: 命中哪个平台跑哪个; 无关键字默认仅 windows
+            case "$tag_lower" in
+              *win*) run_windows=true ;;
+              *mac*|*darwin*|*apple*) run_macos=true ;;
+              *linux*) run_linux=true ;;
+              *) run_windows=true ;;
+            esac
+
+          else
+            # 普通 push: 提交信息含 "full ci"(不区分大小写) 跑全平台, 否则默认仅 windows
+            case "$msg_lower" in
+              *"full ci"*)
+                run_windows=true
+                run_macos=true
+                run_linux=true
+                ;;
+              *)
+                run_windows=true
+                ;;
+            esac
+          fi
+
+          echo "windows=$run_windows" >> "$GITHUB_OUTPUT"
+          echo "macos=$run_macos" >> "$GITHUB_OUTPUT"
+          echo "linux=$run_linux" >> "$GITHUB_OUTPUT"
+
+  fmt:
+    name: rustfmt 检查 (edition 2024)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          components: rustfmt
 
-      - name: Cargo Check
-        run: cargo check
+      - name: Check formatting
+        run: cargo fmt --check
+
+  test-windows:
+    name: cargo test (Windows)
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run lib tests
+        run: cargo test --lib
+
+  test-macos:
+    name: cargo test (macOS)
+    needs: plan
+    if: needs.plan.outputs.macos == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run lib tests
+        run: cargo test --lib
+
+  test-linux:
+    name: cargo test (Linux)
+    needs: plan
+    if: needs.plan.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # keyring 的 Linux 后端(Secret Service)依赖 libdbus
+      - name: Install libdbus
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run lib tests
+        run: cargo test --lib
