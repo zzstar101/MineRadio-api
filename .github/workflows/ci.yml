@@ -14,6 +14,7 @@ jobs:
       windows: ${{ steps.decide.outputs.windows }}
       macos: ${{ steps.decide.outputs.macos }}
       linux: ${{ steps.decide.outputs.linux }}
+      any: ${{ steps.decide.outputs.any }}
     steps:
       - id: decide
         name: 解析触发条件
@@ -36,16 +37,20 @@ jobs:
             run_linux=true
 
           elif [ "$REF_TYPE" = "tag" ]; then
-            # 标签关键字定向: 命中哪个平台跑哪个; 无关键字默认仅 windows
+            # 标签关键字定向: 命中哪个平台跑哪个; 无关键字默认仅 linux
             case "$tag_lower" in
               *win*) run_windows=true ;;
               *mac*|*darwin*|*apple*) run_macos=true ;;
-              *linux*) run_linux=true ;;
-              *) run_windows=true ;;
+              *linux*|*ubuntu*) run_linux=true ;;
+              *) run_linux=true ;;
             esac
 
+          elif [[ "$msg_lower" == *"no ci"* ]]; then
+            # 提交信息含 "no ci": 本提交跳过全部检查
+            :
+
           else
-            # 普通 push: 提交信息含 "full ci"(不区分大小写) 跑全平台, 否则默认仅 windows
+            # 普通 push: 含 "full ci"(不区分大小写) 跑全平台, 否则默认仅 linux
             case "$msg_lower" in
               *"full ci"*)
                 run_windows=true
@@ -53,7 +58,7 @@ jobs:
                 run_linux=true
                 ;;
               *)
-                run_windows=true
+                run_linux=true
                 ;;
             esac
           fi
@@ -62,8 +67,16 @@ jobs:
           echo "macos=$run_macos" >> "$GITHUB_OUTPUT"
           echo "linux=$run_linux" >> "$GITHUB_OUTPUT"
 
+          if [ "$run_windows" = true ] || [ "$run_macos" = true ] || [ "$run_linux" = true ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
   fmt:
     name: rustfmt 检查 (edition 2024)
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,13 +88,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-  test-windows:
-    name: cargo test (Windows)
+  test-linux:
+    name: Test (Linux)
     needs: plan
-    if: needs.plan.outputs.windows == 'true'
-    runs-on: windows-latest
+    if: needs.plan.outputs.linux == 'true'
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # keyring 的 Linux 后端(Secret Service)依赖 libdbus
+      - name: Install libdbus
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -91,7 +108,7 @@ jobs:
         run: cargo test --lib
 
   test-macos:
-    name: cargo test (macOS)
+    name: Test (macOS)
     needs: plan
     if: needs.plan.outputs.macos == 'true'
     runs-on: macos-latest
@@ -105,17 +122,13 @@ jobs:
       - name: Run lib tests
         run: cargo test --lib
 
-  test-linux:
-    name: cargo test (Linux)
+  test-windows:
+    name: Test (Windows)
     needs: plan
-    if: needs.plan.outputs.linux == 'true'
-    runs-on: ubuntu-latest
+    if: needs.plan.outputs.windows == 'true'
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      # keyring 的 Linux 后端(Secret Service)依赖 libdbus
-      - name: Install libdbus
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
