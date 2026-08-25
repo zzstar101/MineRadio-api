@@ -883,7 +883,6 @@ mod tests {
         fn with_song_url(mut self, url: &str) -> Self {
             self.song_url_result = Some(SongUrlResult {
                 url: url.to_owned(),
-                proxied: false,
                 provider: None,
                 trial: None,
                 vip_level: None,

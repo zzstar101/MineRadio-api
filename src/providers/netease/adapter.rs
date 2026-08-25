@@ -293,7 +293,6 @@ impl ProviderAdapter for NeteaseAdapter {
                     "audio-proxy?url={}&provider=netease",
                     urlencoding::encode(url.unwrap_or_default())
                 ),
-                proxied: false,
                 provider: Some(ProviderId::Netease),
                 trial: Some(trial),
                 vip_level: Some(vip_level.clone()),

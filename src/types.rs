@@ -153,8 +153,6 @@ pub struct SongUrlOptions {
 #[serde(rename_all = "camelCase")]
 pub struct SongUrlResult {
     pub url: String,
-    #[serde(default)]
-    pub proxied: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderId>, //留着测试的时候看最终是否是原生而不是换源来的
     #[serde(skip_serializing_if = "Option::is_none")]

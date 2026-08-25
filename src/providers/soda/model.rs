@@ -312,7 +312,6 @@ impl SodaSongUrlResp {
                 urlencoding::encode(play_url),
                 urlencoding::encode(&play_info.play_auth)
             ),
-            proxied: true,
             provider: Some(ProviderId::Soda),
             expires_at: Some(play_info.url_expire.to_string()),
             ..Default::default()

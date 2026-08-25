@@ -77,7 +77,6 @@ impl ProviderAdapter for SpotifyAdapter {
                 urlencoding::encode(&track.source_id),
                 urlencoding::encode(quality.id)
             ),
-            proxied: true,
             provider: Some(ProviderId::Spotify),
             trial: Some(false),
             ..Default::default()

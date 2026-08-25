@@ -756,7 +756,6 @@ impl QqSongUrlResp {
 
         Some(SongUrlResult {
             url: url,
-            proxied: en,
             provider: Some(ProviderId::Qq),
             trial: Some(false),
             expires_at: None,
