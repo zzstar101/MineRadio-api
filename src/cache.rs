@@ -27,7 +27,9 @@ static REFRESH_GATES: LazyLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<(
 
 fn refresh_gate(provider: ProviderId, key: &str) -> Arc<tokio::sync::Mutex<()>> {
     let gate_key = format!("{}:{key}", provider.as_str());
-    let mut gates = REFRESH_GATES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut gates = REFRESH_GATES
+        .lock()
+        .unwrap_or_else(crate::utils::poison::continue_on_poison);
     Arc::clone(gates.entry(gate_key).or_default())
 }
 

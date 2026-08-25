@@ -112,7 +112,10 @@ impl<V: Paginated> SingleFlightCache<V> {
 
         // 登记容量需求后取该 key 的单飞闸门(每 key 一把, 首次访问时创建)
         let gate = {
-            let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+            let mut slots = self
+                .slots
+                .lock()
+                .unwrap_or_else(crate::utils::poison::continue_on_poison);
             let slot = slots.entry(key.to_owned()).or_default();
             slot.demand = slot.demand.max(need);
             Arc::clone(&slot.gate)
@@ -121,7 +124,10 @@ impl<V: Paginated> SingleFlightCache<V> {
 
         // 合并排队期间累积的最大需求, 一次请求尽量喂饱整个队列
         let target = {
-            let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+            let mut slots = self
+                .slots
+                .lock()
+                .unwrap_or_else(crate::utils::poison::continue_on_poison);
             let slot = slots.entry(key.to_owned()).or_default();
             let merged = slot.demand.max(need);
             slot.demand = 0;
@@ -141,7 +147,10 @@ impl<V: Paginated> SingleFlightCache<V> {
                 Ok(value) => {
                     let total = value.total();
                     {
-                        let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut slots = self
+                            .slots
+                            .lock()
+                            .unwrap_or_else(crate::utils::poison::continue_on_poison);
                         slots.entry(key.to_owned()).or_default().entry =
                             Some((value.clone(), Instant::now() + CACHE_TTL));
                     }
@@ -163,7 +172,10 @@ impl<V: Paginated> SingleFlightCache<V> {
 
     /// 缓存新鲜且总条数足以覆盖 need 时, 返回 [offset, offset+limit) 切片页
     fn cached_page(&self, key: &str, need: u32, offset: u32, limit: u32) -> Option<CachedPage<V>> {
-        let slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        let slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
         let (value, expires_at) = slots.get(key)?.entry.as_ref()?;
         if *expires_at <= Instant::now() || value.total() < need as usize {
             return None;

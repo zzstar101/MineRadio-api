@@ -756,7 +756,10 @@ impl ProviderAdapter for NeteaseAdapter {
 
                 // 先尝试从缓存拿
                 let cached = {
-                    let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut h = self
+                        .star_cache
+                        .lock()
+                        .unwrap_or_else(crate::utils::poison::continue_on_poison);
 
                     h.get_mut(pid).and_then(|v| {
                         let t = v.pop()?;
@@ -771,7 +774,10 @@ impl ProviderAdapter for NeteaseAdapter {
                             // 一直失败导致缓存清空还有tid兜底
                             self.client.star_mode(pid, &t.id).await?.standardize()
                         {
-                            let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut h = self
+                                .star_cache
+                                .lock()
+                                .unwrap_or_else(crate::utils::poison::continue_on_poison);
                             h.entry(pid.to_owned()).or_default().extend(nv);
                         }
                     }
@@ -792,7 +798,10 @@ impl ProviderAdapter for NeteaseAdapter {
                     .ok_or_else(|| unavailable("star_mode: empty".to_owned()))?;
 
                 {
-                    let mut h = self.star_cache.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut h = self
+                        .star_cache
+                        .lock()
+                        .unwrap_or_else(crate::utils::poison::continue_on_poison);
                     h.insert(pid.to_owned(), nv);
                 }
 

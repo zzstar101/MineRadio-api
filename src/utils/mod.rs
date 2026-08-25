@@ -1,6 +1,7 @@
 pub mod cookie;
 pub mod cryptors;
 pub mod podcast_analyzer;
+pub mod poison;
 pub mod single_flight;
 
 #[allow(unused_imports)]
