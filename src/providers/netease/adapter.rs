@@ -110,16 +110,12 @@ impl NeteaseAdapter {
     pub fn new(client: Arc<NeteaseClient>) -> Self {
         Self {
             client,
-            playlist_cache: Arc::new(SingleFlightCache::new(
+            playlist_cache: SingleFlightCache::shared(
                 ProviderId::Netease,
                 PAGE_BATCH,
                 PAGE_RETRIES,
-            )),
-            album_cache: Arc::new(SingleFlightCache::new(
-                ProviderId::Netease,
-                PAGE_BATCH,
-                PAGE_RETRIES,
-            )),
+            ),
+            album_cache: SingleFlightCache::shared(ProviderId::Netease, PAGE_BATCH, PAGE_RETRIES),
             star_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }

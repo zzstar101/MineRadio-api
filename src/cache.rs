@@ -105,6 +105,8 @@ where
         return Ok(Some(raw));
     }
 
+    crate::utils::janitor::ensure_spawned();
+
     // 同 key 并发 miss 只放一个去刷新, 其余在闸门上排队
     let gate = refresh_gate(provider, key);
     let _guard = gate.lock().await;
@@ -133,6 +135,29 @@ pub(crate) async fn remove(provider: ProviderId, key: &str) {
     {
         write_cache(&cache.file_path, &contents);
     }
+}
+
+/// 磁盘清扫: 丢弃过期条目, 有变化才重写。由全局守卫周期调用。
+pub(crate) async fn sweep_expired() -> usize {
+    let Some(cache) = CACHE.get() else {
+        return 0;
+    };
+    let _guard = cache.lock.lock().await;
+    let mut contents = read_cache(&cache.file_path);
+    let before: usize = contents.values().map(|entries| entries.len()).sum();
+    contents.retain(|_, entries| {
+        entries.retain(|_, value| value.dead_at > now());
+        !entries.is_empty()
+    });
+    let removed = before
+        - contents
+            .values()
+            .map(|entries| entries.len())
+            .sum::<usize>();
+    if removed > 0 {
+        write_cache(&cache.file_path, &contents);
+    }
+    removed
 }
 
 fn dead_at(ttl: Duration) -> Option<u64> {
@@ -237,6 +262,29 @@ mod tests {
 
         // 区间内的正常写入可读回
         insert(ProviderId::Soda, "valid_ttl", TTL_1_DAY, "z".to_owned()).await;
+        assert_eq!(
+            get(ProviderId::Soda, "valid_ttl").await.as_deref(),
+            Some("z")
+        );
+
+        // 守卫的磁盘清扫: 过期条目被删且只重写一次, 新鲜条目保留
+        {
+            let path = dir.join("cache.json");
+            let mut contents = read_cache(&path);
+            contents
+                .entry(ProviderId::Soda.as_str().to_owned())
+                .or_default()
+                .insert(
+                    "expired_disk".to_owned(),
+                    CacheValue {
+                        dead_at: now().saturating_sub(1),
+                        raw: "old".to_owned(),
+                    },
+                );
+            write_cache(&path, &contents);
+        }
+        assert_eq!(sweep_expired().await, 1);
+        assert_eq!(get(ProviderId::Soda, "expired_disk").await, None);
         assert_eq!(
             get(ProviderId::Soda, "valid_ttl").await.as_deref(),
             Some("z")

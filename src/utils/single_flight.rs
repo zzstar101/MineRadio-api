@@ -19,6 +19,7 @@ use crate::providers::{
     error::{ProviderError, ProviderErrorCode},
 };
 use crate::types::ProviderId;
+use crate::utils::janitor;
 
 /// 缓存条目存活时长
 const CACHE_TTL: Duration = Duration::from_secs(300);
@@ -92,6 +93,22 @@ impl<V: Paginated> SingleFlightCache<V> {
         }
     }
 
+    /// 构造并登记到全局缓存守卫, 供 adapter 字段直接初始化
+    pub fn shared(provider: ProviderId, batch: u32, retries: u32) -> Arc<Self>
+    where
+        Self: Sized + Send + Sync + 'static,
+        V: Send,
+    {
+        Arc::new_cyclic(|weak| {
+            let me = Self::new(provider, batch, retries);
+            // 先钉住具体类型再显式瘦身, 否则推断会把 new_cyclic 的 T 统一成 dyn
+            let concrete: std::sync::Weak<Self> = weak.clone();
+            let handle: std::sync::Weak<dyn janitor::Sweepable> = concrete;
+            janitor::register(handle);
+            me
+        })
+    }
+
     pub async fn get<F, Fut>(
         &self,
         key: &str,
@@ -103,6 +120,7 @@ impl<V: Paginated> SingleFlightCache<V> {
         F: Fn(String, u32) -> Fut,
         Fut: std::future::Future<Output = ProviderResult<V>>,
     {
+        janitor::ensure_spawned();
         let need = offset.saturating_add(limit);
 
         // 快路径: 新鲜且覆盖请求区间时直接切片, 不进闸门排队
@@ -184,11 +202,96 @@ impl<V: Paginated> SingleFlightCache<V> {
     }
 }
 
+impl<V> janitor::Sweepable for SingleFlightCache<V>
+where
+    V: Paginated + Send + 'static,
+{
+    /// 清扫规则(关键): 有排队者(demand > 0)的槽位只清过期数据,
+    /// 否则排队者手里旧闸门与新槽新闸门并存, 单飞闸门排队压并发会被清扫窗口打穿
+    fn sweep(&self) -> usize {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        let before = slots.len();
+        slots.retain(|_, slot| {
+            slot.demand > 0
+                || slot
+                    .entry
+                    .as_ref()
+                    .is_some_and(|(_, expires_at)| *expires_at > Instant::now())
+        });
+        before - slots.len()
+    }
+}
+
 fn slice_page<V: Paginated>(value: V, offset: u32, limit: u32, total: usize) -> CachedPage<V> {
     let start = offset as usize;
     let end = start.saturating_add(limit as usize).min(total);
     CachedPage {
         value: value.slice_range(start, end),
         has_more: offset.saturating_add(limit) < total as u32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AlbumDetail;
+
+    /// 清扫规则: 过期且无人排队的槽删除; 有 demand 的过期槽留壳; 新鲜槽保留
+    #[test]
+    fn sweep_respects_demand_and_freshness() {
+        let cache = SingleFlightCache::<AlbumDetail>::new(ProviderId::Netease, 200, 0);
+
+        {
+            let mut slots = cache
+                .slots
+                .lock()
+                .unwrap_or_else(crate::utils::poison::continue_on_poison);
+            slots.insert(
+                "expired".to_owned(),
+                Slot {
+                    entry: Some((
+                        AlbumDetail::default(),
+                        Instant::now() - Duration::from_secs(1),
+                    )),
+                    gate: Arc::default(),
+                    demand: 0,
+                },
+            );
+            slots.insert(
+                "demanded".to_owned(),
+                Slot {
+                    entry: Some((
+                        AlbumDetail::default(),
+                        Instant::now() - Duration::from_secs(1),
+                    )),
+                    gate: Arc::default(),
+                    demand: 50,
+                },
+            );
+            slots.insert(
+                "fresh".to_owned(),
+                Slot {
+                    entry: Some((
+                        AlbumDetail::default(),
+                        Instant::now() + Duration::from_secs(60),
+                    )),
+                    gate: Arc::default(),
+                    demand: 0,
+                },
+            );
+        }
+
+        assert_eq!(janitor::Sweepable::sweep(&cache), 1);
+
+        let slots = cache
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        assert!(!slots.contains_key("expired"));
+        assert!(slots.contains_key("demanded"));
+        assert!(slots.contains_key("fresh"));
     }
 }

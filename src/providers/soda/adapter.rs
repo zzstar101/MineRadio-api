@@ -33,11 +33,7 @@ impl SodaAdapter {
     pub fn new(client: Arc<SodaClient>) -> Self {
         Self {
             client,
-            album_cache: Arc::new(SingleFlightCache::new(
-                ProviderId::Soda,
-                PAGE_BATCH,
-                PAGE_RETRIES,
-            )),
+            album_cache: SingleFlightCache::shared(ProviderId::Soda, PAGE_BATCH, PAGE_RETRIES),
         }
     }
 
