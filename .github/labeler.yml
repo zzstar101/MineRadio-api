@@ -1,0 +1,81 @@
+# 自动打标规则 (由 .github/workflows/label.yml 消费, srvaroa/labeler)
+#
+# - 同一标签下的多条条件是 OR; 单条内多字段是 AND
+# - PR: title 是 conventional 前缀正则, files 是路径 glob
+# - Issue: 无变更路径可看, 靠 title/body 关键词
+# - 同一标签同时服务 PR 与 Issue 时, 两类条件并列为多个 OR 条目
+
+# ---------- 类型层 ----------
+"enhancement":
+  # PR 标题前缀
+  - title: "^feat"
+  # Issue 措辞
+  - title: "(?i)((feature|request)|建议|需求|支持|希望)"
+"bug":
+  - title: "^fix"
+  - title: "(?i)(\\bbug\\b|报错|崩溃|异常)"
+"documentation":
+  - title: "^docs"
+  - title: "(?i)(docs?|文档)"
+"ci":
+  - title: "^ci"
+"refactor":
+  - title: "^refactor"
+"performance":
+  - title: "^perf"
+"breaking":
+  # conventional 的 feat!:/fix!(scope): 形式
+  - title: "^[a-zA-Z]+(\\([^)]*\\))?!:"
+"question":
+  - title: "(?i)(\\bquestion\\b|如何|怎么|为什么|疑问)"
+
+# ---------- 模块层 ----------
+# PR 按变更路径; Issue 按正文提到的 provider
+"provider-netease":
+  - files:
+      - "src/providers/netease/**"
+      - "src/qr_login/netease.rs"
+      - "src/utils/cryptors/netease/**"
+  - body: "(?i)(netease|网易)"
+"provider-qq":
+  - files:
+      - "src/providers/qq/**"
+      - "src/qr_login/qq.rs"
+      - "src/qr_login/qq_music.rs"
+      - "src/qr_login/wechat.rs"
+      - "src/utils/cryptors/qq/**"
+  - body: "(?i)(qq音乐|\\bqq\\b)"
+"provider-soda":
+  - files:
+      - "src/providers/soda/**"
+      - "src/qr_login/soda.rs"
+      - "src/utils/cryptors/soda/**"
+  - body: "(?i)(soda|汽水)"
+"provider-kugou":
+  - files:
+      - "src/providers/kugou/**"
+      - "src/qr_login/kugou.rs"
+      - "src/utils/cryptors/kugou/**"
+  - body: "(?i)(kugou|酷狗)"
+"provider-spotify":
+  - files:
+      - "src/providers/spotify/**"
+  - body: "(?i)spotify"
+"qr-login":
+  - files:
+      - "src/qr_login/**"
+"storage":
+  - files:
+      - "src/auth_session.rs"
+      - "src/cache.rs"
+      - "src/utils/single_flight.rs"
+      - "src/utils/janitor.rs"
+      - "src/utils/cookie.rs"
+"core":
+  - files:
+      - "src/api.rs"
+      - "src/provider.rs"
+      - "src/cross_source.rs"
+      - "src/types.rs"
+      - "src/error.rs"
+      - "src/lib.rs"

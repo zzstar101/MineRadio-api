@@ -1,0 +1,27 @@
+name: Label
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  label:
+    name: 自动打标
+    runs-on: ubuntu-latest
+    steps:
+      # 规则见 .github/labeler.yml:
+      #   PR   → 标题前缀(类型) + 变更路径(模块)
+      #   Issue → 标题措辞(类型) + 正文提到的 provider(模块)
+      # 注: fork 来源的 PR 若报 "Resource not accessible by integration",
+      # 需把触发事件换成 pull_request_target(仅打标, 不 checkout PR 代码, 安全)。
+      - name: Label by title / paths / mentions
+        uses: srvaroa/labeler@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
