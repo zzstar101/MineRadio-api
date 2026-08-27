@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -20,6 +17,7 @@ use crate::{
         PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
+    utils::pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
     utils::single_flight::SingleFlightCache,
 };
 
@@ -103,7 +101,7 @@ pub struct NeteaseAdapter {
     client: Arc<NeteaseClient>,
     playlist_cache: Arc<SingleFlightCache<PlaylistDetail>>,
     album_cache: Arc<SingleFlightCache<AlbumDetail>>,
-    star_cache: Arc<Mutex<HashMap<String, Vec<Track>>>>,
+    star_queue: Arc<PopQueue<Track>>,
 }
 
 impl NeteaseAdapter {
@@ -116,7 +114,11 @@ impl NeteaseAdapter {
                 PAGE_RETRIES,
             ),
             album_cache: SingleFlightCache::shared(ProviderId::Netease, PAGE_BATCH, PAGE_RETRIES),
-            star_cache: Arc::new(Mutex::new(HashMap::new())),
+            star_queue: Arc::new(PopQueue::new(
+                ProviderId::Netease,
+                DEFAULT_LOW_WATER,
+                DEFAULT_RETRIES,
+            )),
         }
     }
 
@@ -749,59 +751,24 @@ impl ProviderAdapter for NeteaseAdapter {
                     .strip_prefix('S')
                     .and_then(|id| id.split_once('|'))
                     .ok_or_else(|| unavailable("star_mode: get id".to_owned()))?;
+                let client = Arc::clone(&self.client);
 
-                // 先尝试从缓存拿
-                let cached = {
-                    let mut h = self
-                        .star_cache
-                        .lock()
-                        .unwrap_or_else(crate::utils::poison::continue_on_poison);
-
-                    h.get_mut(pid).and_then(|v| {
-                        let t = v.pop()?;
-                        Some((t, v.len() <= 1))
-                    })
-                };
-
-                if let Some((t, refill)) = cached {
-                    // 补货
-                    if refill {
-                        if let Some(nv) =
-                            // 一直失败导致缓存清空还有tid兜底
-                            self.client.star_mode(pid, &t.id).await?.standardize()
-                        {
-                            let mut h = self
-                                .star_cache
-                                .lock()
-                                .unwrap_or_else(crate::utils::poison::continue_on_poison);
-                            h.entry(pid.to_owned()).or_default().extend(nv);
+                self.star_queue
+                    .pop(pid, move |seed, want| {
+                        // 种子: 低水位补货用刚弹出的那条, 冷启动用请求串里的 tid 兜底;
+                        // 上游持续失败导致队列清空时, 冷启动路径始终有 tid 可用
+                        let seed_id = seed.map(|t| t.id.clone()).unwrap_or_else(|| tid.to_owned());
+                        let client = Arc::clone(&client);
+                        let pid = pid.to_owned();
+                        async move {
+                            client
+                                .star_mode(&pid, &seed_id, want)
+                                .await?
+                                .standardize()
+                                .ok_or_else(|| unavailable("star_mode".to_owned()))
                         }
-                    }
-
-                    return Ok(t);
-                }
-
-                // 没缓存
-                let mut nv = self
-                    .client
-                    .star_mode(pid, tid)
-                    .await?
-                    .standardize()
-                    .ok_or_else(|| unavailable("star_mode".to_owned()))?;
-
-                let t = nv
-                    .pop()
-                    .ok_or_else(|| unavailable("star_mode: empty".to_owned()))?;
-
-                {
-                    let mut h = self
-                        .star_cache
-                        .lock()
-                        .unwrap_or_else(crate::utils::poison::continue_on_poison);
-                    h.insert(pid.to_owned(), nv);
-                }
-
-                Ok(t)
+                    })
+                    .await
             }
 
             _ => Err(unavailable("stream_next: invalid id".to_owned())),

@@ -595,11 +595,12 @@ impl NeteaseClient {
         )
         .await
     }
-    ///"心动模式", 使用预提供的pid和tid
+    ///"心动模式", 使用预提供的pid和tid; count 为本次拉取的曲目数
     pub(super) async fn star_mode(
         &self,
         playlist_id: &str,
         track_id: &str,
+        count: u32,
     ) -> ProviderResult<NeteaseIntelligenceResp> {
         self.eapi_model(
             "/api/playmode/intelligence/list",
@@ -608,7 +609,7 @@ impl NeteaseClient {
               "songId": track_id,
               "type": "fromPlayOne",
               "startMusicId": track_id,
-              "count": "1",
+              "count": count.to_string(),
               "e_r": true
             }),
             self.current_cookie().await.as_deref(),
