@@ -1314,7 +1314,7 @@ mod tests {
                     "id": 42,
                     "name": "Test",
                     "ar": [{"name": "Artist"}],
-                    "al": {"name": "Album", "picUrl": "http://a/b.jpg"},
+                    "al": {"name": "Album", "picUrl": "https://a/b.jpg"},
                     "fee": 0,
                     "dt": 1234
                 }],
