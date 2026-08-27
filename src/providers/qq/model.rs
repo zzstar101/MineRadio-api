@@ -1150,26 +1150,27 @@ struct File {
 impl File {
     fn standardize(self, id: Option<String>) -> Vec<TrackQualityOption> {
         let mut v: Vec<String> = Vec::new();
-        if size_new_at(&self.size_new, 8) {
-            v.push("atmos".to_string());
+        if self.size_128mp3 != 0 {
+            v.push("128k".to_string());
         }
-        if size_new_at(&self.size_new, 3) {
-            v.push("premium".to_string());
-        }
-        if size_new_at(&self.size_new, 0) {
-            v.push("master".to_string());
+        //nac解码暂不支持
+        //if size_new_at(&self.size_new, 7) {
+        //    v.push("nac".to_string());
+        //}
+        if self.size_320mp3 != 0 {
+            v.push("320k".to_string());
         }
         if self.size_flac != 0 {
             v.push("flac".to_string());
         }
-        if self.size_320mp3 != 0 {
-            v.push("320k".to_string());
+        if size_new_at(&self.size_new, 0) {
+            v.push("master".to_string());
         }
-        if size_new_at(&self.size_new, 7) {
-            v.push("nac".to_string());
+        if size_new_at(&self.size_new, 3) {
+            v.push("premium".to_string());
         }
-        if self.size_128mp3 != 0 {
-            v.push("128k".to_string());
+        if size_new_at(&self.size_new, 8) {
+            v.push("atmos".to_string());
         }
         v.into_iter()
             .map(|quality| TrackQualityOption {
