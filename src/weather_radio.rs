@@ -201,7 +201,7 @@ fn build_weather_mood_inner(weather: &Value, hour: u32) -> WeatherMood {
     let humidity = number_field(weather, "humidity").unwrap_or(0.0);
     let wind = number_field(weather, "windSpeed").unwrap_or(0.0);
     let is_day = number_field(weather, "isDay");
-    let is_night = is_day == Some(0.0) || hour < 6 || hour >= 20;
+    let is_night = is_day == Some(0.0) || !(6..20).contains(&hour);
     let is_morning = (5..11).contains(&hour);
     let is_dusk = (17..20).contains(&hour);
     let code_i = code.map(|value| value as i64).unwrap_or(i64::MIN);

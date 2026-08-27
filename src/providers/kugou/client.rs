@@ -934,15 +934,19 @@ fn numeric_id(value: &str) -> u64 {
 }
 
 fn default_mid(auth: &KugouAuth) -> String {
-    (!auth.mid.is_empty())
-        .then(|| auth.mid.clone())
-        .unwrap_or_else(|| md5_hex(format!("mineradio:{}", auth.user_id).as_bytes()))
+    if !auth.mid.is_empty() {
+        auth.mid.clone()
+    } else {
+        md5_hex(format!("mineradio:{}", auth.user_id).as_bytes())
+    }
 }
 
 fn default_dfid(auth: &KugouAuth) -> String {
-    (!auth.dfid.is_empty())
-        .then(|| auth.dfid.clone())
-        .unwrap_or_else(|| "-".to_owned())
+    if !auth.dfid.is_empty() {
+        auth.dfid.clone()
+    } else {
+        "-".to_owned()
+    }
 }
 
 fn unavailable_error(message: String) -> ProviderError {

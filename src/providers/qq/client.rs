@@ -131,7 +131,7 @@ impl QqClient {
 
     #[allow(dead_code)]
     pub fn get_sign(&self, payload: &Value) -> ProviderResult<String> {
-        let payload = serde_json::to_string(payload).map_err(|err| unavailable_error(err))?;
+        let payload = serde_json::to_string(payload).map_err(unavailable_error)?;
         Ok(x9(&payload))
     }
 
@@ -958,13 +958,7 @@ fn build_headers(
         if with_origin {
             let origin = reqwest::Url::parse(referer)
                 .ok()
-                .and_then(|url| {
-                    Some(format!(
-                        "{}://{}",
-                        url.scheme(),
-                        url.host_str().unwrap_or_default()
-                    ))
-                })
+                .map(|url| format!("{}://{}", url.scheme(), url.host_str().unwrap_or_default()))
                 .unwrap_or_else(|| "https://y.qq.com".to_owned());
             headers.insert(ORIGIN, header_value(&origin)?);
         }

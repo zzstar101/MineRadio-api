@@ -117,12 +117,12 @@ unsafe extern "C" fn __dummy_fn(_: u64, _: u64) -> u64 {
 }
 
 fn resolve_lib_path(name: &str) -> Result<PathBuf, String> {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
         }
     }
     Err(format!("csigner: '{}' not found", name))

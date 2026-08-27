@@ -263,13 +263,11 @@ impl ProviderAdapter for NeteaseAdapter {
 
         let (lines, has_translation) = {
             let base_lines = if !yrc_text.is_empty() {
-                NeteaseParser
-                    .parse(yrc_text)
-                    .map_err(|e| invalid_response(e))?
+                NeteaseParser.parse(yrc_text).map_err(invalid_response)?
             } else {
                 NeteaseLrcParser {}
                     .parse(lrc_text)
-                    .map_err(|e| invalid_response(e))?
+                    .map_err(invalid_response)?
             };
 
             match trans {

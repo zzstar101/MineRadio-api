@@ -365,7 +365,7 @@ impl RcmdM1 {
                     //由于由两个每日推荐接口并且无法获取接口名, 解析需要名字就封装进id
                     "dailySongs" => (
                         "D".to_owned()
-                            + &c.target_url?.split_once('?').map(|(_, after)| after)?
+                            + c.target_url?.split_once('?').map(|(_, after)| after)?
                             + "|"
                             + &c.cover_text,
                         RecommendationCardKind::Playlist,

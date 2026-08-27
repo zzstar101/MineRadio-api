@@ -32,7 +32,7 @@ impl SodaLoginStatusResp {
                     logged_in: true,
                     nickname: Some(info.nickname),
                     user_id: Some(info.id),
-                    avatar_url: info.larger_avatar_url.urls.get(0).map(|u| u.to_string()),
+                    avatar_url: info.larger_avatar_url.urls.first().map(|u| u.to_string()),
                     vip_type,
                     vip_level,
                     is_vip: Some(info.is_vip),
@@ -295,7 +295,7 @@ impl SodaSongUrlResp {
         opt: SongUrlOptions,
         preview_range: Option<PreviewRange>,
     ) -> Option<SongUrlResult> {
-        let target = opt.quality.unwrap_or(String::new());
+        let target = opt.quality.unwrap_or_default();
 
         let list = self.result.data;
         let play_info = list

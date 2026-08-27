@@ -178,35 +178,35 @@ impl ProviderAdapter for KugouAdapter {
             for response in [
                 self.client
                     .song_url_h5(
-                        &hash,
+                        hash,
                         meta.album_id,
                         meta.album_audio_id,
                         quality_parameter(quality),
                     )
                     .await,
-                self.client.song_url_mobile(&hash, meta.album_id).await,
+                self.client.song_url_mobile(hash, meta.album_id).await,
                 self.client
-                    .song_url_web(&hash, meta.album_id, meta.album_audio_id)
+                    .song_url_web(hash, meta.album_id, meta.album_audio_id)
                     .await,
                 self.client
                     .song_url(
-                        &hash,
+                        hash,
                         meta.album_id,
                         meta.album_audio_id,
                         quality_parameter(quality),
                     )
                     .await,
             ] {
-                if let Ok(body) = response {
-                    if let Some(url) = play_url(&body) {
-                        return Ok(SongUrlResult {
-                            url: format!(
-                                "audio-proxy?url={}&provider=kugou",
-                                urlencoding::encode(&url)
-                            ),
-                            ..Default::default()
-                        });
-                    }
+                if let Ok(body) = response
+                    && let Some(url) = play_url(&body)
+                {
+                    return Ok(SongUrlResult {
+                        url: format!(
+                            "audio-proxy?url={}&provider=kugou",
+                            urlencoding::encode(&url)
+                        ),
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -261,19 +261,19 @@ impl ProviderAdapter for KugouAdapter {
         if id == 0 || candidate.access_key.is_empty() {
             return Ok(empty_lyric(track));
         }
-        if let Ok(body) = self.client.lyric_krc(id, &candidate.access_key).await {
-            if let Ok(lines) = KugouParser.decrypt_and_parse(body.content) {
-                let is_word_by_word = lines
-                    .iter()
-                    .any(|line| line.words.as_ref().is_some_and(|words| !words.is_empty()));
-                return Ok(LyricPayload {
-                    provider: ProviderId::Kugou,
-                    track_id: track.id.clone(),
-                    lines,
-                    has_translation: false,
-                    is_word_by_word,
-                });
-            }
+        if let Ok(body) = self.client.lyric_krc(id, &candidate.access_key).await
+            && let Ok(lines) = KugouParser.decrypt_and_parse(body.content)
+        {
+            let is_word_by_word = lines
+                .iter()
+                .any(|line| line.words.as_ref().is_some_and(|words| !words.is_empty()));
+            return Ok(LyricPayload {
+                provider: ProviderId::Kugou,
+                track_id: track.id.clone(),
+                lines,
+                has_translation: false,
+                is_word_by_word,
+            });
         }
         let body = self.client.lyric(id, &candidate.access_key).await?;
         let text = BASE64

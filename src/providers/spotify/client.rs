@@ -302,10 +302,11 @@ impl SpotifyClient {
         }
         if let Some(alternatives) = audio.alternatives {
             for alternative in alternatives.0 {
-                if let Ok(audio) = AudioItem::get_file(session, alternative).await {
-                    if audio.availability.is_ok() && !audio.files.is_empty() {
-                        return Ok(audio);
-                    }
+                if let Ok(audio) = AudioItem::get_file(session, alternative).await
+                    && audio.availability.is_ok()
+                    && !audio.files.is_empty()
+                {
+                    return Ok(audio);
                 }
             }
         }

@@ -188,7 +188,7 @@ async fn reg() -> Result<(String, String), String> {
     ));
     let sign = generate_client_sign(&device_id, "");
 
-    headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver=; clientSign={}; MUSIC_SNS=;", &device_id, &sign)).map_err(|e| format!("fail to insert cookie: {}", e.to_string()))?);
+    headers.insert(COOKIE, HeaderValue::from_str(&format!("os=pc; deviceId={}; osver={OSVER}; channel=netease; mode=System Product Name; appver=; clientSign={}; MUSIC_SNS=;", &device_id, &sign)).map_err(|e| format!("fail to insert cookie: {}", e))?);
 
     headers.insert(USER_AGENT, HeaderValue::from_static(UA));
 
@@ -207,24 +207,24 @@ async fn reg() -> Result<(String, String), String> {
     let body = &serde_json::json!({
         "username": encoded_id,
         "e_r": true,
-        "header": serde_json::to_string(&header).map_err(|e| format!("fail to convert Value to String: {}", e.to_string()))?
+        "header": serde_json::to_string(&header).map_err(|e| format!("fail to convert Value to String: {}", e))?
     });
 
-    let encrypted = encrypt_eapi(EAPI_ANONIMOUS_API, crate::utils::EapiBody::Json(&body))
-        .map_err(|e| format!("fail to encrypt req: {}", e.to_string()))?;
+    let encrypted = encrypt_eapi(EAPI_ANONIMOUS_API, crate::utils::EapiBody::Json(body))
+        .map_err(|e| format!("fail to encrypt req: {}", e))?;
     let response = anon_client()
         .post(EAPI_ANONIMOUS_URL)
         .headers(headers)
         .form(&[("params", encrypted.params)])
         .send()
         .await
-        .map_err(|e| format!("fail to send req: {}", e.to_string()))?;
+        .map_err(|e| format!("fail to send req: {}", e))?;
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| format!("fail to read resp: {}", e.to_string()))?;
-    let decrypted = decrypt_eapi_response(&bytes, false)
-        .map_err(|e| format!("fail to decrypt req: {}", e.to_string()))?;
+        .map_err(|e| format!("fail to read resp: {}", e))?;
+    let decrypted =
+        decrypt_eapi_response(&bytes, false).map_err(|e| format!("fail to decrypt req: {}", e))?;
     serde_json::from_slice::<Value>(&decrypted)
         .unwrap()
         .get("code")

@@ -243,7 +243,7 @@ fn decrypt_tencent_tea(data: &[u8], key: &[u8; 16]) -> Option<Vec<u8>> {
     const ZERO_LEN: usize = 7;
 
     let len = data.len();
-    if len < 10 || len % 8 != 0 {
+    if len < 10 || !len.is_multiple_of(8) {
         return None;
     }
 

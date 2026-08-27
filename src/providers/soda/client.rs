@@ -86,7 +86,7 @@ impl SodaClient {
             .append_pair("q", keyword)
             .append_pair("cursor", &cursor.to_string())
             .append_pair("search_id", &x5());
-        self.get_model(&url.to_string(), "search").await
+        self.get_model(url.as_ref(), "search").await
     }
 
     pub(super) async fn search_track_fallback(
@@ -102,7 +102,7 @@ impl SodaClient {
             .append_pair("search_type", "music")
             .append_pair("real_offset", &offset.to_string())
             .append_pair("limit", &limit.to_string());
-        self.get_model(&url.to_string(), "search_fallback").await
+        self.get_model(url.as_ref(), "search_fallback").await
     }
 
     pub(super) async fn search_album(
@@ -114,7 +114,7 @@ impl SodaClient {
         url.query_pairs_mut()
             .append_pair("q", keyword)
             .append_pair("cursor", &cursor.to_string());
-        self.get_model(&url.to_string(), "search_album").await
+        self.get_model(url.as_ref(), "search_album").await
     }
 
     pub(super) async fn search_playlist(
@@ -126,11 +126,11 @@ impl SodaClient {
         url.query_pairs_mut()
             .append_pair("q", keyword)
             .append_pair("cursor", &cursor.to_string());
-        self.get_model(&url.to_string(), "search_playlist").await
+        self.get_model(url.as_ref(), "search_playlist").await
     }
 
     pub(super) async fn song_url(&self, info_url: &str) -> ProviderResult<SodaSongUrlResp> {
-        self.get_model(&info_url, "song_url").await
+        self.get_model(info_url, "song_url").await
     }
 
     pub(super) async fn lyric(&self, track_id: &str) -> ProviderResult<SodaTrackV2Resp> {
@@ -170,7 +170,7 @@ impl SodaClient {
             .append_pair("playlist_id", playlist_id)
             .append_pair("cursor", &offset.to_string())
             .append_pair("count", &limit.to_string());
-        self.get_model(&url.to_string(), "playlist_detail").await
+        self.get_model(url.as_ref(), "playlist_detail").await
     }
 
     pub(super) async fn album_detail(&self, id: &str) -> ProviderResult<SodaAlbumDetailResp> {
@@ -255,7 +255,7 @@ impl SodaClient {
         {
             headers.insert(COOKIE, header_value(cookie)?);
         }
-        q9v_with_body(&url, &[], &mut headers);
+        q9v_with_body(url, &[], &mut headers);
         let response = self
             .http
             .get(url)
@@ -305,7 +305,7 @@ impl SodaClient {
         {
             headers.insert(COOKIE, header_value(cookie)?);
         }
-        q9v_with_body(&url, (&payload).to_string().as_bytes(), &mut headers);
+        q9v_with_body(url, payload.to_string().as_bytes(), &mut headers);
         let response = self
             .http
             .post(url)

@@ -198,7 +198,7 @@ impl CrossSourceResolver {
         };
         let provider = self
             .provider(&provider_id)
-            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+            .ok_or_else(|| no_result_error(provider_id, "provider unavailable"))?;
         let tracks = provider.search_track(keyword, 0, limit).await?;
 
         if tracks.is_empty() {
@@ -218,7 +218,7 @@ impl CrossSourceResolver {
         };
         let provider = self
             .provider(&provider_id)
-            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+            .ok_or_else(|| no_result_error(provider_id, "provider unavailable"))?;
         let albums = provider.search_album(keyword, 0, limit).await?;
 
         if albums.is_empty() {
@@ -238,7 +238,7 @@ impl CrossSourceResolver {
         };
         let provider = self
             .provider(&provider_id)
-            .ok_or_else(|| no_result_error(provider_id.clone(), "provider unavailable"))?;
+            .ok_or_else(|| no_result_error(provider_id, "provider unavailable"))?;
         let playlists = provider.search_playlist(keyword, 0, limit).await?;
 
         if playlists.is_empty() {
@@ -331,7 +331,7 @@ impl CrossSourceResolver {
 
         let searches = self.deps.providers.iter().enumerate().map(
             |(provider_index, (provider_id, adapter))| {
-                let provider_id = provider_id.clone();
+                let provider_id = *provider_id;
                 let keyword = keyword.to_owned();
                 async move {
                     let result = adapter.search_track(&keyword, 0, provider_limit).await;
@@ -376,7 +376,7 @@ impl CrossSourceResolver {
             };
             seen.insert(format!("{}:{id}", track.provider))
         });
-        ranked.sort_by(|a, b| compare_ranked_tracks(a, b));
+        ranked.sort_by(compare_ranked_tracks);
 
         let merged = ranked
             .into_iter()
@@ -392,7 +392,7 @@ impl CrossSourceResolver {
                 .keys()
                 .next()
                 .cloned()
-                .unwrap_or_else(|| ProviderId::Netease),
+                .unwrap_or(ProviderId::Netease),
             "no matching tracks found",
         ))
     }
@@ -411,7 +411,7 @@ impl CrossSourceResolver {
         }
         let provider_limit = limit.div_ceil(provider_count).max(1);
         let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
-            let provider_id = provider_id.clone();
+            let provider_id = *provider_id;
             let keyword = keyword.to_owned();
             async move {
                 (
@@ -471,7 +471,7 @@ impl CrossSourceResolver {
         }
         let provider_limit = limit.div_ceil(provider_count).max(1);
         let searches = self.deps.providers.iter().map(|(provider_id, adapter)| {
-            let provider_id = provider_id.clone();
+            let provider_id = *provider_id;
             let keyword = keyword.to_owned();
             async move {
                 (

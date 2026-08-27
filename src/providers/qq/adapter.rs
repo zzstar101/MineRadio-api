@@ -189,26 +189,24 @@ impl ProviderAdapter for QqAdapter {
             .ok()
             .and_then(|detail| detail.standardize_preview_range());
 
-        if let Some(filename) = qq_filename(qq_quality_candidates(false), &requested, &media_mid) {
-            if let Some(r) = self
+        if let Some(filename) = qq_filename(qq_quality_candidates(false), &requested, &media_mid)
+            && let Some(r) = self
                 .client
                 .song_url(&track.source_id, filename, false)
                 .await?
-                .standardize(&cdn, false, preview_range.clone())
-            {
-                return Ok(r);
-            }
+                .standardize(&cdn, false, preview_range)
+        {
+            return Ok(r);
         }
 
-        if let Some(filename) = qq_filename(qq_quality_candidates(true), &requested, &media_mid) {
-            if let Some(r) = self
+        if let Some(filename) = qq_filename(qq_quality_candidates(true), &requested, &media_mid)
+            && let Some(r) = self
                 .client
                 .song_url(&track.source_id, filename, true)
                 .await?
-                .standardize(&cdn, true, preview_range.clone())
-            {
-                return Ok(r);
-            }
+                .standardize(&cdn, true, preview_range)
+        {
+            return Ok(r);
         }
 
         self.client.ensure_login().await?;

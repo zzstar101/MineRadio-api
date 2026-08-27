@@ -675,7 +675,7 @@ fn apply_vip_icon_status(status: &mut ProviderLoginStatus, badge_icon: Option<Vi
     match badge_icon {
         Some(VipBadgeIcon::Active { url, level, tier }) => {
             status.vip_type = Some(if level == VipLevel::Svip { 11 } else { 1 });
-            status.vip_level = Some(level.clone());
+            status.vip_level = Some(level);
             status.is_vip = Some(true);
             status.is_svip = Some(level == VipLevel::Svip);
             status.vip_label = Some(
@@ -768,7 +768,7 @@ impl QqSongUrlResp {
         };
 
         Some(SongUrlResult {
-            url: url,
+            url,
             expires_at: None,
             preview_range,
             ..Default::default()

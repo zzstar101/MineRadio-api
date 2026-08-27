@@ -351,10 +351,10 @@ fn build_beat_map_from_low_energy(
         .take(72)
         .cloned()
         .collect::<Vec<_>>();
-    if phase_source.is_empty() {
-        if let Some(first) = strong.first().cloned() {
-            phase_source.push(first);
-        }
+    if phase_source.is_empty()
+        && let Some(first) = strong.first().cloned()
+    {
+        phase_source.push(first);
     }
     let mut best_anchor = phase_source
         .first()
@@ -599,12 +599,12 @@ fn step_at(section_steps: &[f64], section_len: f64, time: f64, global_step: f64)
     section_steps[index]
 }
 
-fn nearest_candidate<'a>(
-    candidates: &'a [Candidate],
+fn nearest_candidate(
+    candidates: &[Candidate],
     center: f64,
     window_sec: f64,
     start_index: usize,
-) -> Option<&'a Candidate> {
+) -> Option<&Candidate> {
     let mut best = None;
     let mut best_score = f64::NEG_INFINITY;
     let mut index = start_index;
@@ -705,7 +705,7 @@ fn estimate_step(candidates: &[Candidate]) -> Option<f64> {
     }
     let mut best_key = None;
     let mut best_score = 0.0;
-    for (key, _) in &histogram {
+    for key in histogram.keys() {
         let score = histogram.get(key).copied().unwrap_or(0.0)
             + histogram.get(&(key - 1)).copied().unwrap_or(0.0) * 0.72
             + histogram.get(&(key + 1)).copied().unwrap_or(0.0) * 0.72;
@@ -1040,10 +1040,10 @@ impl DecodeState {
                 }
             }
             self.effective_samples += 1;
-            if let Some(limit_sec) = limit_sec {
-                if self.duration() >= limit_sec {
-                    break;
-                }
+            if let Some(limit_sec) = limit_sec
+                && self.duration() >= limit_sec
+            {
+                break;
             }
         }
         let _ = effective;

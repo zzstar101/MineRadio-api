@@ -181,13 +181,10 @@ impl Api {
         let logger = sidecar_log::configure_runtime_logger(Some(&data_dir.join("logs")))
             .map_err(|_| ApiError::new(ApiErrorCode::Internal, "failed to initialize logging"))?;
 
-        match crate::utils::cryptors::csigner::init() {
-            Err(e) => {
-                logger
-                    .log(serde_json::json!(format!("csigner init error: {e}")))
-                    .await
-            }
-            Ok(_) => (),
+        if let Err(e) = crate::utils::cryptors::csigner::init() {
+            logger
+                .log(serde_json::json!(format!("csigner init error: {e}")))
+                .await
         }
 
         let inner = Arc::new(ApiInner::new(config, logger));

@@ -694,17 +694,16 @@ impl NeteaseClient {
 
         headers.insert("mconfig-info", HeaderValue::from_static(CFG));
 
-        headers.insert(COOKIE, header_value(&cookie)?);
+        headers.insert(COOKIE, header_value(cookie)?);
 
-        Ok(self
-            .post_form_response(
-                format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
-                headers,
-                HashMap::from([("params".to_owned(), encrypted.params)]),
-                response_encrypted,
-                action,
-            )
-            .await?)
+        self.post_form_response(
+            format!("{API_DOMAIN}/eapi/{}", uri.trim_start_matches("/api/")),
+            headers,
+            HashMap::from([("params".to_owned(), encrypted.params)]),
+            response_encrypted,
+            action,
+        )
+        .await
     }
 
     async fn weapi_model<T: DeserializeOwned>(

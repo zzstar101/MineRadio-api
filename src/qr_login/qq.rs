@@ -101,7 +101,7 @@ impl QrLogin for QqQrLoginService {
         let qrsig = read_set_cookies(qr_resp.headers())
             .find_map(|header| {
                 regex::Regex::new(r"qrsig=([^;]+)").ok().and_then(|re| {
-                    re.captures(&header)
+                    re.captures(header)
                         .and_then(|cap| cap.get(1).map(|m| m.as_str().to_owned()))
                 })
             })

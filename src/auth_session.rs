@@ -54,7 +54,7 @@ impl AuthSession {
         self.runtime
             .write()
             .await
-            .insert(provider.clone(), normalized.clone());
+            .insert(provider, normalized.clone());
         {
             // 单飞闸门
             let _guard = self.persist_gate.lock().await;

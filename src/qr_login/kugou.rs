@@ -260,7 +260,7 @@ impl KugouQrLoginApi for KugouQrHttpApi {
                 &fallback_device
             }
         };
-        let params = build_check_params(current_time_millis(), &device, &key);
+        let params = build_check_params(current_time_millis(), device, &key);
         let response = self
             .client
             .get(KUGOU_QR_CHECK_URL)
