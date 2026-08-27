@@ -767,7 +767,7 @@ fn search_looks_like_same_title_cover(
     self_titled_single
         || search_looks_like_derivative(raw)
         || source_index > 0
-        || track.playable_state == PlayableState::Unavailable
+        || track.playable_state == PlayableState::CopyrightUnavailable
 }
 
 fn no_result_error(provider: ProviderId, message: &str) -> ProviderError {
@@ -883,10 +883,9 @@ mod tests {
         fn with_song_url(mut self, url: &str) -> Self {
             self.song_url_result = Some(SongUrlResult {
                 url: url.to_owned(),
-                provider: None,
-                trial: None,
-                vip_level: None,
+                quality: "".to_owned(),
                 expires_at: None,
+                preview_range: None,
             });
             self
         }
@@ -1066,7 +1065,6 @@ mod tests {
             quality_hints: Vec::new(),
             playable_state: PlayableState::Playable,
             duration_ms: None,
-            artwork_url: None,
         }
     }
 

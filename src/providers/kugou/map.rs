@@ -60,7 +60,6 @@ pub fn map_kugou_song(raw: &Value) -> (Track, KugouTrackMeta) {
         ],
         playable_state: PlayableState::Unknown,
         duration_ms: (duration_ms > 0).then_some(duration_ms),
-        artwork_url: None,
     };
     let meta = KugouTrackMeta {
         album_id: number(raw, &["AlbumID", "album_id"]),

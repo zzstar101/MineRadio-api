@@ -23,9 +23,8 @@ pub fn track(value: &Value, album_override: Option<&Value>) -> Option<Track> {
         album: string(album, "name"),
         cover_url: image(album.get("images")),
         duration_ms: value.get("duration_ms").and_then(Value::as_u64),
-        artwork_url: Some(image(album.get("images"))).filter(|value| !value.is_empty()),
         quality_hints: Vec::new(),
-        playable_state: PlayableState::Unavailable,
+        playable_state: PlayableState::VipRequired,
         media_mid: None,
     })
 }
@@ -128,6 +127,6 @@ mod tests {
         assert_eq!(track.provider.as_str(), "spotify");
         assert_eq!(track.artists, ["Artist"]);
         assert_eq!(track.cover_url, "cover");
-        assert_eq!(track.playable_state.as_str(), "unavailable");
+        assert_eq!(track.playable_state.as_str(), "vip_required");
     }
 }

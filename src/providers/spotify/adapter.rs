@@ -8,7 +8,8 @@ use crate::{
     providers::{ProviderAdapter, ProviderResult},
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck,
+        SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
 };
@@ -77,8 +78,6 @@ impl ProviderAdapter for SpotifyAdapter {
                 urlencoding::encode(&track.source_id),
                 urlencoding::encode(quality.id)
             ),
-            provider: Some(ProviderId::Spotify),
-            trial: Some(false),
             ..Default::default()
         })
     }
@@ -94,6 +93,7 @@ impl ProviderAdapter for SpotifyAdapter {
             qualities,
         })
     }
+
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         Ok(LyricPayload {
