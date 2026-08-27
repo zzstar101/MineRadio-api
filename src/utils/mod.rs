@@ -3,6 +3,7 @@ pub mod cryptors;
 pub mod janitor;
 pub mod podcast_analyzer;
 pub mod poison;
+pub mod pop_queue;
 pub mod single_flight;
 
 #[allow(unused_imports)]
