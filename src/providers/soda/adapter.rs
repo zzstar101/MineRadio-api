@@ -116,10 +116,18 @@ impl ProviderAdapter for SodaAdapter {
         opts: Option<SongUrlOptions>,
     ) -> ProviderResult<SongUrlResult> {
         self.client.ensure_login().await?;
+        let r = self.client.track_detail(&track.id).await?;
+        let (info_url, preview_range) = (r.get_songurl(), r.standardize_preview_range());
+        if info_url.is_empty() {
+            return Err(no_result(&format!(
+                "soda track {} missing url_player_info",
+                track.id
+            )));
+        }
         self.client
-            .song_url(&track.source_id)
+            .song_url(&info_url)
             .await?
-            .standardize(opts.unwrap_or_default())
+            .standardize(opts.unwrap_or_default(), preview_range)
             .ok_or_else(|| unavailable(format!("soda track {} missing play info", track.source_id)))
     }
 

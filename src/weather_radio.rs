@@ -859,7 +859,7 @@ mod tests {
             cover_url: String::new(),
             quality_hints: vec!["standard".to_owned()],
             playable_state: PlayableState::Playable,
-            duration_ms: Some(180_000)
+            duration_ms: Some(180_000),
         }
     }
 

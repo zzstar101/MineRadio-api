@@ -17,8 +17,7 @@ use crate::{
     sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck,
-        SongLikeCheckAck,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
     },
 };
@@ -252,7 +251,6 @@ impl ProviderAdapter for KugouAdapter {
             qualities,
         })
     }
-
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let search_resp = self.client.lyric_search(&track.source_id).await?;

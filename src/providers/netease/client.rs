@@ -12,11 +12,17 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
-    auth_session, providers::{
-        ProviderId, ProviderResult, error::{ProviderError, ProviderErrorCode}, netease::model::{
-            NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp, NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp, NeteaseSongUrlV1Resp, NeteaseVipInfoResp, RcmdM1SingleResp,
+    auth_session,
+    providers::{
+        ProviderId, ProviderResult,
+        error::{ProviderError, ProviderErrorCode},
+        netease::model::{
+            NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp,
+            NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp,
+            NeteaseSongUrlV1Resp, NeteaseVipInfoResp, RcmdM1SingleResp,
         },
-    }, utils::{
+    },
+    utils::{
         cookie::Cookie, decrypt_eapi_response, encrypt_eapi, encrypt_weapi,
         generate_weapi_secret_key,
     },

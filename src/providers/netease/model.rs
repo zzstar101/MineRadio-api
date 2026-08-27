@@ -3,8 +3,8 @@ use serde_json::value::RawValue;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary,
-    PreviewRange, ProviderId, ProviderLoginStatus, RecommendationCard, RecommendationCardKind,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, PreviewRange,
+    ProviderId, ProviderLoginStatus, RecommendationCard, RecommendationCardKind,
     RecommendationModule, RecommendationModuleKind, RecommendationPage, SongUrlResult, Track,
     TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
@@ -665,10 +665,8 @@ impl NeteaseSongUrlV1Resp {
     }
 
     pub(super) fn is_trial(&self, track_id: &str) -> bool {
-        self.datum_for(track_id)
-            .is_some_and(|d| d.is_trial())
+        self.datum_for(track_id).is_some_and(|d| d.is_trial())
     }
-
 }
 
 #[derive(Deserialize)]
@@ -681,7 +679,6 @@ pub(super) struct NeteaseSongUrlV1Datum {
     free_trial_info: Option<FreeTrialInfo>,
     level: String,
 }
-
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -807,9 +804,6 @@ pub(super) const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
     },
 ];
 
-
-
-
 #[derive(Deserialize)]
 pub struct NeteaseTrackDetailResp {
     songs: Vec<SongDetail>,
@@ -822,9 +816,9 @@ pub struct SongDetail {
     //fee: i64,
     hr: Option<Quality>, // Hi-Res质量文件信息
     sq: Option<Quality>, // 无损质量文件信息
-    h: Option<Quality>, // 高质量文件信息
-    m: Option<Quality>, // 中质量文件信息
-    l: Option<Quality>, // 低质量文件信息
+    h: Option<Quality>,  // 高质量文件信息
+    m: Option<Quality>,  // 中质量文件信息
+    l: Option<Quality>,  // 低质量文件信息
 }
 
 #[derive(Deserialize)]
@@ -863,12 +857,13 @@ impl NeteaseTrackDetailResp {
         (!qualities.is_empty()).then_some(TrackQualityAvailability {
             provider: ProviderId::Netease,
             track_id,
-            default_quality: qualities.first().map(|option| option.request_quality.clone()),
+            default_quality: qualities
+                .first()
+                .map(|option| option.request_quality.clone()),
             qualities,
         })
     }
 }
-
 
 //reuse
 #[derive(Deserialize)]

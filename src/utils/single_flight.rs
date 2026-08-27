@@ -377,7 +377,10 @@ where
                 .unwrap_or_else(crate::utils::poison::continue_on_poison);
             slots.entry(key.clone()).or_default().pending += 1;
         }
-        let _guard = PendingGuard { slots: &self.slots, key: key.clone() };
+        let _guard = PendingGuard {
+            slots: &self.slots,
+            key: key.clone(),
+        };
 
         let gate = {
             let mut slots = self

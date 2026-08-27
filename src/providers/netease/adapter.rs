@@ -14,8 +14,7 @@ use crate::{
     sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck,
-        SongLikeCheckAck,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
     utils::pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
@@ -25,11 +24,9 @@ use crate::{
 use super::{
     client::NeteaseClient,
     lyric::{NeteaseLrcParser, NeteaseParser},
-    model::{NeteaseSongUrlV1Resp, QualityCandidate, QUALITY_CANDIDATES},
+    model::{NeteaseSongUrlV1Resp, QUALITY_CANDIDATES, QualityCandidate},
 };
 use crate::utils::single_flight::FlightCoalescer;
-
-
 
 const SONG_URL_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 const PAGE_BATCH: u32 = 200;
@@ -194,7 +191,10 @@ impl ProviderAdapter for NeteaseAdapter {
 
         for quality in QUALITY_CANDIDATES.iter().skip(start_index) {
             // 同 key 单飞闸门: v1 优先, 同构旧接口替补
-            let resp = match self.resolve_song_url(&track.source_id, quality, logged_in).await {
+            let resp = match self
+                .resolve_song_url(&track.source_id, quality, logged_in)
+                .await
+            {
                 Ok(resp) => resp,
                 Err(err) => {
                     last_error = Some(err);
@@ -236,7 +236,6 @@ impl ProviderAdapter for NeteaseAdapter {
             .standardize()
             .ok_or_else(|| no_result("track_detail"))
     }
-
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let resp = match self.client.lyric_new(&track.source_id).await {
