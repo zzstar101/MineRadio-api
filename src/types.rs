@@ -8,12 +8,10 @@ pub enum PlayableState {
     #[default]
     Unknown,
     Playable,
-    LoginRequired,
     VipRequired,
     PaidRequired,
     CopyrightUnavailable,
     TrialOnly,
-    Unavailable,
 }
 
 impl PlayableState {
@@ -21,12 +19,10 @@ impl PlayableState {
         match self {
             Self::Unknown => "unknown",
             Self::Playable => "playable",
-            Self::LoginRequired => "login_required",
             Self::VipRequired => "vip_required",
             Self::PaidRequired => "paid_required",
             Self::CopyrightUnavailable => "copyright_unavailable",
             Self::TrialOnly => "trial_only",
-            Self::Unavailable => "unavailable",
         }
     }
 }
@@ -46,10 +42,6 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&PlayableState::VipRequired).unwrap(),
             "\"vip_required\""
-        );
-        assert_eq!(
-            serde_json::from_str::<PlayableState>("\"trial_only\"").unwrap(),
-            PlayableState::TrialOnly
         );
     }
 }
@@ -140,8 +132,6 @@ pub struct Track {
     pub playable_state: PlayableState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artwork_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -153,13 +143,10 @@ pub struct SongUrlOptions {
 #[serde(rename_all = "camelCase")]
 pub struct SongUrlResult {
     pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ProviderId>, //留着测试的时候看最终是否是原生而不是换源来的
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trial: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vip_level: Option<VipLevel>,
+    pub quality: String,
     pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_range: Option<PreviewRange>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
@@ -197,6 +184,13 @@ pub struct TrackQualityAvailability {
     pub default_quality: Option<String>,
     #[serde(default)]
     pub qualities: Vec<TrackQualityOption>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewRange {
+    pub start_ms: u64,
+    pub end_ms: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]
