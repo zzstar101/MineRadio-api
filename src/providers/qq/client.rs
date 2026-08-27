@@ -579,7 +579,11 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn radio_next(&self, playlist_id: &str) -> ProviderResult<QqRadioDetailResp> {
+    pub(super) async fn radio_next(
+        &self,
+        playlist_id: &str,
+        count: u32,
+    ) -> ProviderResult<QqRadioDetailResp> {
         let disstid = playlist_id.trim().parse::<u64>().map_err(internal_error)?;
         self.post_json_with_sign(
             json!({
@@ -588,7 +592,7 @@ impl QqClient {
                     "module": "music.radioProxy.MbTrackRadioSvr",
                     "param": {
                         "id": disstid,
-                        "num": 1
+                        "num": count.max(1)
                     }
                 }
             }),
@@ -600,7 +604,7 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn radar_next(&self) -> ProviderResult<QqRadarResp> {
+    pub(super) async fn radar_next(&self, count: u32) -> ProviderResult<QqRadarResp> {
         let now = SystemTime::now();
         let since_epoch = now
             .duration_since(UNIX_EPOCH)
@@ -612,7 +616,7 @@ impl QqClient {
                     "module": "music.recommend.TrackRelationServer",
                     "param": {
                         "LastToastTime": &since_epoch.as_secs(),
-                        "NeedNum": 1,
+                        "NeedNum": count.max(1),
                         "Page": 1,
                         "ReqType": 0
                     }

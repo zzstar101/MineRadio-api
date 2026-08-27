@@ -16,6 +16,7 @@ use crate::{
     },
     utils::cryptors::qq::x4_fix_identity,
     utils::decrypt_qrc,
+    utils::pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
 };
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -81,11 +82,17 @@ fn qq_filename(
         .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
 }
 
+/// 雷达电台的固定流 ID(stream_next 分发用)
+const RADAR_ID: &str = "22000";
+/// 推荐页混合模块电台卡的固定 ID(不返回封面与标题)
+const MIXED_RADIO_ID: &str = "99";
+
 #[derive(Clone)]
 pub struct QqAdapter {
     client: Arc<QqClient>,
     created_playlist_dirids: Arc<RwLock<HashMap<u64, u64>>>,
     liked_playlist_dirid: Arc<RwLock<Option<u64>>>,
+    radio_queue: Arc<PopQueue<Track>>,
 }
 
 impl QqAdapter {
@@ -94,6 +101,11 @@ impl QqAdapter {
             client,
             created_playlist_dirids: Arc::new(RwLock::new(HashMap::new())),
             liked_playlist_dirid: Arc::new(RwLock::new(None)),
+            radio_queue: Arc::new(PopQueue::new(
+                ProviderId::Qq,
+                DEFAULT_LOW_WATER,
+                DEFAULT_RETRIES,
+            )),
         }
     }
 
@@ -314,19 +326,14 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn stream_next(&self, id: &str) -> ProviderResult<Track> {
-        if id == "22000" {
-            self.client
-                .radar_next()
-                .await?
-                .standardize()
-                .ok_or_else(|| no_result("stream_next: radar"))
-        } else {
-            self.client
-                .radio_next(id)
-                .await?
-                .standardize()
-                .ok_or_else(|| no_result("stream_next: radio"))
-        }
+        let client = Arc::clone(&self.client);
+        self.radio_queue
+            .pop(id, move |_, want| {
+                let client = Arc::clone(&client);
+                let id = id.to_owned();
+                async move { pull_stream_batch(&client, &id, want).await }
+            })
+            .await
     }
 
     async fn album_list(&self) -> ProviderResult<Vec<AlbumSummary>> {
@@ -374,6 +381,7 @@ impl ProviderAdapter for QqAdapter {
         self.client.logout().await?;
         self.created_playlist_dirids.write().await.clear();
         *self.liked_playlist_dirid.write().await = None;
+        self.radio_queue.clear();
         auth_session::clear_runtime_provider_cookie(&ProviderId::Qq).await;
         Ok(())
     }
@@ -479,10 +487,16 @@ impl ProviderAdapter for QqAdapter {
             } else {
                 self.client.get_mids_by_ids(track_ids).await.ok()
             };
-
-            Ok(response
+            let mut page = response
                 .standardize(mid_by_id.as_ref())
-                .and_then(|page| serde_json::to_string(&page).ok()))
+                .ok_or_else(|| no_result("recommendation_page"))?;
+            // 特判: 首张电台卡借队列预热补齐封面与标题, 失败不影响整页返回
+            if let Err(err) = self.patch_radio_card(&mut page).await {
+                sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                    "推荐页电台特判失败, 保留原样: {err}"
+                )));
+            }
+            Ok(serde_json::to_string(&page).ok())
         };
         let raw = if refresh {
             let raw = fetch().await?;
@@ -502,6 +516,58 @@ impl ProviderAdapter for QqAdapter {
         raw.and_then(|raw| serde_json::from_str(&raw).ok())
             .ok_or_else(|| no_result("recommendation_page"))
     }
+}
+
+impl QqAdapter {
+    /// 特判: 模块一首卡缺封面/缺ID/是 99 号混合电台时, 经队列 peek 预热并借首曲补齐封面与标题;
+    /// 客户端随后真实播放走 stream_next 的 pop, 消费的正是这里预热的同一批
+    async fn patch_radio_card(&self, page: &mut RecommendationPage) -> ProviderResult<()> {
+        let Some(card) = page
+            .list
+            .first_mut()
+            .and_then(|module| module.list.first_mut())
+        else {
+            return Ok(());
+        };
+        if !(card.cover_url.trim().is_empty() || card.id.is_empty() || card.id == MIXED_RADIO_ID) {
+            return Ok(());
+        }
+        // 缺ID时按 99 号台兜底, 其余沿用卡片自身ID(如雷达 22000)
+        let id = if card.id.is_empty() {
+            MIXED_RADIO_ID.to_owned()
+        } else {
+            card.id.clone()
+        };
+        let client = Arc::clone(&self.client);
+        let fetch_id = id.clone();
+        let track = self
+            .radio_queue
+            .peek(&id, move |_, want| {
+                let client = Arc::clone(&client);
+                let id = fetch_id.clone();
+                async move { pull_stream_batch(&client, &id, want).await }
+            })
+            .await?;
+        card.cover_url = track.cover_url;
+        card.title = track.title;
+        Ok(())
+    }
+}
+
+/// 电台/雷达下一曲批量拉取, 供给 PopQueue 的 fetch 闭包; 按 ID 分发雷达或普通电台
+async fn pull_stream_batch(client: &QqClient, id: &str, want: u32) -> ProviderResult<Vec<Track>> {
+    let tracks = if id == RADAR_ID {
+        client.radar_next(want).await?.standardize()
+    } else {
+        client.radio_next(id, want).await?.standardize()
+    };
+    tracks.ok_or_else(|| {
+        no_result(if id == RADAR_ID {
+            "stream_next: radar"
+        } else {
+            "stream_next: radio"
+        })
+    })
 }
 
 fn no_result(action: &str) -> ProviderError {

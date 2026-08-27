@@ -757,8 +757,6 @@ impl QqSongUrlResp {
 
         Some(SongUrlResult {
             url: url,
-            provider: Some(ProviderId::Qq),
-            trial: Some(false),
             expires_at: None,
             ..Default::default()
         })
@@ -1002,13 +1000,15 @@ pub(super) struct QqRadioDetailResp {
 }
 
 impl QqRadioDetailResp {
-    pub(super) fn standardize(self) -> Option<Track> {
-        self.req_0
+    pub(super) fn standardize(self) -> Option<Vec<Track>> {
+        let tracks = self
+            .req_0
             .data
             .tracks
             .into_iter()
-            .next()
             .map(|t| t.standardize(None, None))
+            .collect::<Vec<_>>();
+        (!tracks.is_empty()).then_some(tracks)
     }
 }
 #[derive(Deserialize)]
@@ -1027,13 +1027,15 @@ pub struct QqRadarResp {
 }
 
 impl QqRadarResp {
-    pub(super) fn standardize(self) -> Option<Track> {
-        self.req_0
+    pub(super) fn standardize(self) -> Option<Vec<Track>> {
+        let tracks = self
+            .req_0
             .data
             .vec_songs
             .into_iter()
-            .next()
-            .map(|t| t.track.standardize(None, None))
+            .map(|song| song.track.standardize(None, None))
+            .collect::<Vec<_>>();
+        (!tracks.is_empty()).then_some(tracks)
     }
 }
 
