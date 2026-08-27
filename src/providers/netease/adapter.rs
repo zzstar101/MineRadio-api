@@ -14,8 +14,9 @@ use crate::{
     sidecar_log,
     types::{
         AlbumDetail, AlbumSummary, LyricPayload, PlayableState, PlaylistAddSongAck, PlaylistDetail,
-        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck, SongLikeCheckAck,
-        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability, TrackQualityOption,
+        PlaylistSummary, ProviderId, ProviderLoginStatus, SongLikeAck,
+        SongLikeCheckAck,
+        SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
     utils::pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
     utils::single_flight::SingleFlightCache,
@@ -24,75 +25,13 @@ use crate::{
 use super::{
     client::NeteaseClient,
     lyric::{NeteaseLrcParser, NeteaseParser},
-    map::map_playable,
+    model::{NeteaseSongUrlV1Resp, QualityCandidate, QUALITY_CANDIDATES},
 };
+use crate::utils::single_flight::FlightCoalescer;
 
-#[derive(Clone, Copy)]
-struct QualityCandidate {
-    level: &'static str,
-    br: u32,
-    label: &'static str,
-    short: &'static str,
-}
 
-const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
-    QualityCandidate {
-        level: "jymaster",
-        br: 1_999_000,
-        label: "超清母带",
-        short: "母带",
-    },
-    QualityCandidate {
-        level: "dolby",
-        br: 1_999_000,
-        label: "杜比全景声",
-        short: "杜比",
-    },
-    QualityCandidate {
-        level: "sky",
-        br: 1_999_000,
-        label: "沉浸环绕声",
-        short: "沉浸",
-    },
-    QualityCandidate {
-        level: "jyeffect",
-        br: 1_999_000,
-        label: "高清环绕声",
-        short: "环绕",
-    },
-    QualityCandidate {
-        level: "hires",
-        br: 1_999_000,
-        label: "Hi-Res",
-        short: "Hi-Res",
-    },
-    QualityCandidate {
-        level: "lossless",
-        br: 1_411_000,
-        label: "无损",
-        short: "SQ",
-    },
-    QualityCandidate {
-        level: "exhigh",
-        br: 999_000,
-        label: "极高",
-        short: "HQ",
-    },
-    QualityCandidate {
-        level: "higher",
-        br: 192_000,
-        label: "较高",
-        short: "192k",
-    },
-    QualityCandidate {
-        level: "standard",
-        br: 128_000,
-        label: "标准",
-        short: "128k",
-    },
-];
 
-/// 分页缓存扩容步长与失败重试次数(总尝试 = 1 + PAGE_RETRIES)
+const SONG_URL_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 const PAGE_BATCH: u32 = 200;
 const PAGE_RETRIES: u32 = 2;
 
@@ -102,6 +41,7 @@ pub struct NeteaseAdapter {
     playlist_cache: Arc<SingleFlightCache<PlaylistDetail>>,
     album_cache: Arc<SingleFlightCache<AlbumDetail>>,
     star_queue: Arc<PopQueue<Track>>,
+    song_url_gate: Arc<FlightCoalescer<NeteaseSongUrlV1Resp>>,
 }
 
 impl NeteaseAdapter {
@@ -119,6 +59,7 @@ impl NeteaseAdapter {
                 DEFAULT_LOW_WATER,
                 DEFAULT_RETRIES,
             )),
+            song_url_gate: Arc::new(FlightCoalescer::new(SONG_URL_TTL)),
         }
     }
 
@@ -156,6 +97,30 @@ impl NeteaseAdapter {
             .vip_info(&user_id)
             .await?
             .standardize(login_status))
+    }
+
+    /// v1 优先、旧接口替补的取 URL 编排; 双端点同构, 统一进同 key 单飞闸门。
+    async fn resolve_song_url(
+        &self,
+        id: &str,
+        quality: &QualityCandidate,
+        logged_in: bool,
+    ) -> ProviderResult<Arc<NeteaseSongUrlV1Resp>> {
+        let key = format!("{logged_in}:{id}:{}", quality.level);
+        self.song_url_gate
+            .get(&key, || async {
+                match self.client.song_url_v1(id, quality.level).await {
+                    Ok(resp) => Ok(resp),
+                    Err(err) => {
+                        sidecar_log::spawn_runtime_log(serde_json::json!(format!(
+                            "Netease song_url_v1 回退旧接口(level={level}): {err}",
+                            level = quality.level
+                        )));
+                        self.client.song_url(id, quality.br).await
+                    }
+                }
+            })
+            .await
     }
 }
 
@@ -218,86 +183,35 @@ impl ProviderAdapter for NeteaseAdapter {
             .iter()
             .position(|quality| quality.level == requested)
             .unwrap_or(4);
-        let has_cookie = self
+        let logged_in = self
             .client
             .current_cookie()
             .await
             .is_some_and(|cookie| !cookie.trim().is_empty());
         let mut trial_fallback = None;
-        let mut received_datum = false;
         let mut last_state = PlayableState::Unknown;
         let mut last_error = None;
 
         for quality in QUALITY_CANDIDATES.iter().skip(start_index) {
-            let body = match self
-                .client
-                .song_url_v1(&track.source_id, quality.level)
-                .await
-            {
-                Ok(body) => body,
+            // 同 key 单飞闸门: v1 优先, 同构旧接口替补
+            let resp = match self.resolve_song_url(&track.source_id, quality, logged_in).await {
+                Ok(resp) => resp,
                 Err(err) => {
-                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
-                        "Netease song_url_v1 失败回退旧接口(level={}): {err}",
-                        quality.level
-                    )));
-                    match self.client.song_url(&track.source_id, quality.br).await {
-                        Ok(body) => body,
-                        Err(err) => {
-                            last_error = Some(err);
-                            continue;
-                        }
-                    }
+                    last_error = Some(err);
+                    continue;
                 }
             };
-            let datum = pick_song_url_datum(&body, track);
-
-            let Some(datum) = datum else {
+            let Some(datum) = resp.datum_for(&track.source_id) else {
                 continue;
             };
-            received_datum = true;
-            let url = datum.get("url").and_then(Value::as_str);
-            let fee = datum.get("fee").and_then(Value::as_i64);
-            let code = datum.get("code").and_then(Value::as_i64);
-            let free_trial_info = datum.get("freeTrialInfo").filter(|value| !value.is_null());
-            let state = map_playable(fee, code, free_trial_info, has_cookie, url);
-            last_state = state;
-            if state != PlayableState::Playable || url.filter(|value| !value.is_empty()).is_none() {
+            last_state = datum.playable_state(logged_in);
+            if last_state != PlayableState::Playable {
                 continue;
             }
-            let trial = free_trial_info.is_some();
-            let trial_login_status = if trial {
-                self.login_status_internal()
-                    .await
-                    .unwrap_or(ProviderLoginStatus {
-                        provider: ProviderId::Netease,
-                        logged_in: true,
-                        vip_level: Some(crate::types::VipLevel::None),
-                        ..Default::default()
-                    })
-            } else {
-                ProviderLoginStatus {
-                    provider: ProviderId::Netease,
-                    logged_in: has_cookie,
-                    vip_level: Some(crate::types::VipLevel::None),
-                    ..Default::default()
-                }
+            let Some(result) = datum.song_url_result() else {
+                continue;
             };
-            let vip_level = trial_login_status
-                .vip_level
-                .clone()
-                .unwrap_or_else(|| crate::types::VipLevel::None);
-            let result = SongUrlResult {
-                url: format!(
-                    "audio-proxy?url={}&provider=netease",
-                    urlencoding::encode(url.unwrap_or_default())
-                ),
-                provider: Some(ProviderId::Netease),
-                trial: Some(trial),
-                vip_level: Some(vip_level.clone()),
-                expires_at: None,
-                ..Default::default()
-            };
-            if trial {
+            if datum.is_trial() {
                 if trial_fallback.is_none() {
                     trial_fallback = Some(result);
                 }
@@ -309,115 +223,20 @@ impl ProviderAdapter for NeteaseAdapter {
         if let Some(result) = trial_fallback {
             return Ok(result);
         }
-        if !received_datum {
-            if let Some(err) = last_error {
-                return Err(err);
-            }
-            return Err(ProviderError {
-                code: ProviderErrorCode::Unavailable,
-                provider: ProviderId::Netease,
-                message: format!("netease song-url returned no data for {}", track.source_id),
-                retryable: false,
-                action: None,
-                raw_message: None,
-            });
+        if let Some(err) = last_error {
+            return Err(err);
         }
         Err(state_error(last_state, &track.source_id))
     }
 
     async fn track_qualities(&self, track: &Track) -> ProviderResult<TrackQualityAvailability> {
-        let has_cookie = self
-            .client
-            .current_cookie()
-            .await
-            .is_some_and(|cookie| !cookie.trim().is_empty());
-        let mut qualities = Vec::new();
-
-        for quality in QUALITY_CANDIDATES {
-            let body = match self
-                .client
-                .song_url_v1(&track.source_id, quality.level)
-                .await
-            {
-                Ok(body) => body,
-                Err(err) => {
-                    sidecar_log::spawn_runtime_log(serde_json::json!(format!(
-                        "Netease track_qualities song_url_v1 失败回退旧接口(level={level}): {err}",
-                        level = quality.level
-                    )));
-                    match self.client.song_url(&track.source_id, quality.br).await {
-                        Ok(body) => body,
-                        Err(err) => {
-                            sidecar_log::spawn_runtime_log(serde_json::json!(format!(
-                                "Netease track_qualities 旧接口也失败(level={level}): {err}",
-                                level = quality.level
-                            )));
-                            continue;
-                        }
-                    }
-                }
-            };
-            if body.is_null() {
-                continue;
-            }
-            let datum = pick_song_url_datum(&body, track);
-            let Some(datum) = datum else {
-                continue;
-            };
-            let url = datum.get("url").and_then(Value::as_str);
-            let state = map_playable(
-                datum.get("fee").and_then(Value::as_i64),
-                datum.get("code").and_then(Value::as_i64),
-                datum.get("freeTrialInfo").filter(|value| !value.is_null()),
-                has_cookie,
-                url,
-            );
-            if state != PlayableState::Playable || url.filter(|value| !value.is_empty()).is_none() {
-                continue;
-            }
-            let actual_level = netease_actual_level(datum, &quality);
-            if qualities
-                .iter()
-                .any(|option: &TrackQualityOption| option.id == actual_level)
-            {
-                continue;
-            }
-            let br = datum
-                .get("br")
-                .and_then(Value::as_u64)
-                .and_then(|value| u32::try_from(value).ok())
-                .unwrap_or(quality.br);
-            let media_type = datum
-                .get("type")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned);
-            qualities.push(TrackQualityOption {
-                provider: ProviderId::Netease,
-                id: actual_level.clone(),
-                label: netease_quality_label(&actual_level, &quality).to_owned(),
-                short: Some(netease_quality_short(&actual_level, &quality).to_owned()),
-                detail: Some(netease_quality_detail(br, media_type.as_deref())),
-                request_quality: actual_level.clone(),
-                level: Some(actual_level),
-                r#type: media_type,
-                br: Some(br),
-                source: "resolved".to_owned(),
-                ..Default::default()
-            });
-        }
-
-        qualities.sort_by_key(|option| {
-            netease_quality_rank(option.level.as_deref().unwrap_or(&option.id))
-        });
-        Ok(TrackQualityAvailability {
-            provider: ProviderId::Netease,
-            track_id: track.source_id.clone(),
-            default_quality: qualities.first().map(|item| item.request_quality.clone()),
-            qualities,
-        })
+        self.client
+            .track_qualities(&track.source_id)
+            .await?
+            .standardize()
+            .ok_or_else(|| no_result("track_detail"))
     }
+
 
     async fn lyric(&self, track: &Track) -> ProviderResult<LyricPayload> {
         let resp = match self.client.lyric_new(&track.source_id).await {
@@ -776,59 +595,6 @@ impl ProviderAdapter for NeteaseAdapter {
     }
 }
 
-fn pick_song_url_datum<'a>(body: &'a Value, track: &Track) -> Option<&'a Value> {
-    let items = body.get("data")?.as_array()?;
-    items
-        .iter()
-        .find(|item| {
-            item.is_object()
-                && item.get("id").map(read_id_like).unwrap_or_default() == track.source_id
-        })
-        .or_else(|| items.first())
-        .filter(|item| item.is_object())
-}
-
-fn netease_actual_level(datum: &Value, requested: &QualityCandidate) -> String {
-    datum
-        .get("level")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|level| !level.is_empty())
-        .unwrap_or(requested.level)
-        .to_owned()
-}
-
-fn netease_quality_label<'a>(level: &str, fallback: &'a QualityCandidate) -> &'a str {
-    QUALITY_CANDIDATES
-        .iter()
-        .find(|candidate| candidate.level == level)
-        .map(|candidate| candidate.label)
-        .unwrap_or(fallback.label)
-}
-
-fn netease_quality_short<'a>(level: &str, fallback: &'a QualityCandidate) -> &'a str {
-    QUALITY_CANDIDATES
-        .iter()
-        .find(|candidate| candidate.level == level)
-        .map(|candidate| candidate.short)
-        .unwrap_or(fallback.short)
-}
-
-fn netease_quality_detail(br: u32, media_type: Option<&str>) -> String {
-    let kbps = (br.saturating_add(500)) / 1_000;
-    match media_type {
-        Some(media_type) => format!("{kbps}kbps · {}", media_type.to_ascii_uppercase()),
-        None => format!("{kbps}kbps"),
-    }
-}
-
-fn netease_quality_rank(level: &str) -> usize {
-    QUALITY_CANDIDATES
-        .iter()
-        .position(|candidate| candidate.level == level)
-        .unwrap_or(QUALITY_CANDIDATES.len())
-}
-
 fn response_code(body: &Value) -> i64 {
     body.get("code")
         .and_then(Value::as_f64)
@@ -887,10 +653,7 @@ fn invalid_response(message: String) -> ProviderError {
 
 fn state_error(state: PlayableState, id: &str) -> ProviderError {
     let code = match state {
-        PlayableState::LoginRequired => ProviderErrorCode::LoginRequired,
         PlayableState::VipRequired => ProviderErrorCode::VipRequired,
-        PlayableState::PaidRequired => ProviderErrorCode::PaidRequired,
-        PlayableState::TrialOnly => ProviderErrorCode::TrialOnly,
         PlayableState::CopyrightUnavailable => ProviderErrorCode::CopyrightUnavailable,
         _ => ProviderErrorCode::Unavailable,
     };
@@ -898,8 +661,9 @@ fn state_error(state: PlayableState, id: &str) -> ProviderError {
         code,
         provider: ProviderId::Netease,
         message: format!("netease song-url {id} state {state}"),
-        retryable: state == PlayableState::LoginRequired,
-        action: (state == PlayableState::LoginRequired).then(|| "login".to_owned()),
+        // 登录相关的重试/action 提示随 songurl 建模迁移到错误码路径
+        retryable: false,
+        action: None,
         raw_message: None,
     }
 }
@@ -935,24 +699,7 @@ mod tests {
     use crate::types::{AlbumDetail, ProviderId, Track};
     use crate::utils::single_flight::SingleFlightCache;
 
-    use super::{pick_song_url_datum, response_code};
-
-    #[test]
-    fn song_url_datum_prefers_the_requested_track_id() {
-        let track = Track {
-            source_id: "42".to_owned(),
-            ..Default::default()
-        };
-        let body = json!({
-            "data": [
-                { "id": 7, "url": "https://first" },
-                { "id": 42, "url": "https://matched" }
-            ]
-        });
-
-        let datum = pick_song_url_datum(&body, &track).expect("matching datum");
-        assert_eq!(datum["url"], "https://matched");
-    }
+    use super::response_code;
 
     #[test]
     fn response_code_defaults_only_when_the_code_field_is_missing_or_non_numeric() {

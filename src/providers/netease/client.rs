@@ -12,17 +12,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::{
-    auth_session,
-    providers::{
-        ProviderId, ProviderResult,
-        error::{ProviderError, ProviderErrorCode},
-        netease::model::{
-            NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp,
-            NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp,
-            NeteaseVipInfoResp, RcmdM1SingleResp,
+    auth_session, providers::{
+        ProviderId, ProviderResult, error::{ProviderError, ProviderErrorCode}, netease::model::{
+            NeteaseDailySongsResp, NeteaseFMResp, NeteaseIntelligenceResp, NeteasePlaylistDetailResp, NeteasePlaylistListResp, NeteaseRcmdPageResp, NeteaseSongUrlV1Resp, NeteaseVipInfoResp, RcmdM1SingleResp,
         },
-    },
-    utils::{
+    }, utils::{
         cookie::Cookie, decrypt_eapi_response, encrypt_eapi, encrypt_weapi,
         generate_weapi_secret_key,
     },
@@ -31,6 +25,7 @@ use crate::{
 use super::model::{
     NeteaseAlbumDetailResp, NeteaseAlbumListResp, NeteaseLoginStatusResp, NeteaseLyricResp,
     NeteaseLyricV1Resp, NeteaseSearchAlbumResp, NeteaseSearchPlaylistResp, NeteaseSearchTrackResp,
+    NeteaseTrackDetailResp,
 };
 
 const API_DOMAIN: &str = "https://interfacepc.music.163.com";
@@ -163,12 +158,16 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn song_url_v1(&self, id: &str, level: &str) -> ProviderResult<Value> {
+    pub(super) async fn song_url_v1(
+        &self,
+        id: &str,
+        level: &str,
+    ) -> ProviderResult<NeteaseSongUrlV1Resp> {
         let mut body = json!({
             "ids": format!("[{id}]"),
             "level": level,
             "encodeType": "flac",
-            "e_r": false
+            "e_r": true
         });
         if level == "sky" {
             body["immerseType"] = Value::String("c51".to_owned());
@@ -182,7 +181,19 @@ impl NeteaseClient {
         .await
     }
 
-    pub async fn song_url(&self, id: &str, br: u32) -> ProviderResult<Value> {
+    pub async fn track_qualities(&self, id: &str) -> ProviderResult<NeteaseTrackDetailResp> {
+        self.weapi_model(
+            "/api/v3/song/detail",
+            json!({
+                "c": format!("[{{\"id\":{}}}]", id),
+            }),
+            self.current_cookie().await.as_deref(),
+            "track_qualities",
+        )
+        .await
+    }
+
+    pub(super) async fn song_url(&self, id: &str, br: u32) -> ProviderResult<NeteaseSongUrlV1Resp> {
         self.eapi_model(
             "/api/song/enhance/player/url",
             json!({

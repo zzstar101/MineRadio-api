@@ -3,12 +3,11 @@ use serde_json::value::RawValue;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, RecommendationCard, RecommendationCardKind, RecommendationModule,
-    RecommendationModuleKind, RecommendationPage, Track, VipLevel,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary,
+    PreviewRange, ProviderId, ProviderLoginStatus, RecommendationCard, RecommendationCardKind,
+    RecommendationModule, RecommendationModuleKind, RecommendationPage, SongUrlResult, Track,
+    TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
-
-use super::map::normalize_provider_image_url;
 
 #[derive(Deserialize)]
 pub(super) struct NeteaseSearchTrackResp {
@@ -67,11 +66,10 @@ impl NeteaseSearchTrackResp {
                     title: song.name,
                     artists: song.artists.into_iter().map(|artist| artist.name).collect(),
                     album: album.name,
-                    cover_url: normalize_provider_image_url(&album.pic_url),
+                    cover_url: album.pic_url,
                     quality_hints: vec!["standard".to_owned()],
                     playable_state: get_playable(song.fee),
                     duration_ms: song.dt,
-                    artwork_url: None,
                 }
             })
             .collect()
@@ -179,7 +177,6 @@ impl NeteaseAlbumDetailResp {
                     quality_hints: vec!["standard".to_owned()],
                     duration_ms: t.dt,
                     playable_state: get_playable(t.fee),
-                    artwork_url: None,
                 }
             })
             .collect();
@@ -634,6 +631,246 @@ impl RcmdMCU {
     }
 }
 
+/// 设计上是支持多个并发获取的, 实际上每次只获取一个
+#[derive(Deserialize)]
+pub(super) struct NeteaseSongUrlV1Resp {
+    data: Vec<NeteaseSongUrlV1Datum>,
+}
+
+impl NeteaseSongUrlV1Resp {
+    /// 该接口设计上支持并发多首, 实际每次只取一首;
+    /// 选择规则与旧 Value 路径一致: 精确匹配 track_id 优先, 否则取第一个
+    pub(super) fn datum_for(&self, track_id: &str) -> Option<&NeteaseSongUrlV1Datum> {
+        let id = track_id.parse::<i64>().ok();
+        self.data
+            .iter()
+            .find(|d| Some(d.id) == id)
+            .or_else(|| self.data.first())
+    }
+
+    pub(super) fn datum(&self) -> Option<&NeteaseSongUrlV1Datum> {
+        self.data.first()
+    }
+
+    /// 单次响应 → SongUrlResult。不判可播性 —— 调用方先经 playable_state 裁决再取结果,
+    /// 返回 None 表示该数据项没给出可用地址
+    pub(super) fn standardize(&self, track_id: &str) -> Option<SongUrlResult> {
+        self.datum_for(track_id).and_then(|d| d.song_url_result())
+    }
+
+    pub(super) fn playable_state(&self, logged_in: bool, track_id: &str) -> PlayableState {
+        self.datum_for(track_id)
+            .map(|d| d.playable_state(logged_in))
+            .unwrap_or(PlayableState::Unknown)
+    }
+
+    pub(super) fn is_trial(&self, track_id: &str) -> bool {
+        self.datum_for(track_id)
+            .is_some_and(|d| d.is_trial())
+    }
+
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct NeteaseSongUrlV1Datum {
+    id: i64,
+    url: String,
+    code: i64,
+    fee: i64,
+    free_trial_info: Option<FreeTrialInfo>,
+    level: String,
+}
+
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreeTrialInfo {
+    start: u64,
+    end: u64,
+}
+
+impl NeteaseSongUrlV1Datum {
+    /// 裁决态: 会话参数作参数传入保持纯映射; 401/fee=4 的细分语义留给 songurl 建模
+    pub(super) fn playable_state(&self, logged_in: bool) -> PlayableState {
+        let has_url = !self.url.trim().is_empty();
+        if self.code == 200 && has_url {
+            return PlayableState::Playable;
+        }
+        if self.code == 401 {
+            // TODO(songurl建模): 未登录的裁决语义由错误码承载, 此处暂归 unknown
+            return PlayableState::Unknown;
+        }
+        match self.fee {
+            1 => {
+                if logged_in && has_url {
+                    PlayableState::Playable
+                } else {
+                    PlayableState::VipRequired
+                }
+            }
+            // TODO: 网易数字专辑(fee=4)需细分 vip/购买 判断, 暂按 unknown
+            4 => PlayableState::Unknown,
+            _ if has_url => PlayableState::Playable,
+            _ => PlayableState::Unknown,
+        }
+    }
+
+    /// 上游给了 freeTrialInfo 有则换算, 无则 None=确证无试听段
+    pub(super) fn is_trial(&self) -> bool {
+        self.free_trial_info.is_some()
+    }
+
+    /// audio-proxy 包装; None = 地址为空(不可播)
+    pub(super) fn song_url_result(&self) -> Option<SongUrlResult> {
+        let url = self.url.trim();
+        (!url.is_empty()).then(|| SongUrlResult {
+            url: format!(
+                "audio-proxy?url={}&provider=netease",
+                urlencoding::encode(url)
+            ),
+            quality: self.level.clone(),
+            // TODO: expi 单位未验证(疑似 ms), 验证后即可下发 expires_at
+            expires_at: None,
+            // 同一响应内的试听区间, 天然同源
+            preview_range: self.free_trial_info.as_ref().map(|p| PreviewRange {
+                start_ms: p.start * 1000,
+                end_ms: p.end * 1000,
+            }),
+        })
+    }
+}
+
+/// 品质文案词汇表 —— 自 adapter 迁入: 纯映射数据不属于编排层
+#[derive(Clone, Copy)]
+pub(super) struct QualityCandidate {
+    pub level: &'static str,
+    pub br: u32,
+    pub label: &'static str,
+    pub short: &'static str,
+}
+
+pub(super) const QUALITY_CANDIDATES: [QualityCandidate; 9] = [
+    QualityCandidate {
+        level: "jymaster",
+        br: 1_999_000,
+        label: "超清母带",
+        short: "母带",
+    },
+    QualityCandidate {
+        level: "dolby",
+        br: 1_999_000,
+        label: "杜比全景声",
+        short: "杜比",
+    },
+    QualityCandidate {
+        level: "sky",
+        br: 1_999_000,
+        label: "沉浸环绕声",
+        short: "沉浸",
+    },
+    QualityCandidate {
+        level: "jyeffect",
+        br: 1_999_000,
+        label: "高清环绕声",
+        short: "环绕",
+    },
+    QualityCandidate {
+        level: "hires",
+        br: 1_999_000,
+        label: "Hi-Res",
+        short: "Hi-Res",
+    },
+    QualityCandidate {
+        level: "lossless",
+        br: 1_411_000,
+        label: "无损",
+        short: "SQ",
+    },
+    QualityCandidate {
+        level: "exhigh",
+        br: 999_000,
+        label: "极高",
+        short: "HQ",
+    },
+    QualityCandidate {
+        level: "higher",
+        br: 192_000,
+        label: "较高",
+        short: "192k",
+    },
+    QualityCandidate {
+        level: "standard",
+        br: 128_000,
+        label: "标准",
+        short: "128k",
+    },
+];
+
+
+
+
+#[derive(Deserialize)]
+pub struct NeteaseTrackDetailResp {
+    songs: Vec<SongDetail>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongDetail {
+    id: i64,
+    //fee: i64,
+    hr: Option<Quality>, // Hi-Res质量文件信息
+    sq: Option<Quality>, // 无损质量文件信息
+    h: Option<Quality>, // 高质量文件信息
+    m: Option<Quality>, // 中质量文件信息
+    l: Option<Quality>, // 低质量文件信息
+}
+
+#[derive(Deserialize)]
+pub struct Quality {
+    br: i64,
+    //size: i64,
+}
+
+impl NeteaseTrackDetailResp {
+    pub fn standardize(self) -> Option<TrackQualityAvailability> {
+        let song = self.songs.into_iter().next()?;
+        let track_id = song.id.to_string();
+        // 迭代顺序即 QUALITY_CANDIDATES 排序
+        let tiers = [
+            ("standard", song.l.as_ref()),
+            ("higher", song.m.as_ref()),
+            ("exhigh", song.h.as_ref()),
+            ("lossless", song.sq.as_ref()),
+            ("hires", song.hr.as_ref()),
+        ];
+        let mut qualities = Vec::new();
+        for (level, tier) in tiers {
+            let Some(tier) = tier else { continue };
+            let Some(candidate) = QUALITY_CANDIDATES.iter().find(|c| c.level == level) else {
+                continue;
+            };
+            let mut option = assemble_quality_option(
+                candidate.level,
+                candidate,
+                u32::try_from(tier.br).unwrap_or(candidate.br),
+                None,
+            );
+            option.source = "detail".to_owned();
+            qualities.push(option);
+        }
+        (!qualities.is_empty()).then_some(TrackQualityAvailability {
+            provider: ProviderId::Netease,
+            track_id,
+            default_quality: qualities.first().map(|option| option.request_quality.clone()),
+            qualities,
+        })
+    }
+}
+
+
+//reuse
 #[derive(Deserialize)]
 struct TitleOnly {
     title: Option<String>,
@@ -653,6 +890,51 @@ pub(super) struct NeteaseSearchAlbumResp {
 #[derive(Deserialize)]
 struct NeteaseSearchAlbumData {
     albums: Vec<NeteaseSearchAlbum>,
+}
+
+pub(super) fn assemble_quality_option(
+    actual_level: &str,
+    requested: &QualityCandidate,
+    br: u32,
+    media_type: Option<&str>,
+) -> TrackQualityOption {
+    TrackQualityOption {
+        provider: ProviderId::Netease,
+        id: actual_level.to_owned(),
+        label: quality_label(actual_level, requested).to_owned(),
+        short: Some(quality_short(actual_level, requested).to_owned()),
+        detail: Some(quality_detail(br, media_type)),
+        request_quality: actual_level.to_owned(),
+        level: Some(actual_level.to_owned()),
+        r#type: media_type.map(str::to_owned),
+        br: Some(br),
+        source: "resolved".to_owned(),
+        ..Default::default()
+    }
+}
+
+fn quality_label(level: &str, fallback: &QualityCandidate) -> &'static str {
+    QUALITY_CANDIDATES
+        .iter()
+        .find(|candidate| candidate.level == level)
+        .map(|candidate| candidate.label)
+        .unwrap_or(fallback.label)
+}
+
+fn quality_short(level: &str, fallback: &QualityCandidate) -> &'static str {
+    QUALITY_CANDIDATES
+        .iter()
+        .find(|candidate| candidate.level == level)
+        .map(|candidate| candidate.short)
+        .unwrap_or(fallback.short)
+}
+
+fn quality_detail(br: u32, media_type: Option<&str>) -> String {
+    let kbps = br.saturating_add(500) / 1_000;
+    match media_type {
+        Some(media_type) => format!("{kbps}kbps - {}", media_type.to_ascii_uppercase()),
+        None => format!("{kbps}kbps"),
+    }
 }
 
 #[derive(Deserialize)]
@@ -819,7 +1101,6 @@ impl NeteasePlaylistDetailResp {
                     quality_hints: vec!["standard".to_owned()],
                     duration_ms: s.dt,
                     playable_state: get_playable(s.fee),
-                    artwork_url: None,
                 }
             })
             .collect();
@@ -870,7 +1151,6 @@ impl NeteaseTrack {
             quality_hints: vec!["standard".to_owned()],
             duration_ms: s.dt,
             playable_state: get_playable(s.fee),
-            artwork_url: None,
         }
     }
 }
@@ -1019,8 +1299,8 @@ fn get_playable(fee: u8) -> PlayableState {
     match fee {
         0 => PlayableState::Playable,
         1 => PlayableState::VipRequired,
-        4 => PlayableState::PaidRequired,
-        8 => PlayableState::TrialOnly,
+        // TODO: 网易数字专辑(fee=4)需细分 vip/购买 判断, 暂按 unknown
+        4 => PlayableState::Unknown,
         _ => PlayableState::Unknown,
     }
 }
