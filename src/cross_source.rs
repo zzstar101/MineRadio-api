@@ -58,6 +58,7 @@ static DERIVATIVE_RESULT_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid derivative result regex")
 });
 
+#[derive(Clone)]
 pub(crate) struct CrossSourceApi {
     resolver: Arc<CrossSourceResolver>,
 }

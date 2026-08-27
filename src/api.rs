@@ -1,13 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
+use futures::FutureExt;
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
     auth_session, cache,
     config::LibraryConfig,
     cross_source,
-    podcast::{PodcastService, create_podcast_service_with_client},
+    podcast::{
+        PodcastDetailParams, PodcastMyItemsParams, PodcastPageParams, PodcastProgramsParams,
+        PodcastSearchParams, PodcastService, create_podcast_service_with_client,
+    },
     providers::{
         ProviderAdapter,
         kugou::adapter::KugouAdapter,
@@ -26,7 +30,9 @@ use crate::{
         wechat::{WechatQrLoginDeps, create_wechat_qr_login_service},
     },
     sidecar_log::{self, SidecarLogger},
-    weather_radio::{WeatherRadioDeps, WeatherRadioService, create_weather_radio_service},
+    weather_radio::{
+        WeatherRadioDeps, WeatherRadioParams, WeatherRadioService, create_weather_radio_service,
+    },
 };
 
 pub use crate::error::{ApiError, ApiErrorCode, ApiResult};
@@ -79,16 +85,31 @@ impl ApiInner {
             (ProviderId::Spotify, spotify.clone()),
         ]);
 
+        let cross_source = cross_source::CrossSourceApi::new(
+            cross_source::create_cross_source_resolver(cross_source::CrossSourceResolverDeps {
+                providers: provider_map,
+            }),
+        );
+        let weather_search = cross_source.clone();
+
         Self {
             config,
             logger,
-            cross_source: cross_source::CrossSourceApi::new(
-                cross_source::create_cross_source_resolver(cross_source::CrossSourceResolverDeps {
-                    providers: provider_map,
-                }),
-            ),
+            cross_source,
             podcast: create_podcast_service_with_client(netease_client),
-            weather_radio: create_weather_radio_service(WeatherRadioDeps::default()),
+            weather_radio: create_weather_radio_service(WeatherRadioDeps {
+                search_tracks: Arc::new(move |keyword, limit| {
+                    let search = weather_search.clone();
+                    async move {
+                        search
+                            .search_tracks(&keyword, None, limit)
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error.message))
+                    }
+                    .boxed()
+                }),
+                ..WeatherRadioDeps::default()
+            }),
             qq,
             netease,
             soda,
@@ -269,6 +290,65 @@ impl Api {
         self.inner.cross_source.recommendation_pages(refresh).await
     }
 
+    /// 构建天气电台；天气与歌曲搜索都由库内既有服务完成。
+    pub async fn weather_radio(&self, params: WeatherRadioParams) -> ApiResult<Value> {
+        self.inner
+            .weather_radio
+            .build(params)
+            .await
+            .map_err(service_unavailable)
+    }
+
+    /// 搜索播客。
+    pub async fn podcast_search(&self, keywords: String, limit: u32) -> ApiResult<Value> {
+        self.inner
+            .podcast
+            .search(PodcastSearchParams { keywords, limit })
+            .await
+            .map_err(service_unavailable)
+    }
+
+    /// 读取热门播客。
+    pub async fn podcast_hot(&self, limit: u32, offset: u32) -> ApiResult<Value> {
+        self.inner
+            .podcast
+            .hot(PodcastPageParams { limit, offset })
+            .await
+            .map_err(service_unavailable)
+    }
+
+    /// 读取播客详情。
+    pub async fn podcast_detail(&self, rid: String) -> ApiResult<Value> {
+        self.inner
+            .podcast
+            .detail(PodcastDetailParams { rid })
+            .await
+            .map_err(service_unavailable)
+    }
+
+    /// 读取播客节目列表。
+    pub async fn podcast_programs(&self, rid: String, limit: u32, offset: u32) -> ApiResult<Value> {
+        self.inner
+            .podcast
+            .programs(PodcastProgramsParams { rid, limit, offset })
+            .await
+            .map_err(service_unavailable)
+    }
+
+    /// 读取当前账号的播客收藏摘要。
+    pub async fn podcast_my(&self) -> ApiResult<Value> {
+        self.inner.podcast.my().await.map_err(service_unavailable)
+    }
+
+    /// 读取当前账号的一组播客收藏。
+    pub async fn podcast_my_items(&self, key: String, limit: u32, offset: u32) -> ApiResult<Value> {
+        self.inner
+            .podcast
+            .my_items(PodcastMyItemsParams { key, limit, offset })
+            .await
+            .map_err(service_unavailable)
+    }
+
     pub fn qr_login(&self, kind: QrLoginKind) -> Option<&QrLoginApi> {
         self.inner.qr_logins.get(&kind)
     }
@@ -280,4 +360,8 @@ impl Api {
     pub fn app_version(&self) -> &str {
         &self.inner.config.app_version
     }
+}
+
+fn service_unavailable(error: anyhow::Error) -> ApiError {
+    ApiError::new(ApiErrorCode::Unavailable, error.to_string())
 }
