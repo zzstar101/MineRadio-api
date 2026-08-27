@@ -1,9 +1,9 @@
 use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
-    TrackQualityOption, VipLevel,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, PreviewRange,
+    ProviderId, ProviderLoginStatus, SongUrlOptions, SongUrlResult, Track,
+    TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
 
 #[derive(Deserialize)]
@@ -290,7 +290,11 @@ pub(super) struct SodaSongUrlResp {
 }
 
 impl SodaSongUrlResp {
-    pub fn standardize(self, opt: SongUrlOptions) -> Option<SongUrlResult> {
+    pub fn standardize(
+        self,
+        opt: SongUrlOptions,
+        preview_range: Option<PreviewRange>,
+    ) -> Option<SongUrlResult> {
         let target = opt.quality.unwrap_or(String::new());
 
         let list = self.result.data;
@@ -312,8 +316,8 @@ impl SodaSongUrlResp {
                 urlencoding::encode(play_url),
                 urlencoding::encode(&play_info.play_auth)
             ),
-            provider: Some(ProviderId::Soda),
             expires_at: Some(play_info.url_expire.to_string()),
+            preview_range,
             ..Default::default()
         })
     }
@@ -345,6 +349,7 @@ struct SodaSongUrlList {
     url_expire: i64,
 }
 
+/// 该接口负责vip判断, 可用音质, 是否收藏以及歌词获取
 #[derive(Deserialize)]
 pub(super) struct SodaTrackV2Resp {
     lyric: Lyric,
@@ -353,14 +358,14 @@ pub(super) struct SodaTrackV2Resp {
 }
 
 impl SodaTrackV2Resp {
-    pub fn standardize_lyric(self) -> (Option<String>, Option<String>, String) {
+    pub(super) fn standardize_lyric(self) -> (Option<String>, Option<String>, String) {
         (
             self.lyric.content,
             self.lyric.translations.map(|t| t.cn),
             self.track.id,
         )
     }
-    pub fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
+    pub(super) fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
         let track_id = self.track.id.clone();
         let qualities = self.track.standardize_quality()?;
         Some(TrackQualityAvailability {
@@ -372,8 +377,15 @@ impl SodaTrackV2Resp {
             qualities,
         })
     }
-    pub fn get_songurl(self) -> String {
-        self.track_player.url_player_info
+    pub(super) fn standardize_preview_range(self) -> Option<PreviewRange> {
+        let p = self.track.preview;
+        Some(PreviewRange {
+            start_ms: p.start,
+            end_ms: p.start + p.duration,
+        })
+    }
+    pub fn get_songurl(&self) -> String {
+        self.track_player.url_player_info.clone()
     }
     pub fn is_collected(self) -> Option<bool> {
         self.track.state.and_then(|s| s.is_collected)
@@ -464,6 +476,7 @@ pub(super) struct SodaTrack {
     state: Option<State>,
     label_info: LabelInfo,
     bit_rates: Vec<BitRate>,
+    preview: Preview,
 }
 
 impl SodaTrack {
@@ -491,13 +504,12 @@ impl SodaTrack {
                 .into_iter()
                 .map(|bit_rate| bit_rate.quality)
                 .collect(),
-            playable_state: if self.label_info.only_vip_playable.unwrap_or(false) {
+            playable_state: if self.label_info.only_vip_playable {
                 PlayableState::VipRequired
             } else {
                 PlayableState::Playable
             },
             duration_ms: Some(self.duration),
-            artwork_url: None,
         }
     }
     pub fn standardize_quality(self) -> Option<Vec<TrackQualityOption>> {
@@ -522,7 +534,7 @@ impl SodaTrack {
                     id: raw_quality.to_owned(),
                     label,
                     detail: Some(
-                        if self.label_info.only_vip_playable.unwrap_or(false) {
+                        if self.label_info.only_vip_playable {
                             "vip_required"
                         } else {
                             "playable"
@@ -610,7 +622,7 @@ struct BitRate {
 
 #[derive(Deserialize)]
 struct LabelInfo {
-    only_vip_playable: Option<bool>,
+    only_vip_playable: bool,
 }
 
 #[derive(Deserialize)]
@@ -622,6 +634,12 @@ struct State {
 struct Artist {
     //抖音创作原声是没有作者的哈基汽水
     name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Preview {
+    start: u64,
+    duration: u64,
 }
 
 #[derive(Deserialize)]
@@ -656,7 +674,6 @@ impl SodaSearch2Resp {
                     PlayableState::Playable
                 },
                 duration_ms: Some(t.duration as u64 * 1000),
-                artwork_url: None,
             })
             .collect();
         (!v.is_empty()).then_some(v)

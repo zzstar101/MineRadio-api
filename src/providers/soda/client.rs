@@ -129,13 +129,7 @@ impl SodaClient {
         self.get_model(&url.to_string(), "search_playlist").await
     }
 
-    pub(super) async fn song_url(&self, track_id: &str) -> ProviderResult<SodaSongUrlResp> {
-        let info_url = self.track_detail(track_id).await?.get_songurl();
-        if info_url.is_empty() {
-            return Err(unavailable_error(format!(
-                "soda track {track_id} missing url_player_info"
-            )));
-        }
+    pub(super) async fn song_url(&self, info_url: &str) -> ProviderResult<SodaSongUrlResp> {
         self.get_model(&info_url, "song_url").await
     }
 
