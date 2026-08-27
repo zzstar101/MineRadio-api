@@ -295,3 +295,145 @@ mod tests {
         assert!(slots.contains_key("fresh"));
     }
 }
+
+/// 朴素版同 key 单飞闸门: 合并并发重复请求 + 短 TTL 结果复用。
+/// 与 Paginated 版的区别: 无分页/重试语义; 失败不缓存,
+/// 持锁者带错释放后, 下一个排队者双检落空自会重新发起(与文档顶部规则一致)。
+/// 排队窗口用 pending 计数保护槽位不被清扫, 防止新旧闸门并存打穿并发。
+pub struct FlightCoalescer<V> {
+    ttl: Duration,
+    slots: Mutex<HashMap<String, CoalesceSlot<V>>>,
+}
+
+struct CoalesceSlot<V> {
+    entry: Option<(Arc<V>, Instant)>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+    pending: u32,
+}
+
+impl<V> Default for CoalesceSlot<V> {
+    fn default() -> Self {
+        Self {
+            entry: None,
+            gate: Arc::default(),
+            pending: 0,
+        }
+    }
+}
+
+struct PendingGuard<'a, V> {
+    slots: &'a Mutex<HashMap<String, CoalesceSlot<V>>>,
+    key: String,
+}
+
+impl<V> Drop for PendingGuard<'_, V> {
+    fn drop(&mut self) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        if let Some(slot) = slots.get_mut(&self.key) {
+            slot.pending = slot.pending.saturating_sub(1);
+        }
+    }
+}
+
+impl<V> Default for FlightCoalescer<V>
+where
+    V: Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self {
+            ttl: Duration::from_secs(30),
+            slots: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<V> FlightCoalescer<V>
+where
+    V: Send + Sync + 'static,
+{
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            slots: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// 同 key 合并发: 排队登记 → 持闸门双检 → 未命中则拉取并写回。
+    /// 失败不写缓存(见文件头注释), 等待者逐个重试。
+    pub async fn get<F, Fut>(&self, key: &str, fetch: F) -> ProviderResult<Arc<V>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ProviderResult<V>>,
+    {
+        janitor::ensure_spawned();
+        let key = key.to_owned();
+        {
+            let mut slots = self
+                .slots
+                .lock()
+                .unwrap_or_else(crate::utils::poison::continue_on_poison);
+            slots.entry(key.clone()).or_default().pending += 1;
+        }
+        let _guard = PendingGuard { slots: &self.slots, key: key.clone() };
+
+        let gate = {
+            let mut slots = self
+                .slots
+                .lock()
+                .unwrap_or_else(crate::utils::poison::continue_on_poison);
+            Arc::clone(&slots.entry(key.clone()).or_default().gate)
+        };
+        let _permit = gate.lock().await;
+
+        // 双检: 排队期间前一个持锁者可能已经写入新鲜结果
+        if let Some(value) = self.fresh(&key) {
+            return Ok(value);
+        }
+
+        let value = Arc::new(fetch().await?);
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        slots.entry(key).or_default().entry = Some((value.clone(), Instant::now() + self.ttl));
+        Ok(value)
+    }
+
+    fn fresh(&self, key: &str) -> Option<Arc<V>> {
+        let slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        let slot = slots.get(key)?;
+        let (value, expires_at) = slot.entry.as_ref()?;
+        if *expires_at <= Instant::now() {
+            return None;
+        }
+        Some(value.clone())
+    }
+}
+
+impl<V> janitor::Sweepable for FlightCoalescer<V>
+where
+    V: Send + Sync + 'static,
+{
+    /// 规则与 Paginated 版一致: 排队中的槽位不清, 防止新旧闸门并存打穿单飞
+    fn sweep(&self) -> usize {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(crate::utils::poison::continue_on_poison);
+        let before = slots.len();
+        slots.retain(|_, slot| {
+            slot.pending > 0
+                || slot
+                    .entry
+                    .as_ref()
+                    .is_some_and(|(_, expires_at)| *expires_at > Instant::now())
+        });
+        before - slots.len()
+    }
+}
