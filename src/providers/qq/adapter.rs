@@ -3,10 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     auth_session,
     cache::{self, TTL_1_DAY},
-    providers::lyric::{LrcParser, UniversalLrcParser},
     providers::{
         ProviderAdapter, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
+        lyric::{LrcParser, UniversalLrcParser},
     },
     sidecar_log,
     types::{
@@ -14,9 +14,11 @@ use crate::{
         PlaylistSummary, ProviderId, ProviderLoginStatus, RecommendationPage, SongLikeAck,
         SongUrlOptions, SongUrlResult, Track, TrackQualityAvailability,
     },
-    utils::cryptors::qq::x4_fix_identity,
-    utils::decrypt_qrc,
-    utils::pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
+    utils::{
+        cryptors::qq::x4_fix_identity,
+        decrypt_qrc,
+        pop_queue::{DEFAULT_LOW_WATER, DEFAULT_RETRIES, PopQueue},
+    },
 };
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -180,13 +182,19 @@ impl ProviderAdapter for QqAdapter {
             .and_then(|o| o.quality)
             .unwrap_or_else(|| "128k".to_owned());
         let media_mid = track.id.clone();
-        let cdn = self.client.cdn().await?;
+        let (cdn_res, detail_res) =
+            tokio::join!(self.client.cdn(), self.client.song_detail(&track.source_id));
+        let cdn = cdn_res?;
+        let preview_range = detail_res
+            .ok()
+            .and_then(|detail| detail.standardize_preview_range());
+
         if let Some(filename) = qq_filename(qq_quality_candidates(false), &requested, &media_mid) {
             if let Some(r) = self
                 .client
                 .song_url(&track.source_id, filename, false)
                 .await?
-                .standardize(&cdn, false)
+                .standardize(&cdn, false, preview_range.clone())
             {
                 return Ok(r);
             }
@@ -197,7 +205,7 @@ impl ProviderAdapter for QqAdapter {
                 .client
                 .song_url(&track.source_id, filename, true)
                 .await?
-                .standardize(&cdn, true)
+                .standardize(&cdn, true, preview_range.clone())
             {
                 return Ok(r);
             }
@@ -218,7 +226,7 @@ impl ProviderAdapter for QqAdapter {
         self.client
             .song_detail(&track.source_id)
             .await?
-            .standardize()
+            .standardize_track_qualities()
             .ok_or_else(|| no_result("track_qualities"))
     }
 
@@ -485,7 +493,11 @@ impl ProviderAdapter for QqAdapter {
             let mid_by_id = if track_ids.is_empty() {
                 None
             } else {
-                self.client.get_mids_by_ids(track_ids).await.ok()
+                self.client
+                    .get_track_info_by_ids(track_ids)
+                    .await
+                    .ok()
+                    .and_then(|i| i.standardize())
             };
             let mut page = response
                 .standardize(mid_by_id.as_ref())

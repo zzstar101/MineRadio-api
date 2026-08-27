@@ -4,10 +4,10 @@ use regex::Regex;
 use serde::{Deserialize, de::IgnoredAny};
 
 use crate::types::{
-    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, ProviderId,
-    ProviderLoginStatus, RecommendationCard, RecommendationCardKind, RecommendationModule,
-    RecommendationModuleKind, RecommendationPage, SongUrlResult, Track, TrackQualityAvailability,
-    TrackQualityOption, VipLevel,
+    AlbumDetail, AlbumSummary, PlayableState, PlaylistDetail, PlaylistSummary, PreviewRange,
+    ProviderId, ProviderLoginStatus, RecommendationCard, RecommendationCardKind,
+    RecommendationModule, RecommendationModuleKind, RecommendationPage, SongUrlResult, Track,
+    TrackQualityAvailability, TrackQualityOption, VipLevel,
 };
 
 #[derive(Deserialize)]
@@ -59,7 +59,6 @@ impl QqSearchResp {
                 quality_hints: vec!["standard".to_owned()],
                 playable_state: PlayableState::Unknown,
                 duration_ms: Some(l.interval as u64 * 1000),
-                artwork_url: None,
             })
             .collect()
     }
@@ -71,7 +70,7 @@ pub(super) struct QqTrackDetailResp {
 }
 
 impl QqTrackDetailResp {
-    pub fn standardize(self) -> Option<TrackQualityAvailability> {
+    pub(super) fn standardize_track_qualities(self) -> Option<TrackQualityAvailability> {
         let t = self.req_0.data.track_info;
         let qualities = t.file.standardize(Some(t.mid.clone()));
         (!qualities.is_empty()).then_some(TrackQualityAvailability {
@@ -79,6 +78,13 @@ impl QqTrackDetailResp {
             track_id: t.mid,
             default_quality: qualities.first().map(|item| item.request_quality.clone()),
             qualities,
+        })
+    }
+    pub(super) fn standardize_preview_range(self) -> Option<PreviewRange> {
+        let p = self.req_0.data.track_info.file;
+        Some(PreviewRange {
+            start_ms: p.b_30s,
+            end_ms: p.e_30s,
         })
     }
 }
@@ -727,7 +733,13 @@ pub(super) struct QqSongUrlResp {
 }
 
 impl QqSongUrlResp {
-    pub(super) fn standardize(self, cdn: &str, en: bool) -> Option<SongUrlResult> {
+    /// cdn 由并发探测提供; preview_range 来自并发详情(b_30s/e_30s), 缺失即 None
+    pub(super) fn standardize(
+        self,
+        cdn: &str,
+        en: bool,
+        preview_range: Option<PreviewRange>,
+    ) -> Option<SongUrlResult> {
         let data = self.req_0.data;
         if !data.msg.contains("fnameHitCache_200") {
             return None;
@@ -758,6 +770,7 @@ impl QqSongUrlResp {
         Some(SongUrlResult {
             url: url,
             expires_at: None,
+            preview_range,
             ..Default::default()
         })
     }
@@ -961,7 +974,6 @@ impl VCard {
 
 #[derive(Deserialize)]
 pub(super) struct QqTrackInfo {
-    //实际上有全功能但是这里的用途是转换id->mid
     req_0: QqTrackReq,
 }
 
@@ -1110,18 +1122,21 @@ impl QqTrack {
             ),
             quality_hints: vec!["128k".to_owned()],
             playable_state: if self.pay.pay_play == 1 {
-                PlayableState::PaidRequired
+                PlayableState::VipRequired
             } else {
                 PlayableState::Playable
             },
             duration_ms: self.interval.map(|s| s as u64 * 1000),
-            artwork_url: None,
         }
     }
 }
 
 #[derive(Deserialize)]
 struct File {
+    #[serde(default)]
+    b_30s: u64,
+    #[serde(default)]
+    e_30s: u64,
     #[serde(default)]
     size_320mp3: i64,
     #[serde(default)]
@@ -1210,8 +1225,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData, QqLoginStatusResp,
-        QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp, QqTrack, QqTrackInfo,
+        File, Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData,
+        QqLoginStatusResp, QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp,
+        QqTrack, QqTrackInfo,
     };
     use crate::types::RecommendationCardKind;
 

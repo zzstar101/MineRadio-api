@@ -11,10 +11,6 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::providers::qq::model::{
-    QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp, QqRadarResp, QqRadioDetailResp,
-    QqRecommendationResp, QqSongUrlResp, QqTrackInfo, QqVipIconResp,
-};
 use crate::utils::{
     cookie::Cookie,
     cryptors::qq::{x4, x5, x7, x9, xj},
@@ -25,9 +21,11 @@ use crate::{
         ProviderId, ProviderResult,
         error::{ProviderError, ProviderErrorCode},
         qq::model::{
-            QqAlbumDetailResp, QqAlbumListResp, QqLyricResp, QqMultiSearchResp,
-            QqPlaylistDetailResp, QqPlaylistList1Resp, QqPlaylistList2Resp,
-            QqPlaylistSongWriteResp, QqSearchResp, QqTrackDetailResp,
+            QqAlbumDetailResp, QqAlbumListResp, QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp,
+            QqLyricResp, QqMultiSearchResp, QqPlaylistDetailResp, QqPlaylistList1Resp,
+            QqPlaylistList2Resp, QqPlaylistSongWriteResp, QqRadarResp, QqRadioDetailResp,
+            QqRecommendationResp, QqSearchResp, QqSongUrlResp, QqTrackDetailResp, QqTrackInfo,
+            QqVipIconResp,
         },
     },
     qr_login::common::normalize_login_cookie,
@@ -748,30 +746,47 @@ impl QqClient {
         .await
     }
 
-    pub(super) async fn get_mids_by_ids(
+    pub(super) async fn get_track_info_by_ids(&self, ids: Vec<u32>) -> ProviderResult<QqTrackInfo> {
+        self.post_json_with_sign(
+            json!({
+                "req_0": {
+                    "module": "music.trackInfo.UniformRuleCtrl",
+                    "method": "CgiGetTrackInfo",
+                    "param": {
+                        "ids": ids,
+                        "types": vec![200; ids.len()]
+                    }
+                },
+            }),
+            None,
+            self.current_cookie().await.as_deref(),
+            "get_mids_by_ids",
+            false,
+        )
+        .await
+    }
+
+    pub(super) async fn get_track_info_by_mids(
         &self,
-        ids: Vec<u32>,
-    ) -> ProviderResult<std::collections::HashMap<String, String>> {
-        let q: QqTrackInfo = self
-            .post_json_with_sign(
-                json!({
-                    "req_0": {
-                        "module": "music.trackInfo.UniformRuleCtrl",
-                        "method": "CgiGetTrackInfo",
-                        "param": {
-                            "ids": ids,
-                            "types": vec![200; ids.len()]
-                        }
-                    },
-                }),
-                None,
-                self.current_cookie().await.as_deref(),
-                "get_mids_by_ids",
-                false,
-            )
-            .await?;
-        q.standardize()
-            .ok_or_else(|| unavailable_error("get_mids_by_ids"))
+        ids: Vec<String>,
+    ) -> ProviderResult<QqTrackInfo> {
+        self.post_json_with_sign(
+            json!({
+                "req_0": {
+                    "module": "music.trackInfo.UniformRuleCtrl",
+                    "method": "CgiGetTrackInfo",
+                    "param": {
+                        "mids": ids,
+                        "types": vec![200; ids.len()]
+                    }
+                },
+            }),
+            None,
+            self.current_cookie().await.as_deref(),
+            "get_mids_by_ids",
+            false,
+        )
+        .await
     }
 
     async fn post_json_with_sign<T: DeserializeOwned>(
