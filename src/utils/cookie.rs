@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+#[derive(Default)]
 pub struct Cookie {
     pub map: HashMap<String, String>,
 }
