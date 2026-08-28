@@ -22,6 +22,7 @@ use super::model::{
 };
 
 const GATEWAY_URL: &str = "https://gateway.kugou.com";
+const MOBILE_SEARCH_URL: &str = "http://mobilecdn.kugou.com/api/v3/search/song";
 const APP_ID: &str = "1005";
 const CLIENT_VERSION: &str = "20489";
 const USER_AGENT: &str = "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi";
@@ -137,24 +138,8 @@ impl KugouClient {
     }
 
     pub async fn search(&self, keyword: &str, page: u32, page_size: u32) -> ProviderResult<Value> {
-        let mut request = KugouRequest::new(Method::GET, "/v3/search/song");
-        request.params = KugouParams::from([
-            ("albumhide".to_owned(), Value::from(0)),
-            ("iscorrection".to_owned(), Value::from(1)),
-            ("keyword".to_owned(), Value::String(keyword.to_owned())),
-            ("nocollect".to_owned(), Value::from(0)),
-            ("page".to_owned(), Value::from(page.max(1))),
-            ("pagesize".to_owned(), Value::from(page_size.clamp(1, 100))),
-            (
-                "platform".to_owned(),
-                Value::String("AndroidFilter".to_owned()),
-            ),
-        ]);
-        request
-            .headers
-            .insert("x-router".to_owned(), "complexsearch.kugou.com".to_owned());
-        request.cookie = self.current_cookie().await;
-        Ok(self.request(request).await?.body)
+        let (url, query) = mobile_search_request(keyword, page, page_size);
+        self.simple_get(url, query, &KugouCookie::new(), None).await
     }
 
     pub async fn song_url(
@@ -822,6 +807,23 @@ pub fn sign_key(hash: &str, mid: &str, userid: &str, appid: &str) -> String {
     md5_hex(format!("{hash}{SIGN_KEY_SALT}{appid}{mid}{userid}").as_bytes())
 }
 
+fn mobile_search_request(
+    keyword: &str,
+    page: u32,
+    page_size: u32,
+) -> (&'static str, Vec<(&'static str, String)>) {
+    (
+        MOBILE_SEARCH_URL,
+        vec![
+            ("format", "json".to_owned()),
+            ("keyword", keyword.to_owned()),
+            ("page", page.max(1).to_string()),
+            ("pagesize", page_size.clamp(1, 100).to_string()),
+            ("showtype", "1".to_owned()),
+        ],
+    )
+}
+
 async fn parse_response(response: Response) -> ProviderResult<KugouResponse> {
     let http_status = response.status();
     let cookies = response_cookies(&response);
@@ -838,6 +840,7 @@ async fn parse_response(response: Response) -> ProviderResult<KugouResponse> {
     let api_failed = body.get("status").and_then(Value::as_i64) == Some(0)
         || body
             .get("error_code")
+            .or_else(|| body.get("errcode"))
             .and_then(Value::as_i64)
             .is_some_and(|code| code != 0);
     if !http_status.is_success() || api_failed {
@@ -847,6 +850,8 @@ async fn parse_response(response: Response) -> ProviderResult<KugouResponse> {
             message: body
                 .get("msg")
                 .or_else(|| body.get("message"))
+                .or_else(|| body.get("error_msg"))
+                .or_else(|| body.get("error"))
                 .and_then(Value::as_str)
                 .unwrap_or("kugou upstream error")
                 .to_owned(),
@@ -990,6 +995,19 @@ mod tests {
         );
         assert_eq!(KugouRequestBody::Text(String::new()).content_type(), None);
         assert_eq!(KugouRequestBody::Bytes(Vec::new()).content_type(), None);
+    }
+
+    #[test]
+    fn mobile_search_uses_the_confirmed_public_request_shape() {
+        let (url, query) = mobile_search_request("晴天", 0, 200);
+        let params = query.into_iter().collect::<BTreeMap<_, _>>();
+
+        assert_eq!(url, "http://mobilecdn.kugou.com/api/v3/search/song");
+        assert_eq!(params.get("format").map(String::as_str), Some("json"));
+        assert_eq!(params.get("keyword").map(String::as_str), Some("晴天"));
+        assert_eq!(params.get("page").map(String::as_str), Some("1"));
+        assert_eq!(params.get("pagesize").map(String::as_str), Some("100"));
+        assert_eq!(params.get("showtype").map(String::as_str), Some("1"));
     }
 
     #[test]

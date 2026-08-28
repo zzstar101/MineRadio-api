@@ -49,7 +49,7 @@ pub fn map_kugou_song(raw: &Value) -> (Track, KugouTrackMeta) {
             &["SingerName", "singername", "author_name"],
         )),
         album: first_string(raw, &["AlbumName", "album_name"]),
-        cover_url: first_string(raw, &["Image", "image", "img"])
+        cover_url: kugou_cover(raw)
             .replace("{size}", "400")
             .replace("{width}", "400")
             .replace("{height}", "400"),
@@ -71,6 +71,16 @@ pub fn map_kugou_song(raw: &Value) -> (Track, KugouTrackMeta) {
         duration_ms,
     };
     (track, meta)
+}
+
+fn kugou_cover(raw: &Value) -> String {
+    let direct = first_string(raw, &["Image", "image", "img"]);
+    if !direct.is_empty() {
+        return direct;
+    }
+    raw.pointer("/trans_param/union_cover")
+        .map(value_to_string)
+        .unwrap_or_default()
 }
 
 fn first_string(raw: &Value, fields: &[&str]) -> String {
@@ -134,6 +144,23 @@ mod tests {
         assert_eq!(track.artists, ["A", "B"]);
         assert_eq!(track.media_mid.as_deref(), Some("42"));
         assert_eq!(track.duration_ms, Some(120_000));
+    }
+
+    #[test]
+    fn maps_confirmed_mobile_search_cover_fixture() {
+        let response: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/search-cover-response.json")).unwrap();
+        let raw = &response["data"]["info"][0];
+
+        let track = map_kugou_song_to_track(raw);
+
+        assert_eq!(track.source_id, "b3a52a7a958bf0aed0ebfba2e9a818b7");
+        assert_eq!(track.media_mid.as_deref(), Some("32100650"));
+        assert_eq!(track.album, "叶惠美");
+        assert_eq!(
+            track.cover_url,
+            "http://imge.kugou.com/stdmusic/400/20230920/20230920142503632013.jpg"
+        );
     }
 
     #[test]

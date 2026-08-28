@@ -629,6 +629,7 @@ fn value_u32(value: &Value) -> Option<u32> {
 
 fn search_items(body: &Value) -> impl Iterator<Item = &Value> {
     body.pointer("/data/lists")
+        .or_else(|| body.pointer("/data/info"))
         .or_else(|| body.get("lists"))
         .and_then(Value::as_array)
         .into_iter()
@@ -797,7 +798,7 @@ fn login_required() -> ProviderError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_playlist_id, playlist_track_items, quality_parameter};
+    use super::{parse_playlist_id, playlist_track_items, quality_parameter, search_items};
     use serde_json::json;
 
     #[test]
@@ -811,6 +812,14 @@ mod tests {
         assert_eq!(quality_parameter("jymaster"), "viper_tape");
         assert_eq!(quality_parameter("lossless"), "flac");
         assert_eq!(quality_parameter("exhigh"), "320");
+    }
+
+    #[test]
+    fn reads_tracks_from_confirmed_mobile_search_response_shape() {
+        let body: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/search-cover-response.json")).unwrap();
+
+        assert_eq!(search_items(&body).count(), 1);
     }
 
     #[test]
