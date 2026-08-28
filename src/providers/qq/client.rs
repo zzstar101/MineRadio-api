@@ -57,17 +57,18 @@ impl QqClient {
         }
     }
 
-    pub async fn current_cookie(&self) -> Option<String> {
-        auth_session::get_provider_cookie(&ProviderId::Qq).await
+    pub async fn current_cookie(&self) -> Option<Cookie> {
+        Some(Cookie::new(
+            &auth_session::get_provider_cookie(&ProviderId::Qq).await?,
+        ))
     }
 
     pub(super) async fn ensure_login(&self) -> ProviderResult<()> {
         if self
             .current_cookie()
             .await
-            .as_deref()
-            .map(str::trim)
             .unwrap_or_default()
+            .map
             .is_empty()
         {
             return Err(ProviderError {
@@ -95,7 +96,7 @@ impl QqClient {
     }
 
     pub async fn guid(&self) -> Option<String> {
-        let c = Cookie::new(&self.current_cookie().await?);
+        let c = &self.current_cookie().await?;
         c.find("qqmusic_guid")
     }
 
@@ -111,7 +112,7 @@ impl QqClient {
         }
 
         let uin = self.uin().await?;
-        if let Err(err) = self.login_status_with_cookie(&uin, &cookie).await {
+        if let Err(err) = self.login_status_with_cookie(&uin).await {
             sidecar_log::spawn_runtime_log(serde_json::json!(format!(
                 "QQ 刷新 euin 登录状态失败: {err}"
             )));
@@ -158,7 +159,7 @@ impl QqClient {
             .query(&query)
             .headers(build_headers(
                 Some("https://y.qq.com"),
-                self.current_cookie().await.as_deref(),
+                self.current_cookie().await,
                 false,
             )?)
             .send()
@@ -204,7 +205,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "search_album",
             true,
         )
@@ -234,7 +234,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "search_playlist",
             true,
         )
@@ -264,7 +263,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "multi_search_track",
             true,
         )
@@ -281,7 +279,6 @@ impl QqClient {
                 }
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "song_detail",
             true,
         )
@@ -294,8 +291,7 @@ impl QqClient {
         filenames: String,
         encrypted: bool,
     ) -> ProviderResult<QqSongUrlResp> {
-        let cookie = self.current_cookie().await;
-        let c = Cookie::new(cookie.as_deref().unwrap_or_default());
+        let c = self.current_cookie().await.unwrap_or_default();
         let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
         self.post_json_with_sign(
             json!({
@@ -319,7 +315,6 @@ impl QqClient {
                 }
             }),
             None,
-            cookie.as_deref(),
             "song_url",
             true,
         )
@@ -360,7 +355,6 @@ impl QqClient {
     }
 
     async fn cdn_dispatch(&self) -> ProviderResult<QqCdnDispatch> {
-        let cookie = self.current_cookie().await;
         let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
         let response: QqCdnTestResp = self
             .post_json_with_sign(
@@ -378,7 +372,6 @@ impl QqClient {
                     }
                 }),
                 None,
-                cookie.as_deref(),
                 "cdn_dispatch",
                 true,
             )
@@ -429,7 +422,6 @@ impl QqClient {
             }
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "lyric",
             true,
         )
@@ -439,13 +431,11 @@ impl QqClient {
     pub(super) async fn login_status_with_cookie(
         &self,
         user_id: &str,
-        cookie: &str,
     ) -> ProviderResult<QqLoginStatusResp> {
         let body: QqLoginStatusResp = self
             .get_model(
                 &format!("https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?cid=205360838&ct=20&cv=2230&userid={}&reqfrom=1&reqtype=0", user_id),
                 None,
-                Some(cookie),
                 "login_status",
             )
             .await?;
@@ -453,16 +443,16 @@ impl QqClient {
         Ok(body)
     }
 
+    /// 换票步骤, 刷新后的cookie鉴权部分是失效的
     pub(super) async fn refresh_login_cookie(
         &self,
-        cookie: &str,
+        cookie: Cookie,
     ) -> ProviderResult<Option<String>> {
-        let c = Cookie::new(cookie);
-        let Some((request_key, body, is_wechat)) = login_refresh_request(&c.map) else {
+        let Some((request_key, body, is_wechat)) = login_refresh_request(&cookie.map) else {
             return Ok(None);
         };
         let response: Value = self
-            .post_json_with_sign(body, None, Some(cookie), "login_refresh", true)
+            .post_json_with_sign(body, None, "login_refresh", true)
             .await?;
         let Some(data) = response
             .get(request_key)
@@ -477,16 +467,15 @@ impl QqClient {
         else {
             return Ok(None);
         };
-        let guid = c.find_or_else("qqmusic_guid", x5);
+        let guid = cookie.find_or_else("qqmusic_guid", x5);
         let refreshed = normalize_login_cookie(data, &guid, is_wechat, "QQ_LOGIN_REFRESH_EMPTY")
             .map_err(internal_error)?;
-        Ok(Some(merge_cookie(c, &refreshed)))
+        Ok(Some(merge_cookie(cookie, &refreshed)))
     }
 
     pub(super) async fn vip_info_with_cookie(
         &self,
         user_id: &str,
-        cookie: &str,
     ) -> ProviderResult<QqVipIconResp> {
         self.post_json_with_sign(
             json!({
@@ -497,7 +486,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/m/myservice/index.html"),
-            Some(cookie),
             "vip_info",
             true,
         )
@@ -516,7 +504,6 @@ impl QqClient {
                 }
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "playlist_list",
             true,
         )
@@ -538,7 +525,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "playlist_detail",
             true,
         )
@@ -570,7 +556,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "playlist_detail",
             true,
         )
@@ -595,7 +580,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "radio_detail",
             true,
         )
@@ -621,7 +605,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "radio_detail",
             true,
         )
@@ -641,7 +624,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "album_list",
             true,
         )
@@ -673,7 +655,6 @@ impl QqClient {
                 }
             }),
             Some("https://y.qq.com/"),
-            self.current_cookie().await.as_deref(),
             "album_detail",
             true,
         )
@@ -699,7 +680,6 @@ impl QqClient {
         self.post_json_with_sign(
             playlist_song_write_body(method, dir_id, track_id),
             None,
-            self.current_cookie().await.as_deref(),
             "playlist_song_write",
             true,
         )
@@ -716,7 +696,6 @@ impl QqClient {
                 }
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "logout",
             true,
         )
@@ -739,7 +718,6 @@ impl QqClient {
                 }
             }),
             Some("https://i2.y.qq.com/n3/wk_v20/entry/index/recommend?nosaveurl=1"),
-            self.current_cookie().await.as_deref(),
             "recommend_page",
             false,
         )
@@ -759,7 +737,6 @@ impl QqClient {
                 },
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "get_mids_by_ids",
             false,
         )
@@ -782,7 +759,6 @@ impl QqClient {
                 },
             }),
             None,
-            self.current_cookie().await.as_deref(),
             "get_mids_by_ids",
             false,
         )
@@ -793,7 +769,17 @@ impl QqClient {
         &self,
         body: Value,
         referer: Option<&str>,
-        cookie: Option<&str>,
+        action: &str,
+        s: bool,
+    ) -> ProviderResult<T> { 
+        self.post_json_with_sign_cookie(body, referer, self.current_cookie().await.unwrap_or_default(), action, s).await
+    }
+
+    async fn post_json_with_sign_cookie<T: DeserializeOwned>(
+        &self,
+        body: Value,
+        referer: Option<&str>,
+        cookie: Cookie,
         action: &str,
         s: bool,
     ) -> ProviderResult<T> {
@@ -803,7 +789,7 @@ impl QqClient {
             .expect("系统时间早于 UNIX 纪元");
         //构建鉴权部分
         let mut req = body;
-        let c = Cookie::new(cookie.unwrap_or_default());
+        let c = cookie;
 
         let cookie_keys = vec!["psrf_qqaccess_token", "psrf_qqopenid", "psrf_qqunionid"];
 
@@ -851,7 +837,7 @@ impl QqClient {
         let g_tk = x7(&c.find_or_default::<String>("musickey")).to_string();
         comm_obj.insert("g_tk_new_20200303".to_string(), json!(&g_tk));
         comm_obj.insert("g_tk".to_string(), json!(&g_tk));
-        drop(c);
+
         if let Some(obj) = req.as_object_mut() {
             obj.insert("comm".to_string(), comm_obj.into());
         }
@@ -861,7 +847,7 @@ impl QqClient {
         }
         .to_string();
         let sign = self.get_sign(&req)?;
-        let mut h = build_headers(referer, cookie, false)?;
+        let mut h = build_headers(referer, Some(c), false)?;
         let q = [xj(0x7063_6163_6865_7469), xj(0x6d65)].concat();
         let query: Vec<(&str, &str)> = if s {
             let (a, b) = x4(&req.to_string(), since_epoch.as_secs());
@@ -907,10 +893,10 @@ impl QqClient {
         &self,
         url: &str,
         referer: Option<&str>,
-        cookie: Option<&str>,
         action: &str,
     ) -> ProviderResult<T> {
-        let headers = build_headers(referer, cookie, true)?;
+        let c = self.current_cookie().await;
+        let headers = build_headers(referer, c, true)?;
         let response = self
             .http
             .get(url)
@@ -948,7 +934,7 @@ impl QqClient {
 
 fn build_headers(
     referer: Option<&str>,
-    cookie: Option<&str>,
+    cookie: Option<Cookie>,
     with_origin: bool,
 ) -> ProviderResult<HeaderMap> {
     let mut headers = HeaderMap::new();
@@ -963,8 +949,9 @@ fn build_headers(
             headers.insert(ORIGIN, header_value(&origin)?);
         }
     }
-    if let Some(cookie) = cookie.filter(|value| !value.trim().is_empty()) {
-        headers.insert(COOKIE, header_value(cookie)?);
+    if let Some(cookie) = cookie {
+        let c: String = cookie.into();
+        headers.insert(COOKIE, header_value(&c)?);
     }
     Ok(headers)
 }
@@ -987,8 +974,7 @@ fn playlist_song_write_body(method: &str, dir_id: u64, track_id: &str) -> Value 
     })
 }
 
-fn uin_from_cookie(cookie: &str) -> Option<String> {
-    let cookie = Cookie::new(cookie);
+fn uin_from_cookie(cookie: &Cookie) -> Option<String> {
     let raw = cookie.first::<String>(&["wxuin", "qqmusic_uin", "uin"])?;
 
     let digits: String = raw.chars().filter(|ch| ch.is_ascii_digit()).collect();
@@ -996,26 +982,8 @@ fn uin_from_cookie(cookie: &str) -> Option<String> {
     (!digits.is_empty()).then_some(digits)
 }
 
-fn euin_from_cookie(cookie: &str) -> Option<String> {
-    let cookie = Cookie::new(cookie);
+fn euin_from_cookie(cookie: &Cookie) -> Option<String> {
     cookie.first::<String>(&["encrypt_uin", "euin"])
-}
-
-fn qq_playback_key_from_cookie_map(cookie: &std::collections::HashMap<String, String>) -> String {
-    [
-        "qm_keyst",
-        "qqmusic_key",
-        "music_key",
-        "p_skey",
-        "skey",
-        "psrf_qqaccess_token",
-        "psrf_qqrefresh_token",
-        "wxrefresh_token",
-        "wxskey",
-    ]
-    .into_iter()
-    .find_map(|key| cookie.get(key).cloned())
-    .unwrap_or_default()
 }
 
 fn cookie_key(cookie: &std::collections::HashMap<String, String>, key: &str) -> Option<String> {

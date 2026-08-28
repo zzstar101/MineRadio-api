@@ -355,19 +355,17 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
-        let Some(mut cookie) = self
+        let Some(cookie) = self
             .client
             .current_cookie()
             .await
-            .filter(|cookie| !cookie.trim().is_empty())
         else {
             return Ok(qq_logged_out_status());
         };
-        if let Ok(Some(refreshed)) = self.client.refresh_login_cookie(&cookie).await {
+        if let Ok(Some(refreshed)) = self.client.refresh_login_cookie(cookie).await {
             auth_session::set_runtime_provider_cookie(ProviderId::Qq, refreshed.clone())
                 .await
                 .map_err(invalid_response)?;
-            cookie = refreshed;
         }
         let uin = self.client.uin().await;
         let Some(uin) = uin else {
@@ -377,8 +375,8 @@ impl ProviderAdapter for QqAdapter {
             x4_fix_identity(&uin, &guid);
         }
         let (login_status, vip_info) = tokio::join!(
-            self.client.login_status_with_cookie(&uin, &cookie),
-            self.client.vip_info_with_cookie(&uin, &cookie),
+            self.client.login_status_with_cookie(&uin),
+            self.client.vip_info_with_cookie(&uin),
         );
         Ok(login_status?.standardize(vip_info.ok()))
     }
