@@ -268,7 +268,11 @@ impl CrossSourceResolver {
 
             if !import_only && provider_id == track.provider {
                 match adapter.song_url(&track, Some(opts.clone())).await {
-                    Ok(result) => return Ok(result),
+                    Ok(mut result) => {
+                        // 主源直取成功: 实际源即请求的 track 本身
+                        result.source_track = Some(track.clone());
+                        return Ok(result);
+                    }
                     Err(err) => {
                         if first_error.is_none() {
                             let msg = err.to_string();
@@ -287,7 +291,11 @@ impl CrossSourceResolver {
                 Ok(candidates) => {
                     for candidate in candidates {
                         match adapter.song_url(&candidate, Some(opts.clone())).await {
-                            Ok(result) => return Ok(result),
+                            Ok(mut result) => {
+                                // 回退/匹配命中的候选即实际源, 以它为溯源锚点
+                                result.source_track = Some(candidate.clone());
+                                return Ok(result);
+                            }
                             Err(err) => {
                                 if first_error.is_none() {
                                     let msg = err.to_string();
@@ -886,6 +894,7 @@ mod tests {
                 quality: "".to_owned(),
                 expires_at: None,
                 preview_range: None,
+                source_track: None,
             });
             self
         }
@@ -1367,6 +1376,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.url, "https://n.example/song.m4a");
+        let source = result
+            .source_track
+            .expect("direct hit must carry source track");
+        assert_eq!(source.provider, ProviderId::Netease);
+        assert_eq!(source.id, "n-1");
         assert_eq!(calls.lock().unwrap().as_slice(), &["netease:songUrl:n-1"]);
     }
 
@@ -1387,6 +1401,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.url, "https://q.example/song.m4a");
+        let source = result
+            .source_track
+            .expect("fallback hit must carry source track");
+        assert_eq!(source.provider, ProviderId::Qq);
+        assert_eq!(source.id, "q-9");
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             &[
@@ -1421,6 +1440,11 @@ mod tests {
         let result = resolver.resolve_song_url(import_track, None).await.unwrap();
 
         assert_eq!(result.url, "https://n.example/match.m4a");
+        let source = result
+            .source_track
+            .expect("import-only hit must carry source track");
+        assert_eq!(source.provider, ProviderId::Netease);
+        assert_eq!(source.id, "n-match");
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             &["netease:search:夜航 星野:5", "netease:songUrl:n-match"]

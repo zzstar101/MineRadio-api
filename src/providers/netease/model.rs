@@ -734,6 +734,7 @@ impl NeteaseSongUrlV1Datum {
                 start_ms: p.start * 1000,
                 end_ms: p.end * 1000,
             }),
+            source_track: None,
         })
     }
 }

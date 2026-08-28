@@ -35,7 +35,7 @@ impl std::fmt::Display for PlayableState {
 
 #[cfg(test)]
 mod tests {
-    use super::PlayableState;
+    use super::{PlayableState, SongUrlResult, Track};
 
     #[test]
     fn playable_state_uses_frontend_contract_strings() {
@@ -43,6 +43,35 @@ mod tests {
             serde_json::to_string(&PlayableState::VipRequired).unwrap(),
             "\"vip_required\""
         );
+    }
+
+    #[test]
+    fn song_url_result_omits_source_track_when_absent() {
+        let result = SongUrlResult {
+            url: "https://example/song.m4a".to_owned(),
+            quality: "standard".to_owned(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(json.get("sourceTrack").is_none());
+    }
+
+    #[test]
+    fn song_url_result_serializes_source_track_as_full_camel_case_track() {
+        let result = SongUrlResult {
+            url: "https://example/song.m4a".to_owned(),
+            quality: "standard".to_owned(),
+            source_track: Some(Track {
+                id: "003aAYWm".to_owned(),
+                provider: super::ProviderId::Qq,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        let source = json.get("sourceTrack").expect("sourceTrack present");
+        assert_eq!(source["provider"], "qq");
+        assert_eq!(source["id"], "003aAYWm");
     }
 }
 
@@ -147,6 +176,8 @@ pub struct SongUrlResult {
     pub expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_range: Option<PreviewRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_track: Option<Track>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, Serialize)]

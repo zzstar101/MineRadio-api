@@ -43,6 +43,7 @@ fn sample_song_url_result() -> SongUrlResult {
             start_ms: 0,
             end_ms: 30_000,
         }),
+        source_track: None,
     }
 }
 
