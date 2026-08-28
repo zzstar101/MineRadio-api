@@ -30,6 +30,7 @@ struct QqSearchSongData {
 
 #[derive(Deserialize)]
 struct QqSearchSong {
+    #[serde(default)]
     albummid: String,
     albumname: String,
     interval: i32,
@@ -52,10 +53,7 @@ impl QqSearchResp {
                 title: l.songname,
                 artists: l.singer.into_iter().map(|s| s.name).collect(),
                 album: l.albumname,
-                cover_url: format!(
-                    "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                    l.albummid
-                ),
+                cover_url: qq_album_cover(&l.albummid),
                 quality_hints: vec!["standard".to_owned()],
                 playable_state: PlayableState::Unknown,
                 duration_ms: Some(l.interval as u64 * 1000),
@@ -347,10 +345,7 @@ impl QqAlbumListResp {
                 id: s.mid.clone(),
                 name: s.name,
                 artists: s.singer.into_iter().map(|a| a.name).collect(),
-                cover_url: format!(
-                    "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                    s.mid
-                ),
+                cover_url: qq_album_cover(&s.mid),
                 track_count: s.songnum,
                 track_ids: vec![],
                 collected: Some(true),
@@ -407,10 +402,7 @@ impl QqAlbumDetailResp {
             id: album.album_mid.clone(),
             name: album.album_name,
             artists: artists.singer_list.into_iter().map(|s| s.name).collect(),
-            cover_url: format!(
-                "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                album.album_mid
-            ),
+            cover_url: qq_album_cover(&album.album_mid),
             track_count: Some(song_list.total_num as u32),
             track_ids,
             collected: None,
@@ -528,20 +520,21 @@ impl QqMultiSearchResp {
         let list = self.result.data.body.album?.list;
         let v: Vec<AlbumSummary> = list
             .into_iter()
-            .map(|a| AlbumSummary {
-                provider: ProviderId::Qq,
-                id: a.album_mid,
-                name: a.album_name,
-                artists: a.singer_name.map_or(vec![], |n| vec![n]),
-                cover_url: a.album_pic.unwrap_or_else(|| {
-                    format!(
-                        "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                        ""
-                    )
-                }),
-                track_count: None,
-                track_ids: vec![],
-                collected: None,
+            .map(|a| {
+                let cover_url = a
+                    .album_pic
+                    .filter(|cover| !cover.trim().is_empty())
+                    .unwrap_or_else(|| qq_album_cover(&a.album_mid));
+                AlbumSummary {
+                    provider: ProviderId::Qq,
+                    id: a.album_mid,
+                    name: a.album_name,
+                    artists: a.singer_name.map_or(vec![], |n| vec![n]),
+                    cover_url,
+                    track_count: None,
+                    track_ids: vec![],
+                    collected: None,
+                }
             })
             .collect();
         (!v.is_empty()).then_some(v)
@@ -1116,10 +1109,7 @@ impl QqTrack {
             title: self.title,
             artists: self.singer.into_iter().map(|s| s.name).collect(),
             album: album_name,
-            cover_url: format!(
-                "https://y.gtimg.cn/music/photo_new/T002R300x300M000{}.jpg",
-                album_mid
-            ),
+            cover_url: qq_album_cover(&album_mid),
             quality_hints: vec!["128k".to_owned()],
             playable_state: if self.pay.pay_play == 1 {
                 PlayableState::VipRequired
@@ -1215,8 +1205,18 @@ struct Album {
 
 #[derive(Deserialize)]
 struct Identified {
+    #[serde(default)]
     mid: String,
     name: String,
+}
+
+fn qq_album_cover(album_mid: &str) -> String {
+    let album_mid = album_mid.trim();
+    if album_mid.is_empty() {
+        String::new()
+    } else {
+        format!("https://y.gtimg.cn/music/photo_new/T002R300x300M000{album_mid}.jpg")
+    }
 }
 
 #[cfg(test)]
@@ -1226,11 +1226,86 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        File, Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData,
-        QqLoginStatusResp, QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp,
-        QqTrack, QqTrackInfo,
+        Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData, QqLoginStatusResp,
+        QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp, QqSearchResp, QqTrack,
+        QqTrackInfo,
     };
     use crate::types::RecommendationCardKind;
+
+    #[test]
+    fn search_cover_requires_a_non_empty_album_mid() {
+        let response: QqSearchResp = serde_json::from_value(json!({
+            "data": {
+                "song": {
+                    "list": [
+                        {
+                            "albummid": "valid-album-mid",
+                            "albumname": "Valid Album",
+                            "interval": 120,
+                            "singer": [],
+                            "songmid": "valid-track",
+                            "songname": "Valid Track"
+                        },
+                        {
+                            "albummid": "",
+                            "albumname": "No Cover",
+                            "interval": 120,
+                            "singer": [],
+                            "songmid": "empty-album-mid",
+                            "songname": "Empty Album Mid"
+                        },
+                        {
+                            "albumname": "Missing Cover",
+                            "interval": 120,
+                            "singer": [],
+                            "songmid": "missing-album-mid",
+                            "songname": "Missing Album Mid"
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        let tracks = response.standardize();
+        assert_eq!(
+            tracks[0].cover_url,
+            "https://y.gtimg.cn/music/photo_new/T002R300x300M000valid-album-mid.jpg"
+        );
+        assert_eq!(tracks[1].cover_url, "");
+        assert_eq!(tracks[2].cover_url, "");
+        assert!(
+            tracks
+                .iter()
+                .all(|track| !track.cover_url.ends_with("M000.jpg"))
+        );
+    }
+
+    #[test]
+    fn standardized_track_cover_requires_album_identity() {
+        let missing_album = QqTrack {
+            mid: "missing-album".to_owned(),
+            title: "Missing Album".to_owned(),
+            interval: None,
+            singer: vec![],
+            album: None,
+            pay: QqAlbumDetailTrackPay { pay_play: 0 },
+        }
+        .standardize(None, None);
+        assert_eq!(missing_album.cover_url, "");
+
+        let missing_album_mid: QqTrack = serde_json::from_value(json!({
+            "mid": "missing-album-mid",
+            "title": "Missing Album Mid",
+            "singer": [],
+            "album": { "name": "Album Without Mid" },
+            "pay": { "pay_play": 0 }
+        }))
+        .unwrap();
+        let missing_album_mid = missing_album_mid.standardize(None, None);
+        assert_eq!(missing_album_mid.cover_url, "");
+        assert!(!missing_album_mid.cover_url.ends_with("M000.jpg"));
+    }
 
     #[test]
     fn track_uses_default_album_when_album_is_missing() {
