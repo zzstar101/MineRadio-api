@@ -11,6 +11,7 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
+use crate::utils::cryptors::csigner::set_x4_identity;
 use crate::utils::{
     cookie::Cookie,
     cryptors::qq::{x4, x5, x7, x9, xj},
@@ -33,6 +34,8 @@ use crate::{
 };
 
 const UA: &str = "Mozilla/5.0";
+const QV: &str = "22";
+const QMV: &str = "30";
 
 #[derive(Clone, Default)]
 pub struct QqClient {
@@ -448,11 +451,25 @@ impl QqClient {
         &self,
         cookie: Cookie,
     ) -> ProviderResult<Option<String>> {
-        let Some((request_key, body, is_wechat)) = login_refresh_request(&cookie.map) else {
+        let Some((request_key, body, is_wechat)) = login_refresh_request(&cookie) else {
             return Ok(None);
         };
+        let guid = cookie.find_or_else("qqmusic_guid", x5);
+        // 换票时签名身份的 uin 原生行为就是 "0"
+        let _ = set_x4_identity("0", &guid);
         let response: Value = self
-            .post_json_with_sign(body, None, "login_refresh", true)
+            .post_json_with_sign_cookie(
+                body,
+                None,
+                Cookie::new(&format!(
+                    "qqmusic_miniversion={QMV}; qqmusic_version={QV}; \
+                     qqmusic_gtime={}; qqmusic_guid={guid}; tmeLoginType={}",
+                    chrono::Utc::now().timestamp(),
+                    if is_wechat { 1 } else { 2 }
+                )),
+                "login_refresh",
+                true,
+            )
             .await?;
         let Some(data) = response
             .get(request_key)
@@ -771,8 +788,15 @@ impl QqClient {
         referer: Option<&str>,
         action: &str,
         s: bool,
-    ) -> ProviderResult<T> { 
-        self.post_json_with_sign_cookie(body, referer, self.current_cookie().await.unwrap_or_default(), action, s).await
+    ) -> ProviderResult<T> {
+        self.post_json_with_sign_cookie(
+            body,
+            referer,
+            self.current_cookie().await.unwrap_or_default(),
+            action,
+            s,
+        )
+        .await
     }
 
     async fn post_json_with_sign_cookie<T: DeserializeOwned>(
@@ -809,7 +833,7 @@ impl QqClient {
         comm_obj.insert("notice".to_string(), json!(0));
         comm_obj.insert("needNewCode".to_string(), json!(1));
         comm_obj.insert("ct".to_string(), json!("20"));
-        comm_obj.insert("cv".to_string(), json!("2230"));
+        comm_obj.insert("cv".to_string(), json!(format!("{QV}{QMV}")));
         comm_obj.insert(
             "guid".to_string(),
             json!(c.find_or_else("qqmusic_guid", x5)),
@@ -831,7 +855,7 @@ impl QqClient {
         );
         comm_obj.insert(
             "uin".to_string(),
-            json!(self.uin().await.unwrap_or_default()),
+            json!(uin_from_cookie(&c).unwrap_or("0".to_owned())),
         );
         comm_obj.insert("wid".to_string(), json!("4810302018970526720"));
         let g_tk = x7(&c.find_or_default::<String>("musickey")).to_string();
@@ -986,13 +1010,7 @@ fn euin_from_cookie(cookie: &Cookie) -> Option<String> {
     cookie.first::<String>(&["encrypt_uin", "euin"])
 }
 
-fn cookie_key(cookie: &std::collections::HashMap<String, String>, key: &str) -> Option<String> {
-    cookie.get(key).cloned()
-}
-
-fn login_refresh_request(
-    cookie: &std::collections::HashMap<String, String>,
-) -> Option<(&'static str, Value, bool)> {
+fn login_refresh_request(cookie: &Cookie) -> Option<(&'static str, Value, bool)> {
     let device_name = std::env::var("COMPUTERNAME")
         .ok()
         .filter(|name| !name.trim().is_empty())
@@ -1002,19 +1020,17 @@ fn login_refresh_request(
 }
 
 fn login_refresh_request_for_device(
-    cookie: &std::collections::HashMap<String, String>,
+    c: &Cookie,
     device_name: String,
 ) -> Option<(&'static str, Value, bool)> {
-    let login_type = cookie_key(cookie, "tmeLoginType")?.parse::<u8>().ok()?;
-    let openid = cookie_key(cookie, "psrf_qqopenid").unwrap_or_default();
-    let musickey = cookie_key(cookie, "qm_keyst").or_else(|| cookie_key(cookie, "qqmusic_key"))?;
-    let expired_in = cookie_number_or_zero(cookie, "expired_in");
-    let musicid = cookie_key(cookie, "musicid").or_else(|| cookie_key(cookie, "qqmusic_uin"))?;
-    let refresh_key = required_cookie_key(cookie, "refresh_key")?;
-    let access_token = cookie_key(cookie, "psrf_qqaccess_token").unwrap_or_default();
-    let refresh_token = cookie_key(cookie, "psrf_qqrefresh_token")
-        .or_else(|| cookie_key(cookie, "wxrefresh_token"))
-        .unwrap_or_default();
+    let login_type = c.find("tmeLoginType")?;
+    let openid: String = c.find_or_default("psrf_qqopenid");
+    let musickey: String = c.find("qm_keyst")?;
+    let expired_in: u64 = c.find("psrf_access_token_expiresAt").unwrap_or_default();
+    let musicid = uin_from_cookie(c)?.parse::<u128>().ok()?;
+    let refresh_key: String = c.find("refresh_key")?;
+    let access_token: String = c.find("psrf_qqaccess_token")?;
+    let refresh_token: String = c.find("psrf_qqrefresh_token")?;
     let (request_key, appid_key, appid, is_wechat) = match login_type {
         1 => (
             "WXLoginByToken",
@@ -1030,20 +1046,20 @@ fn login_refresh_request_for_device(
         ),
         _ => return None,
     };
-    let mut param = serde_json::Map::from_iter([
-        ("openid".to_owned(), json!(openid)),
-        ("musickey".to_owned(), json!(musickey)),
-        ("expired_in".to_owned(), expired_in),
-        ("musicid".to_owned(), cookie_number_or_string(musicid)),
-        ("onlyNeedAccessToken".to_owned(), json!(0)),
-        (appid_key.to_owned(), appid),
+    let param = serde_json::Map::from_iter([
+        ("access_token".to_owned(), json!(access_token)),
         ("deviceName".to_owned(), json!(device_name)),
         ("deviceType".to_owned(), json!("Widnows")),
+        ("expired_in".to_owned(), json!(expired_in)),
+        ("forceRefreshToken".to_owned(), json!(0)),
+        ("musicid".to_owned(), json!(musicid)),
+        ("musickey".to_owned(), json!(musickey)),
+        ("onlyNeedAccessToken".to_owned(), json!(0)),
+        ("openid".to_owned(), json!(openid)),
         ("refresh_key".to_owned(), json!(refresh_key)),
-        ("access_token".to_owned(), json!(access_token)),
         ("refresh_token".to_owned(), json!(refresh_token)),
+        (appid_key.to_owned(), appid),
     ]);
-    param.insert("forceRefreshToken".to_owned(), json!(0));
     let mut body = serde_json::Map::new();
     body.insert(
         request_key.to_owned(),
@@ -1056,37 +1072,10 @@ fn login_refresh_request_for_device(
     Some((request_key, Value::Object(body), is_wechat))
 }
 
-fn required_cookie_key(
-    cookie: &std::collections::HashMap<String, String>,
-    key: &str,
-) -> Option<String> {
-    cookie_key(cookie, key).filter(|value| !value.trim().is_empty())
-}
-
-fn cookie_number_or_zero(cookie: &std::collections::HashMap<String, String>, key: &str) -> Value {
-    cookie_key(cookie, key)
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Value::from)
-        .unwrap_or_else(|| Value::from(0))
-}
-
-fn cookie_number_or_string(value: String) -> Value {
-    value
-        .parse::<u64>()
-        .map(Value::from)
-        .unwrap_or(Value::String(value))
-}
-
 fn merge_cookie(existing: Cookie, replacement: &str) -> String {
-    let mut merged = existing.map;
-    merged.extend(Cookie::new(replacement).map);
-    let mut entries: Vec<_> = merged.into_iter().collect();
-    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-    entries
-        .into_iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join("; ")
+    let mut c = existing;
+    c.map.extend(Cookie::new(replacement).map);
+    c.into()
 }
 
 fn header_value(value: &str) -> ProviderResult<HeaderValue> {
@@ -1157,11 +1146,11 @@ mod tests {
     #[test]
     fn login_refresh_matches_the_native_qq_request_shape() {
         let cookie = Cookie::new(
-            "tmeLoginType=2; psrf_qqopenid=openid; qm_keyst=music-key; expired_in=3600; \
-             musicid=10001; refresh_key=refresh-key; psrf_qqaccess_token=access; \
+            "tmeLoginType=2; psrf_qqopenid=openid; qm_keyst=music-key; \
+             qqmusic_uin=10001; psrf_access_token_expiresAt=3600; \
+             refresh_key=refresh-key; psrf_qqaccess_token=access; \
              psrf_qqrefresh_token=refresh; appid=qqmusic",
-        )
-        .map;
+        );
 
         let (key, request, is_wechat) =
             login_refresh_request_for_device(&cookie, "DESKTOP".to_owned()).unwrap();
@@ -1175,16 +1164,19 @@ mod tests {
         assert_eq!(request[key]["param"]["onlyNeedAccessToken"], 0);
         assert_eq!(request[key]["param"]["forceRefreshToken"], 0);
         assert_eq!(request[key]["param"]["appid"], 100497308);
+        assert_eq!(request[key]["param"]["musicid"], 10001);
         assert_eq!(request[key]["param"]["expired_in"], 3600);
+        assert_eq!(request[key]["param"]["access_token"], "access");
+        assert_eq!(request[key]["param"]["refresh_token"], "refresh");
     }
 
     #[test]
     fn login_refresh_matches_the_native_wechat_request_shape() {
         let cookie = Cookie::new(
-            "tmeLoginType=1; qm_keyst=music-key; musicid=1152921505274451474; \
-             refresh_key=refresh-key",
-        )
-        .map;
+            "tmeLoginType=1; qm_keyst=music-key; qqmusic_uin=1152921505274451474; \
+             refresh_key=refresh-key; psrf_qqaccess_token=wx-access; \
+             psrf_qqrefresh_token=wx-refresh",
+        );
 
         let (key, request, is_wechat) =
             login_refresh_request_for_device(&cookie, "DESKTOP".to_owned()).unwrap();
@@ -1198,9 +1190,9 @@ mod tests {
         assert_eq!(request[key]["param"]["strAppid"], "wx48db31d50e334801");
         assert_eq!(request[key]["param"]["musicid"], 1152921505274451474u64);
         assert_eq!(request[key]["param"]["expired_in"], 0);
-        assert_eq!(request[key]["param"]["access_token"], "");
+        assert_eq!(request[key]["param"]["access_token"], "wx-access");
         assert_eq!(request[key]["param"]["openid"], "");
-        assert_eq!(request[key]["param"]["refresh_token"], "");
+        assert_eq!(request[key]["param"]["refresh_token"], "wx-refresh");
     }
 
     #[test]

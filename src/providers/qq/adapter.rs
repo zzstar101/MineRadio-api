@@ -21,6 +21,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
+use serde_json::json;
 use tokio::sync::RwLock;
 
 use super::{client::QqClient, lyric::QQMusicParser};
@@ -355,17 +356,19 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn login_status(&self) -> ProviderResult<ProviderLoginStatus> {
-        let Some(cookie) = self
-            .client
-            .current_cookie()
-            .await
-        else {
+        let Some(cookie) = self.client.current_cookie().await else {
             return Ok(qq_logged_out_status());
         };
-        if let Ok(Some(refreshed)) = self.client.refresh_login_cookie(cookie).await {
-            auth_session::set_runtime_provider_cookie(ProviderId::Qq, refreshed.clone())
-                .await
-                .map_err(invalid_response)?;
+        match self.client.refresh_login_cookie(cookie).await {
+            Ok(Some(refreshed)) => {
+                auth_session::set_runtime_provider_cookie(ProviderId::Qq, refreshed)
+                    .await
+                    .map_err(invalid_response)?
+            }
+            Err(e) => {
+                sidecar_log::log_runtime(json!(format!("qq 登录换票失败: {}", e.message))).await
+            }
+            _ => (),
         }
         let uin = self.client.uin().await;
         let Some(uin) = uin else {
