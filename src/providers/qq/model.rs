@@ -733,22 +733,43 @@ pub(super) struct QqSongUrlResp {
 }
 
 impl QqSongUrlResp {
-    /// cdn 由并发探测提供; preview_range 来自并发详情(b_30s/e_30s), 缺失即 None
+    /// cdn 由并发探测提供; preview_range 来自并发详情(b_30s/e_30s), 缺失即 None。
+    /// candidates 是请求时的文件名列表(按优先级从高到低), 逐个回表 midurlinfo,
+    /// 取第一个 purl 非空的条目。
     pub(super) fn standardize(
         self,
         cdn: &str,
         en: bool,
         preview_range: Option<PreviewRange>,
+        candidates: &[String],
     ) -> Option<SongUrlResult> {
         let data = self.req_0.data;
-        if !data.msg.contains("fnameHitCache_200") {
+        if !data.msg.contains("fnameHitCache_200")
+            && !data
+                .midurlinfo
+                .iter()
+                .any(|info| !info.purl.trim().is_empty())
+        {
             return None;
         }
-        let (url, ekey) = data
-            .midurlinfo
-            .into_iter()
-            .find(|_a| true)
-            .map(|i| (i.purl, i.ekey))?;
+        let positional = !data.midurlinfo.is_empty()
+            && data
+                .midurlinfo
+                .iter()
+                .all(|info| info.filename.is_none());
+        let (url, ekey) = candidates
+            .iter()
+            .enumerate()
+            .find_map(|(idx, candidate)| {
+                let info = data
+                    .midurlinfo
+                    .iter()
+                    .find(|info| info.filename.as_deref() == Some(candidate.as_str()))
+                    .or_else(|| {
+                        positional.then(|| data.midurlinfo.get(idx)).flatten()
+                    })?;
+                (!info.purl.trim().is_empty()).then(|| (info.purl.clone(), info.ekey.clone()))
+            })?;
         if url.trim().is_empty() {
             return None;
         }
@@ -789,7 +810,11 @@ struct QqSongUrlData {
 
 #[derive(Deserialize)]
 struct QqSongUrlInfo {
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
     purl: String,
+    #[serde(default)]
     ekey: String,
 }
 

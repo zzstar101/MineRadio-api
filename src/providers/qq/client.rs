@@ -291,11 +291,12 @@ impl QqClient {
     pub(super) async fn song_url(
         &self,
         song_mid: &str,
-        filenames: String,
+        filenames: Vec<String>,
         encrypted: bool,
     ) -> ProviderResult<QqSongUrlResp> {
         let c = self.current_cookie().await.unwrap_or_default();
         let uin = self.uin().await.unwrap_or_else(|| "0".to_owned());
+        let count = filenames.len().max(1);
         self.post_json_with_sign(
             json!({
                 "req_0": {
@@ -305,14 +306,14 @@ impl QqClient {
                         "checklimit": 0,
                         "ctx": 1,
                         "downloadfrom": if encrypted { 0 } else { 1 },
-                        "filename": [filenames],
+                        "filename": filenames.clone(),
                         "guid": c.find_or_else("qqmusic_guid", x5),
-                        "musicfile": [filenames],
+                        "musicfile": filenames,
                         "nettype": "",
                         "referer": "y.qq.com",
                         "scene": 0,
-                        "songmid": [song_mid],
-                        "songtype": [1],
+                        "songmid": vec![song_mid; count],
+                        "songtype": vec![0; count],
                         "uin": uin,
                     },
                 }

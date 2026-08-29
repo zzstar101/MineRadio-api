@@ -64,6 +64,10 @@ impl QqQualityCandidate {
             level,
         }
     }
+
+    fn filename(&self, media_mid: &str) -> String {
+        format!("{}{}{}", self.prefix, media_mid, self.extension)
+    }
 }
 
 fn qq_quality_candidates(encrypted: bool) -> &'static [QqQualityCandidate] {
@@ -74,15 +78,11 @@ fn qq_quality_candidates(encrypted: bool) -> &'static [QqQualityCandidate] {
     }
 }
 
-fn qq_filename(
-    candidates: &[QqQualityCandidate],
-    quality: &str,
-    media_mid: &str,
-) -> Option<String> {
-    candidates
+fn qq_filenames(encrypted: bool, media_mid: &str) -> Vec<String> {
+    qq_quality_candidates(encrypted)
         .iter()
-        .find(|candidate| candidate.level == quality)
-        .map(|candidate| format!("{}{}{}", candidate.prefix, media_mid, candidate.extension))
+        .map(|candidate| candidate.filename(media_mid))
+        .collect()
 }
 
 /// 雷达电台的固定流 ID(stream_next 分发用)
@@ -190,22 +190,34 @@ impl ProviderAdapter for QqAdapter {
             .ok()
             .and_then(|detail| detail.standardize_preview_range());
 
-        if let Some(filename) = qq_filename(qq_quality_candidates(false), &requested, &media_mid)
-            && let Some(r) = self
-                .client
-                .song_url(&track.source_id, filename, false)
-                .await?
-                .standardize(&cdn, false, preview_range)
+        // 普通 → 加密 → 试听; 每组一次请求带全部候选文件名, 组内按高品质优先取非空 purl
+        let plain = qq_filenames(false, &media_mid);
+        if let Some(r) = self
+            .client
+            .song_url(&track.source_id, plain.clone(), false)
+            .await?
+            .standardize(&cdn, false, preview_range.clone(), &plain)
         {
             return Ok(r);
         }
 
-        if let Some(filename) = qq_filename(qq_quality_candidates(true), &requested, &media_mid)
-            && let Some(r) = self
-                .client
-                .song_url(&track.source_id, filename, true)
-                .await?
-                .standardize(&cdn, true, preview_range)
+        let encrypted = qq_filenames(true, &media_mid);
+        if let Some(r) = self
+            .client
+            .song_url(&track.source_id, encrypted.clone(), true)
+            .await?
+            .standardize(&cdn, true, preview_range.clone(), &encrypted)
+        {
+            return Ok(r);
+        }
+
+        // 试听固定 RS02 前缀, mid 用 songmid 本身(原生客户端级别8即如此)
+        let trial = vec![format!("RS02{}.mp3", track.source_id)];
+        if let Some(r) = self
+            .client
+            .song_url(&track.source_id, trial.clone(), false)
+            .await?
+            .standardize(&cdn, false, preview_range, &trial)
         {
             return Ok(r);
         }
