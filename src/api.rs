@@ -111,7 +111,6 @@ impl ApiInner {
                         QrLoginKind::QqMusic,
                         Arc::new(create_qqmusic_qr_login_service(QqMusicQrLoginDeps {
                             client: qq_qr_client.clone(),
-                            timeout_ms: 10_000,
                         })),
                     ),
                 ),

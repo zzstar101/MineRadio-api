@@ -5,17 +5,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use reqwest::{
     Client,
-    header::{COOKIE, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER, USER_AGENT},
+    header::{COOKIE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT},
 };
-use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
 
-use crate::utils::cryptors::csigner::set_x4_identity;
-use crate::utils::{
-    cookie::Cookie,
-    cryptors::qq::{x4, x5, x7, x9, xj},
-};
+use crate::providers::qq::transport::qq_post_model;
+use crate::utils::cryptors::qq::{QUA, default_qq_cookie};
+use crate::utils::{cookie::Cookie, cryptors::qq::x5};
 use crate::{
     auth_session,
     providers::{
@@ -23,19 +21,15 @@ use crate::{
         error::{ProviderError, ProviderErrorCode},
         qq::model::{
             QqAlbumDetailResp, QqAlbumListResp, QqCdnDispatch, QqCdnTestResp, QqLoginStatusResp,
-            QqLyricResp, QqMultiSearchResp, QqPlaylistDetailResp, QqPlaylistList1Resp,
-            QqPlaylistList2Resp, QqPlaylistSongWriteResp, QqRadarResp, QqRadioDetailResp,
-            QqRecommendationResp, QqSearchResp, QqSongUrlResp, QqTrackDetailResp, QqTrackInfo,
-            QqVipIconResp,
+            QqLogoutResp, QqLyricResp, QqMultiSearchResp, QqPlaylistDetailResp,
+            QqPlaylistList1Resp, QqPlaylistList2Resp, QqPlaylistSongWriteResp, QqRadarResp,
+            QqRadioDetailResp, QqRecommendationResp, QqSearchResp, QqSongUrlResp,
+            QqTrackDetailResp, QqTrackInfo, QqVipIconResp,
         },
     },
     qr_login::common::normalize_login_cookie,
     sidecar_log,
 };
-
-const UA: &str = "Mozilla/5.0";
-const QV: &str = "22";
-const QMV: &str = "30";
 
 #[derive(Clone, Default)]
 pub struct QqClient {
@@ -131,12 +125,6 @@ impl QqClient {
         if !euin.is_empty() {
             *self.euin.write().await = Some(euin);
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn get_sign(&self, payload: &Value) -> ProviderResult<String> {
-        let payload = serde_json::to_string(payload).map_err(unavailable_error)?;
-        Ok(x9(&payload))
     }
 
     pub(super) async fn search(
@@ -438,7 +426,7 @@ impl QqClient {
     ) -> ProviderResult<QqLoginStatusResp> {
         let body: QqLoginStatusResp = self
             .get_model(
-                &format!("https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?cid=205360838&ct=20&cv=2230&userid={}&reqfrom=1&reqtype=0", user_id),
+                &format!("https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?cid=205360838&ct=20&cv=2230&userid={}&uin={}&reqfrom=1&reqtype=0", user_id, user_id),
                 None,
                 "login_status",
             )
@@ -456,22 +444,13 @@ impl QqClient {
             return Ok(None);
         };
         let guid = cookie.find_or_else("qqmusic_guid", x5);
-        // 换票时签名身份的 uin 原生行为就是 "0"
-        let _ = set_x4_identity("0", &guid);
-        let response: Value = self
-            .post_json_with_sign_cookie(
-                body,
-                None,
-                Cookie::new(&format!(
-                    "qqmusic_miniversion={QMV}; qqmusic_version={QV}; \
-                     qqmusic_gtime={}; qqmusic_guid={guid}; tmeLoginType={}",
-                    chrono::Utc::now().timestamp(),
-                    if is_wechat { 1 } else { 2 }
-                )),
-                "login_refresh",
-                true,
-            )
-            .await?;
+        let mut new_c = default_qq_cookie(Some(&guid), None);
+        new_c.insert(
+            "tmeLoginType",
+            { if is_wechat { 1 } else { 2 } }.to_string(),
+        );
+        let response: Value =
+            qq_post_model(self.http.clone(), body, None, new_c, "login_refresh", true).await?;
         let Some(data) = response
             .get(request_key)
             .filter(|value| {
@@ -704,7 +683,7 @@ impl QqClient {
         .await
     }
 
-    pub async fn logout(&self) -> ProviderResult<IgnoredAny> {
+    pub(super) async fn logout(&self) -> ProviderResult<QqLogoutResp> {
         self.post_json_with_sign(
             json!({
                 "music.login.LoginServer.Logout": {
@@ -788,130 +767,17 @@ impl QqClient {
         body: Value,
         referer: Option<&str>,
         action: &str,
-        s: bool,
+        is_c: bool,
     ) -> ProviderResult<T> {
-        self.post_json_with_sign_cookie(
+        qq_post_model(
+            self.http.clone(),
             body,
             referer,
             self.current_cookie().await.unwrap_or_default(),
             action,
-            s,
+            is_c,
         )
         .await
-    }
-
-    async fn post_json_with_sign_cookie<T: DeserializeOwned>(
-        &self,
-        body: Value,
-        referer: Option<&str>,
-        cookie: Cookie,
-        action: &str,
-        s: bool,
-    ) -> ProviderResult<T> {
-        let now = SystemTime::now();
-        let since_epoch = now
-            .duration_since(UNIX_EPOCH)
-            .expect("系统时间早于 UNIX 纪元");
-        //构建鉴权部分
-        let mut req = body;
-        let c = cookie;
-
-        let cookie_keys = vec!["psrf_qqaccess_token", "psrf_qqopenid", "psrf_qqunionid"];
-
-        let mut comm_obj = serde_json::Map::new();
-
-        comm_obj.insert("_channelid".to_string(), json!("20"));
-        comm_obj.insert("_os_version".to_string(), json!("6.2.9200-2"));
-        comm_obj.insert(
-            "authst".to_string(),
-            json!(c.find_or_default::<String>("qm_keyst")),
-        );
-
-        comm_obj.insert("format".to_string(), json!("json"));
-        comm_obj.insert("platform".to_string(), json!("wk_v17"));
-        comm_obj.insert("inCharset".to_string(), json!("utf-8"));
-        comm_obj.insert("outCharset".to_string(), json!("utf-8"));
-        comm_obj.insert("notice".to_string(), json!(0));
-        comm_obj.insert("needNewCode".to_string(), json!(1));
-        comm_obj.insert("ct".to_string(), json!("20"));
-        comm_obj.insert("cv".to_string(), json!(format!("{QV}{QMV}")));
-        comm_obj.insert(
-            "guid".to_string(),
-            json!(c.find_or_else("qqmusic_guid", x5)),
-        );
-        comm_obj.insert("patch".to_string(), json!("118"));
-        comm_obj.insert(
-            "psrf_access_token_expiresAt".to_string(),
-            json!(c.find_or_default::<u128>("psrf_access_token_expiresAt")),
-        );
-
-        for key in cookie_keys {
-            comm_obj.insert(key.to_string(), json!(c.find_or_default::<String>(key)));
-        }
-
-        comm_obj.insert("tmeAppID".to_string(), json!("qqmusic"));
-        comm_obj.insert(
-            "tmeLoginType".to_string(),
-            json!(c.find_or("tmeLoginType", 2)),
-        );
-        comm_obj.insert(
-            "uin".to_string(),
-            json!(uin_from_cookie(&c).unwrap_or("0".to_owned())),
-        );
-        comm_obj.insert("wid".to_string(), json!("4810302018970526720"));
-        let g_tk = x7(&c.find_or_default::<String>("musickey")).to_string();
-        comm_obj.insert("g_tk_new_20200303".to_string(), json!(&g_tk));
-        comm_obj.insert("g_tk".to_string(), json!(&g_tk));
-
-        if let Some(obj) = req.as_object_mut() {
-            obj.insert("comm".to_string(), comm_obj.into());
-        }
-        let t = match s {
-            true => since_epoch.as_secs(),
-            _ => since_epoch.as_secs() * 1000 + since_epoch.subsec_millis() as u64,
-        }
-        .to_string();
-        let sign = self.get_sign(&req)?;
-        let mut h = build_headers(referer, Some(c), false)?;
-        let q = [xj(0x7063_6163_6865_7469), xj(0x6d65)].concat();
-        let query: Vec<(&str, &str)> = if s {
-            let (a, b) = x4(&req.to_string(), since_epoch.as_secs());
-            h.insert(
-                HeaderName::from_bytes(xj(0x5369_676e).as_bytes()).map_err(internal_error)?,
-                header_value(&a)?,
-            );
-            h.insert(
-                HeaderName::from_bytes(xj(0x4d61_736b).as_bytes()).map_err(internal_error)?,
-                header_value(&b)?,
-            );
-
-            vec![(&q, &t)]
-        } else {
-            vec![("sign", &sign), ("_", &t)]
-        };
-        let response = self
-            .http
-            .post("https://u.y.qq.com/cgi-bin/musics.fcg")
-            .query(&query)
-            .headers(h)
-            .json(&req)
-            .send()
-            .await
-            .context("send qq upstream post request")
-            .map_err(unavailable_error)?;
-        let raw = response
-            .bytes()
-            .await
-            .context("read qq upstream response")
-            .map_err(unavailable_error)?;
-        serde_json::from_slice(&raw).map_err(|err| ProviderError {
-            code: ProviderErrorCode::InvalidResponse,
-            provider: ProviderId::Qq,
-            message: format!("decode qq {action} response: {err}"),
-            retryable: false,
-            action: Some(action.to_owned()),
-            raw_message: Some(String::from_utf8_lossy(&raw).into_owned()),
-        })
     }
 
     async fn get_model<T: DeserializeOwned>(
@@ -963,7 +829,7 @@ fn build_headers(
     with_origin: bool,
 ) -> ProviderResult<HeaderMap> {
     let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static(UA));
+    headers.insert(USER_AGENT, HeaderValue::from_static(QUA));
     if let Some(referer) = referer {
         headers.insert(REFERER, header_value(referer)?);
         if with_origin {
@@ -1016,7 +882,7 @@ fn login_refresh_request(cookie: &Cookie) -> Option<(&'static str, Value, bool)>
         .ok()
         .filter(|name| !name.trim().is_empty())
         .map(|name| format!("{name}-MRT"))
-        .unwrap_or_else(|| "MineRadio-MRT".to_owned());
+        .unwrap_or_else(|| "MineRadio-Tauri".to_owned());
     login_refresh_request_for_device(cookie, device_name)
 }
 
@@ -1107,27 +973,10 @@ fn unavailable_error(err: impl std::fmt::Display) -> ProviderError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
 
     use crate::utils::cookie::Cookie;
 
-    use super::{
-        QqClient, login_refresh_request_for_device, merge_cookie, playlist_song_write_body,
-    };
-
-    #[test]
-    fn get_sign_executes_the_bundled_javascript() {
-        if option_env!("CSIGNER_LIB_FILENAME").is_none() {
-            return;
-        }
-        crate::utils::cryptors::csigner::init().expect("csigner 初始化应成功");
-        let data = json!({"comm":{"ct":24},"req_1":{"module":"test","method":"test","param":{}}});
-
-        assert_eq!(
-            QqClient::new().get_sign(&data).expect("calculate qq sign"),
-            "zzcfcaa938yzk1nuourdgrzbse3gvchq0j1vk92298b96"
-        );
-    }
+    use super::{login_refresh_request_for_device, merge_cookie, playlist_song_write_body};
 
     #[test]
     fn playlist_song_write_uses_matching_request_key_and_method() {

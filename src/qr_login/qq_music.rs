@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use reqwest::Client;
@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth_session::set_runtime_provider_cookie,
+    providers::qq::transport::qq_post_model,
     qr_login::{
         QrLogin, QrSession, QrSessionStore,
         common::{
@@ -16,26 +17,23 @@ use crate::{
         mqtt::{MqttLoginEvent, MqttLoginSession},
     },
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{x5, x9},
+    utils::{
+        cookie::Cookie,
+        cryptors::qq::{default_qq_cookie, x5},
+    },
 };
 
-const QQ_MUSIC_API_URL: &str = "https://u.y.qq.com/cgi-bin/musics.fcg";
-const QQ_MUSIC_REFERER: &str = "https://y.qq.com/";
-const QQ_MUSIC_USER_AGENT: &str =
-    "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
 const MQTT_LOGIN_REQUEST_KEY: &str = "music.login.LoginServer.Login";
 
 #[derive(Clone)]
 pub struct QqMusicQrLoginDeps {
     pub client: Client,
-    pub timeout_ms: u64,
 }
 
 impl Default for QqMusicQrLoginDeps {
     fn default() -> Self {
         Self {
             client: Client::new(),
-            timeout_ms: 10_000,
         }
     }
 }
@@ -56,7 +54,10 @@ pub struct QqMusicQrLoginService {
 impl QrLogin for QqMusicQrLoginService {
     async fn create_key(&self) -> Result<ProviderLoginQrKey> {
         let guid = x5();
-        let payload = self.music_api(create_qr_request(&guid)).await?;
+        let cookie = default_qq_cookie(Some(&guid), None);
+        let payload = self
+            .music_api(create_qr_request(), cookie, "mqtt_create_qr")
+            .await?;
         let data = payload
             .get("result")
             .and_then(|value| value.get("data"))
@@ -185,10 +186,15 @@ impl QqMusicQrLoginService {
         let music_id = music_id
             .parse::<u64>()
             .map_err(|_| anyhow!("QQ_MQTT_LOGIN_INVALID_MUSIC_ID"))?;
+        let initial = default_qq_cookie(Some(guid), None);
+        let mut request_cookie = initial.clone();
+        request_cookie.insert("tmeLoginType", "6");
         let payload = self
-            .music_api(login_with_mqtt_ticket_request(
-                qrcode_id, music_id, music_key, guid,
-            ))
+            .music_api(
+                login_with_mqtt_ticket_request(qrcode_id, music_id, music_key),
+                request_cookie,
+                "mqtt_login",
+            )
             .await?;
 
         check_qq_login_error(&payload)?;
@@ -202,17 +208,18 @@ impl QqMusicQrLoginService {
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("QQ_MQTT_LOGIN_RESPONSE_MISSING_LOGIN_TYPE"))?;
 
+        let initial: String = initial.into();
         match login_type {
             2 => {
                 let cookie =
-                    normalize_login_cookie(data, guid, false, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
+                    normalize_login_cookie(data, &initial, false, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
             }
             1 => {
                 let cookie =
-                    normalize_login_cookie(data, guid, true, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
+                    normalize_login_cookie(data, &initial, true, "QQ_MQTT_LOGIN_COOKIE_EMPTY")?;
                 set_runtime_provider_cookie(ProviderId::Qq, cookie)
                     .await
                     .map_err(|error| anyhow!(error))?;
@@ -233,22 +240,10 @@ impl QqMusicQrLoginService {
         ))
     }
 
-    async fn music_api(&self, body: Value) -> Result<Value> {
-        let sign = x9(&serde_json::to_string(&body)?);
-        self.deps
-            .client
-            .post(QQ_MUSIC_API_URL)
-            .query(&[("sign", sign)])
-            .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("referer", QQ_MUSIC_REFERER)
-            .header("user-agent", QQ_MUSIC_USER_AGENT)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Value>()
+    async fn music_api(&self, body: Value, cookie: Cookie, action: &'static str) -> Result<Value> {
+        qq_post_model(self.deps.client.clone(), body, None, cookie, action, true)
             .await
-            .map_err(Into::into)
+            .map_err(|err| anyhow!("{err}"))
     }
 }
 
@@ -259,23 +254,17 @@ pub fn create_qqmusic_qr_login_service(deps: QqMusicQrLoginDeps) -> QqMusicQrLog
     }
 }
 
-fn create_qr_request(guid: &str) -> Value {
+fn create_qr_request() -> Value {
     json!({
         "result": {
             "module": "music.login.LoginServer",
             "method": "CreateQRCode",
             "param": { "tmeAppID": "qqmusic", "ct": 19, "cv": 2201 }
-        },
-        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": guid }
+        }
     })
 }
 
-fn login_with_mqtt_ticket_request(
-    qrcode_id: &str,
-    music_id: u64,
-    music_key: &str,
-    guid: &str,
-) -> Value {
+fn login_with_mqtt_ticket_request(qrcode_id: &str, music_id: u64, music_key: &str) -> Value {
     json!({
         "music.login.LoginServer.Login": {
             "module": "music.login.LoginServer",
@@ -285,8 +274,7 @@ fn login_with_mqtt_ticket_request(
                 "qrCodeID": qrcode_id,
                 "token": music_key
             }
-        },
-        "comm": { "ct": 19, "cv": 2201, "chid": "0", "guid": guid, "tmeLoginType": 6 }
+        }
     })
 }
 
@@ -311,11 +299,14 @@ mod tests {
 
     #[test]
     fn create_qr_request_has_required_protocol_fields() {
-        let request = create_qr_request("session-guid");
+        let request = create_qr_request();
         assert_eq!(request["result"]["module"], "music.login.LoginServer");
         assert_eq!(request["result"]["method"], "CreateQRCode");
         assert_eq!(request["result"]["param"]["tmeAppID"], "qqmusic");
-        assert_eq!(request["comm"]["guid"], "session-guid");
+        assert!(
+            request.get("comm").is_none(),
+            "comm 应由 transport 自动构建"
+        );
     }
 
     #[test]
@@ -336,7 +327,7 @@ mod tests {
 
     #[test]
     fn login_ticket_exchange_matches_the_source_protocol() {
-        let request = login_with_mqtt_ticket_request("qr-id", 10001, "event-key", "session-guid");
+        let request = login_with_mqtt_ticket_request("qr-id", 10001, "event-key");
         assert_eq!(request[MQTT_LOGIN_REQUEST_KEY]["method"], "Login");
         assert_eq!(request[MQTT_LOGIN_REQUEST_KEY]["param"]["musicid"], 10001);
         assert_eq!(
@@ -347,8 +338,10 @@ mod tests {
             request[MQTT_LOGIN_REQUEST_KEY]["param"]["token"],
             "event-key"
         );
-        assert_eq!(request["comm"]["tmeLoginType"], 6);
-        assert_eq!(request["comm"]["guid"], "session-guid");
+        assert!(
+            request.get("comm").is_none(),
+            "comm 应由 transport 自动构建"
+        );
     }
 
     #[test]
@@ -371,8 +364,9 @@ mod tests {
 
     #[test]
     fn login_cookie_persists_the_session_guid() {
+        // 契约: 调用方传入整段初始 cookie 字符串, 函数按原样追加到登录 cookie
         assert_eq!(
-            cookie_with_qqmusic_guid("uin=10001".to_owned(), "session-guid"),
+            cookie_with_qqmusic_guid("uin=10001".to_owned(), "qqmusic_guid=session-guid"),
             "uin=10001; qqmusic_guid=session-guid"
         );
     }
@@ -381,7 +375,7 @@ mod tests {
     fn normalize_login_cookie_uses_the_shared_response_formatter() {
         let cookie = normalize_login_cookie(
             &json!({ "musicid": 10001, "musickey": "login-key" }),
-            "session-guid",
+            "qqmusic_guid=session-guid",
             true,
             "QQ_LOGIN_COOKIE_EMPTY",
         )
@@ -390,7 +384,9 @@ mod tests {
         parts.sort();
         assert_eq!(
             parts.join("; "),
-            "musicid=10001; musickey=login-key; qm_keyst=login-key; qqmusic_guid=session-guid; tmeLoginType=1; uin=10001; wxuin=10001"
+            "musicid=10001; musickey=login-key; qm_keyst=login-key; \
+             qqmusic_guid=session-guid; qqmusic_key=login-key; qqmusic_uin=10001; \
+             tmeLoginType=1; uin=10001; wxuin=10001"
         );
     }
 

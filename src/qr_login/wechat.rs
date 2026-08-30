@@ -9,15 +9,17 @@ use reqwest::{Client, header::LOCATION};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+use crate::providers::qq::transport::qq_post_model;
+use crate::utils::cryptors::qq::default_qq_cookie;
 use crate::{
     auth_session::set_runtime_provider_cookie,
     qr_login::common::{
-        check_qq_login_error, check_response as check, normalize_login_cookie,
+        check_qq_login_error, check_response as check, login_uin, normalize_login_cookie,
         qq_music_device_name, required_key,
     },
     qr_login::{QrLogin, QrSession, QrSessionStore},
     types::{ProviderId, ProviderLoginQrCheck, ProviderLoginQrImage, ProviderLoginQrKey},
-    utils::cryptors::qq::{x5, x9},
+    utils::cryptors::qq::{x4_fix_identity, x5},
 };
 
 const WECHAT_QR_CONNECT_URL: &str = "\
@@ -37,10 +39,6 @@ const WECHAT_POLL_BASE: &str = "https://long.open.weixin.qq.com/connect/l/qrconn
 const WECHAT_QQ_REDIRECT_BASE: &str =
     "https://y.qq.com/portal/wx_redirect.html?login_type=2&surl=https://y.qq.com/&code=";
 const WECHAT_POLL_TIMEOUT: Duration = Duration::from_secs(16);
-const QQ_MUSIC_API_URL: &str = "https://u.y.qq.com/cgi-bin/musics.fcg";
-const QQ_MUSIC_REFERER: &str = "https://y.qq.com/";
-const QQ_MUSIC_USER_AGENT: &str =
-    "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
 
 static WECHAT_UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"/connect/qrcode/([a-zA-Z0-9]{16,64})"#).expect("compile wechat uuid regex")
@@ -232,13 +230,32 @@ impl WechatQrLoginService {
         guid: &str,
     ) -> Result<ProviderLoginQrCheck> {
         self.open_wechat_redirect(code).await?;
-        let payload = self.music_api(wechat_login_request(code, guid)).await?;
-        check_qq_login_error(&payload)?;
-        let data = payload
+
+        x4_fix_identity("0", guid);
+        let req = wechat_login_request(code);
+        let now = chrono::Utc::now().timestamp();
+        let cookie = default_qq_cookie(Some(guid), Some(now as u32));
+        let login_resp: Value = qq_post_model(
+            self.deps.client.clone(),
+            req,
+            None,
+            cookie.clone(),
+            "WXLogin",
+            true,
+        )
+        .await?;
+
+        check_qq_login_error(&login_resp)?;
+        let data = login_resp
             .get("WXLogin")
             .and_then(|value| value.get("data"))
             .ok_or_else(|| anyhow!("WECHAT_QR_LOGIN_RESPONSE_MISSING_DATA"))?;
-        let cookie = normalize_login_cookie(data, guid, true, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
+        let c: String = cookie.into();
+        let cookie = normalize_login_cookie(data, &c, true, "WECHAT_QR_LOGIN_COOKIE_EMPTY")?;
+
+        if let Some(uin) = login_uin(data) {
+            x4_fix_identity(&uin, guid);
+        }
         set_runtime_provider_cookie(ProviderId::Qq, cookie)
             .await
             .map_err(|error| anyhow!(error))?;
@@ -291,24 +308,6 @@ impl WechatQrLoginService {
         }
         bail!("WECHAT_QR_TOO_MANY_REDIRECTS")
     }
-
-    async fn music_api(&self, body: Value) -> Result<Value> {
-        let sign = x9(&serde_json::to_string(&body)?);
-        self.deps
-            .client
-            .post(QQ_MUSIC_API_URL)
-            .query(&[("sign", sign)])
-            .timeout(Duration::from_millis(self.deps.timeout_ms))
-            .header("referer", QQ_MUSIC_REFERER)
-            .header("user-agent", QQ_MUSIC_USER_AGENT)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await
-            .map_err(Into::into)
-    }
 }
 
 pub fn create_wechat_qr_login_service(deps: WechatQrLoginDeps) -> WechatQrLoginService {
@@ -318,12 +317,12 @@ pub fn create_wechat_qr_login_service(deps: WechatQrLoginDeps) -> WechatQrLoginS
     }
 }
 
-fn wechat_login_request(code: &str, guid: &str) -> Value {
+fn wechat_login_request(code: &str) -> Value {
     let device_name = qq_music_device_name();
     json!({
         "WXLogin": {
-            "module": "music.login.LoginServer",
             "method": "Login",
+            "module": "music.login.LoginServer",
             "param": {
                 "code": code,
                 "deviceName": device_name,
@@ -332,16 +331,6 @@ fn wechat_login_request(code: &str, guid: &str) -> Value {
                 "onlyNeedAccessToken": 0,
                 "strAppid": "wx48db31d50e334801"
             }
-        },
-        "comm": {
-            "ct": 19,
-            "cv": 2201,
-            "chid": "0",
-            "guid": guid,
-            "tmeAppID": "qqmusic",
-            "tmeLoginType": 1,
-            "uin": "0",
-            "wid": "4810302018970526720"
         }
     })
 }
@@ -415,11 +404,10 @@ mod tests {
 
     #[test]
     fn wechat_login_request_uses_the_confirmed_exchange_shape() {
-        let request = wechat_login_request("wx-code", "session-guid");
+        let request = wechat_login_request("wx-code");
         assert_eq!(request["WXLogin"]["module"], "music.login.LoginServer");
         assert_eq!(request["WXLogin"]["method"], "Login");
         assert_eq!(request["WXLogin"]["param"]["code"], "wx-code");
-        assert_eq!(request["comm"]["guid"], "session-guid");
         assert_eq!(
             request["WXLogin"]["param"]["deviceName"],
             qq_music_device_name()
@@ -450,7 +438,19 @@ mod tests {
         parts.sort();
         assert_eq!(
             parts.join("; "),
-            "musicid=10001; musickey=login-key; qm_keyst=login-key; tmeLoginType=1; uin=10001; wxuin=10001"
+            "musicid=10001; musickey=login-key; qm_keyst=login-key; \
+             qqmusic_key=login-key; qqmusic_uin=10001; tmeLoginType=1; uin=10001; wxuin=10001"
         );
+    }
+
+    #[test]
+    fn exchange_data_prefers_server_login_type() {
+        let mut data = flatten_data_to_map(&json!({
+            "musicid": 10001,
+            "musickey": "login-key",
+            "loginType": 2
+        }));
+        remap_qq_login_data_map(&mut data, true);
+        assert_eq!(data["tmeLoginType"], 2);
     }
 }

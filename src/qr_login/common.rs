@@ -8,11 +8,15 @@ use crate::types::{ProviderId, ProviderLoginQrCheck};
 pub(crate) const QQ_LOGIN_COOKIE_REMAPS: &[(&str, &str)] = &[
     ("access_token", "psrf_qqaccess_token"),
     ("openid", "psrf_qqopenid"),
+    ("openid", "wxopenid"),
     ("unionid", "psrf_qqunionid"),
     ("refresh_token", "psrf_qqrefresh_token"),
+    ("refresh_token", "wxrefresh_token"),
     ("expired_at", "psrf_access_token_expiresAt"),
     ("musickey", "qm_keyst"),
+    ("musickey", "qqmusic_key"),
     ("encryptUin", "euin"),
+    ("musickeyCreateTime", "qqmusic_gtime"),
 ];
 
 pub(crate) fn qq_music_device_name() -> String {
@@ -20,7 +24,7 @@ pub(crate) fn qq_music_device_name() -> String {
         .ok()
         .filter(|name| !name.trim().is_empty())
         .map(|name| format!("{name}-MRT"))
-        .unwrap_or_else(|| "MineRadio-MRT".to_owned())
+        .unwrap_or_else(|| "MineRadio-Tauri".to_owned())
 }
 
 pub(crate) fn normalize_login_cookie(
@@ -63,13 +67,16 @@ pub(crate) fn remap_qq_login_data_map(data_map: &mut HashMap<String, Value>, is_
         remap_qq_login_data_key(data_map, source, target);
     }
     remap_qq_login_data_key(data_map, "musicid", "uin");
-    data_map.insert(
-        "tmeLoginType".to_owned(),
-        Value::from(if is_wechat { 1 } else { 2 }),
-    );
+    remap_qq_login_data_key(data_map, "musicid", "qqmusic_uin");
     if is_wechat {
         remap_qq_login_data_key(data_map, "musicid", "wxuin");
     }
+
+    let login_type = data_map
+        .get("loginType")
+        .and_then(Value::as_i64)
+        .unwrap_or(if is_wechat { 1 } else { 2 });
+    data_map.insert("tmeLoginType".to_owned(), Value::from(login_type));
 }
 
 pub(crate) fn cookie_from_data_map(
@@ -127,7 +134,15 @@ pub(crate) fn check_qq_login_error(value: &Value) -> Result<()> {
 }
 
 pub(crate) fn cookie_with_qqmusic_guid(cookie: String, guid: &str) -> String {
-    format!("{cookie}; qqmusic_guid={guid}")
+    format!("{cookie}; {guid}")
+}
+
+pub(crate) fn login_uin(data: &Value) -> Option<String> {
+    match data.get("musicid") {
+        Some(Value::Number(n)) => Some(n.to_string()),
+        Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_owned()),
+        _ => None,
+    }
 }
 
 fn remap_qq_login_data_key(data_map: &mut HashMap<String, Value>, source: &str, target: &str) {

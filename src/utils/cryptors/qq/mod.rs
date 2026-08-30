@@ -9,6 +9,7 @@ use rand::{Rng, RngExt};
 pub mod audio;
 pub mod lyric;
 
+use crate::utils::cookie::Cookie;
 #[allow(unused_imports)]
 pub use audio::{
     EncryptedTail, TailFormat, decrypt_file, decrypt_qq_audio, derive_qmc2_key,
@@ -32,6 +33,10 @@ const KB: [u8; 16] = [
     189, 48, 95, 16, 208, 255, 116, 182, 239, 84, 218, 184, 53, 181, 225, 207,
 ];
 const KC: usize = 12;
+
+pub const QUA: &str = "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)";
+pub const QV: &str = "22";
+pub const QMV: &str = "30";
 
 pub fn x0(a: impl AsRef<[u8]>) -> Result<Vec<u8>, String> {
     let mut b = [0_u8; KC];
@@ -153,4 +158,14 @@ pub fn xj(mut a: u64) -> String {
     bytes.reverse();
 
     String::from_utf8(bytes).unwrap()
+}
+
+pub fn default_qq_cookie(guid: Option<&str>, gtime: Option<u32>) -> Cookie {
+    let timestamp = chrono::Utc::now().timestamp();
+    let x5 = x5();
+    let guid = guid.unwrap_or(&x5);
+    let gtime = gtime.unwrap_or(timestamp as u32);
+    Cookie::new(&format!(
+        "qqmusic_gtime={gtime}; qqmusic_guid={guid}; qqmusic_miniversion={QMV}; qqmusic_version={QV};"
+    ))
 }

@@ -27,42 +27,37 @@ use tokio::sync::RwLock;
 use super::{client::QqClient, lyric::QQMusicParser};
 
 const QQ_PLAIN_QUALITY_CANDIDATES: [QqQualityCandidate; 9] = [
-    QqQualityCandidate::new("Q000", ".flac", "atmos"),
-    QqQualityCandidate::new("O800", ".ogg", "premium"),
-    QqQualityCandidate::new("AI00", ".flac", "master"),
-    QqQualityCandidate::new("RS01", ".flac", "hires"),
-    QqQualityCandidate::new("F000", ".flac", "flac"),
-    QqQualityCandidate::new("M800", ".mp3", "320k"),
-    QqQualityCandidate::new("TL01", ".nac", "nac"),
-    QqQualityCandidate::new("M500", ".mp3", "128k"),
-    QqQualityCandidate::new("C400", ".m4a", "aac"),
+    QqQualityCandidate::new("Q000", ".flac"), // atmos
+    QqQualityCandidate::new("O800", ".ogg"),  // premium
+    QqQualityCandidate::new("AI00", ".flac"), // master
+    QqQualityCandidate::new("RS01", ".flac"), // hires
+    QqQualityCandidate::new("F000", ".flac"), // flac
+    QqQualityCandidate::new("M800", ".mp3"),  // 320k
+    QqQualityCandidate::new("TL01", ".nac"),  // nac
+    QqQualityCandidate::new("M500", ".mp3"),  // 128k
+    QqQualityCandidate::new("C400", ".m4a"),  // aac
 ];
 
 const QQ_ENCRYPTED_QUALITY_CANDIDATES: [QqQualityCandidate; 8] = [
-    QqQualityCandidate::new("Q0M0", ".mflac", "atmos"),
-    QqQualityCandidate::new("O8M0", ".mgg", "premium"),
-    QqQualityCandidate::new("AIM0", ".mflac", "master"),
-    QqQualityCandidate::new("RSM1", ".mflac", "hires"),
-    QqQualityCandidate::new("F0M0", ".mflac", "flac"),
-    QqQualityCandidate::new("O6M0", ".mgg", "320k"),
-    QqQualityCandidate::new("TLM1", ".mnac", "nac"),
-    QqQualityCandidate::new("O4M0", ".mgg", "128k"),
+    QqQualityCandidate::new("Q0M0", ".mflac"), // atmos
+    QqQualityCandidate::new("O8M0", ".mgg"),   // premium
+    QqQualityCandidate::new("AIM0", ".mflac"), // master
+    QqQualityCandidate::new("RSM1", ".mflac"), // hires
+    QqQualityCandidate::new("F0M0", ".mflac"), // flac
+    QqQualityCandidate::new("O6M0", ".mgg"),   // 320k
+    QqQualityCandidate::new("TLM1", ".mnac"),  // nac
+    QqQualityCandidate::new("O4M0", ".mgg"),   // 128k
 ];
 
 #[derive(Clone, Copy)]
 struct QqQualityCandidate {
     prefix: &'static str,
     extension: &'static str,
-    level: &'static str,
 }
 
 impl QqQualityCandidate {
-    const fn new(prefix: &'static str, extension: &'static str, level: &'static str) -> Self {
-        Self {
-            prefix,
-            extension,
-            level,
-        }
+    const fn new(prefix: &'static str, extension: &'static str) -> Self {
+        Self { prefix, extension }
     }
 
     fn filename(&self, media_mid: &str) -> String {
@@ -397,7 +392,18 @@ impl ProviderAdapter for QqAdapter {
     }
 
     async fn logout(&self) -> ProviderResult<()> {
-        self.client.logout().await?;
+        let resp = self.client.logout().await?;
+        if !resp.success() {
+            // 服务端拒绝 = musickey 未吊销, 保留本地登录态以便重试, 不清缓存
+            return Err(ProviderError {
+                code: ProviderErrorCode::Unavailable,
+                provider: ProviderId::Qq,
+                message: format!("qq logout rejected ({})", resp.describe()),
+                retryable: false,
+                action: Some("logout".to_owned()),
+                raw_message: None,
+            });
+        }
         self.created_playlist_dirids.write().await.clear();
         *self.liked_playlist_dirid.write().await = None;
         self.radio_queue.clear();

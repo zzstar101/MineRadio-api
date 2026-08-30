@@ -753,23 +753,15 @@ impl QqSongUrlResp {
             return None;
         }
         let positional = !data.midurlinfo.is_empty()
-            && data
+            && data.midurlinfo.iter().all(|info| info.filename.is_none());
+        let (url, ekey) = candidates.iter().enumerate().find_map(|(idx, candidate)| {
+            let info = data
                 .midurlinfo
                 .iter()
-                .all(|info| info.filename.is_none());
-        let (url, ekey) = candidates
-            .iter()
-            .enumerate()
-            .find_map(|(idx, candidate)| {
-                let info = data
-                    .midurlinfo
-                    .iter()
-                    .find(|info| info.filename.as_deref() == Some(candidate.as_str()))
-                    .or_else(|| {
-                        positional.then(|| data.midurlinfo.get(idx)).flatten()
-                    })?;
-                (!info.purl.trim().is_empty()).then(|| (info.purl.clone(), info.ekey.clone()))
-            })?;
+                .find(|info| info.filename.as_deref() == Some(candidate.as_str()))
+                .or_else(|| positional.then(|| data.midurlinfo.get(idx)).flatten())?;
+            (!info.purl.trim().is_empty()).then(|| (info.purl.clone(), info.ekey.clone()))
+        })?;
         if url.trim().is_empty() {
             return None;
         }
@@ -851,6 +843,36 @@ impl QqCdnTestResp {
 #[derive(Deserialize)]
 struct Modulecdn {
     data: CdnData,
+}
+
+/// 退出登录响应。原生 ParseLogout 双读: 顶层 code + 请求键内 code, 双 0 才算真退出。
+#[derive(Deserialize)]
+pub(super) struct QqLogoutResp {
+    #[serde(default)]
+    code: Option<i64>,
+    #[serde(rename = "music.login.LoginServer.Logout", default)]
+    logout: Option<QqLogoutNode>,
+}
+
+#[derive(Deserialize)]
+struct QqLogoutNode {
+    #[serde(default)]
+    code: Option<i64>,
+}
+
+impl QqLogoutResp {
+    pub(super) fn success(&self) -> bool {
+        self.code.unwrap_or(0) == 0
+            && self.logout.as_ref().and_then(|node| node.code).unwrap_or(0) == 0
+    }
+
+    pub(super) fn describe(&self) -> String {
+        format!(
+            "code1={:?} code2={:?}",
+            self.code,
+            self.logout.as_ref().and_then(|node| node.code)
+        )
+    }
 }
 
 #[derive(Deserialize)]
@@ -1251,7 +1273,7 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        File, Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData,
+        Identified, QqAlbumDetailTrackPay, QqLoginProfile, QqLoginStatusData,
         QqLoginStatusResp, QqPlaylistList1Resp, QqPlaylistSongWriteResp, QqRecommendationResp,
         QqTrack, QqTrackInfo,
     };
